@@ -250,6 +250,26 @@ oc get rolebindings -n openshift-user-workload-monitoring -l app.kubernetes.io/m
 - **Scalable pattern**: Easy to add new system namespace access
 - **Environment aware**: Monitoring access available in all environments
 
+## 🔧 Custom Domain Support
+
+If you need to use a different domain instead of `company.net`, you can generate custom versions of the NamespaceConfig files:
+
+```bash
+# Generate configs for a custom domain
+cd <path-to-repo>/openshift-rbac-automation && ./scripts/create-custom-domain-configs.sh test.example.com
+```
+
+This will create new files with your custom domain:
+- `test.example.com-nonprod-namespaceconfig-rbac.yaml`
+- `test.example.com-prod-namespaceconfig-rbac.yaml`
+
+**Note:** Make sure to label your namespaces with the new domain:
+```bash
+oc label namespace <namespace-name> \
+  test.example.com/mnemonic=<mnemonic> \
+  test.example.com/app-environment=<environment>
+```
+
 ## 📚 Documentation
 
 - **[Deployment Guide](docs/redhat-cop-rbac-deployment-guide.md)** - Complete installation and testing instructions
