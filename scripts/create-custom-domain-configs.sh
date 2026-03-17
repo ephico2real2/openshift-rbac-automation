@@ -72,12 +72,22 @@ for file in "${NAMESPACE_CONFIG_FILES[@]}"; do
     output_file="${NEW_DOMAIN}-${file}"
     
     log_info "Processing: $file"
+    log_info "Input file size: $(wc -c < "$file") bytes"
     
     # Replace domain in file and create new file
     sed "s/${ORIGINAL_DOMAIN}/${NEW_DOMAIN}/g" "$file" > "$output_file"
     
     if [ -f "$output_file" ]; then
-        log_info "Created: $output_file"
+        output_size=$(wc -c < "$output_file")
+        log_info "Created: $output_file (${output_size} bytes)"
+        
+        # Verify the replacement actually happened
+        if grep -q "${NEW_DOMAIN}" "$output_file"; then
+            log_info "✓ Domain replacement verified in $output_file"
+        else
+            log_warn "⚠ No domain replacements found in $output_file"
+        fi
+        
         ((created_count++))
     else
         log_error "Failed to create: $output_file"
