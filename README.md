@@ -223,9 +223,25 @@ oc get clusterrolebindings \
 ```
 
 ```bash
-# Option 2: Filter by specific role type
+# Option 2a: Show ALL cluster role types at once (admin, developer, audit)
+oc get clusterrolebindings \
+  -l 'rbac.ocp.io/role-type' \
+  -o custom-columns='NAME:.metadata.name,ROLE-TYPE:.metadata.labels.rbac\.ocp\.io/role-type,CLUSTERROLE:.roleRef.name,GROUP:.subjects[0].name' | \
+  grep -E "^(NAME|.*cluster-)"
 
-# Cluster-admin groups
+# Expected output:
+# NAME                                          ROLE-TYPE           CLUSTERROLE   GROUP
+# app-ocp-rbac-alpha-cluster-admin-crb          cluster-admin       admin         app-ocp-rbac-alpha-cluster-admin
+# app-ocp-rbac-alpha-cluster-audit-crb          cluster-audit       view          app-ocp-rbac-alpha-cluster-audit
+# app-ocp-rbac-alpha-cluster-developer-crb      cluster-developer   view          app-ocp-rbac-alpha-cluster-developer
+# app-ocp-rbac-demo-cluster-admin-crb           cluster-admin       admin         app-ocp-rbac-demo-cluster-admin
+# ...
+```
+
+```bash
+# Option 2b: Filter by specific role type
+
+# Cluster-admin groups only
 oc get clusterrolebindings \
   -l rbac.ocp.io/role-type=cluster-admin \
   -o custom-columns='NAME:.metadata.name,CLUSTERROLE:.roleRef.name,GROUP:.subjects[0].name'
