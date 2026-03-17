@@ -206,6 +206,48 @@ oc get clusterrolebindings -l rbac.ocp.io/role-type=cluster-developer
 oc get clusterrolebindings -l rbac.ocp.io/role-type=cluster-audit
 ```
 
+**Show ClusterRoleBindings with Group Names:**
+
+```bash
+# Option 1: All managed ClusterRoleBindings with groups (custom-columns)
+oc get clusterrolebindings \
+  -l app.kubernetes.io/managed-by=namespace-configuration-operator \
+  -o custom-columns='NAME:.metadata.name,CLUSTERROLE:.roleRef.name,GROUP:.subjects[0].name'
+
+# Expected output:
+# NAME                                          CLUSTERROLE   GROUP
+# app-ocp-rbac-alpha-cluster-admin-crb          admin         app-ocp-rbac-alpha-cluster-admin
+# app-ocp-rbac-alpha-cluster-audit-crb          view          app-ocp-rbac-alpha-cluster-audit
+# app-ocp-rbac-alpha-cluster-developer-crb      view          app-ocp-rbac-alpha-cluster-developer
+# ...
+```
+
+```bash
+# Option 2: Filter by specific role type (e.g., cluster-admin)
+oc get clusterrolebindings \
+  -l rbac.ocp.io/role-type=cluster-admin \
+  -o custom-columns='NAME:.metadata.name,CLUSTERROLE:.roleRef.name,GROUP:.subjects[0].name'
+
+# Expected output:
+# NAME                                      CLUSTERROLE   GROUP
+# app-ocp-rbac-alpha-cluster-admin-crb      admin         app-ocp-rbac-alpha-cluster-admin
+# app-ocp-rbac-demo-cluster-admin-crb       admin         app-ocp-rbac-demo-cluster-admin
+# app-ocp-rbac-platform-cluster-admin-crb   admin         app-ocp-rbac-platform-cluster-admin
+```
+
+```bash
+# Option 3: Pretty formatted with jq
+oc get clusterrolebindings \
+  -l rbac.ocp.io/role-type=cluster-admin -o json | \
+  jq -r '.items[] | "\(.metadata.name)\t| ClusterRole: \(.roleRef.name)\t| Group: \(.subjects[0].name)"' | \
+  column -t -s $'\t'
+
+# Expected output:
+# app-ocp-rbac-alpha-cluster-admin-crb     | ClusterRole: admin  | Group: app-ocp-rbac-alpha-cluster-admin
+# app-ocp-rbac-demo-cluster-admin-crb      | ClusterRole: admin  | Group: app-ocp-rbac-demo-cluster-admin
+# app-ocp-rbac-platform-cluster-admin-crb  | ClusterRole: admin  | Group: app-ocp-rbac-platform-cluster-admin
+```
+
 ### Verify Groups
 
 ```bash
