@@ -169,16 +169,30 @@ oc get rolebindings -n beta-rnd \
 ```
 
 ```bash
-# Option 2: Pretty formatted with jq (more readable)
+# Option 2: Pretty formatted with jq (includes creation timestamp)
 oc get rolebindings -n beta-rnd \
   -l app.kubernetes.io/managed-by=namespace-configuration-operator -o json | \
-  jq -r '.items[] | "\(.metadata.name)\t| Role: \(.roleRef.name)\t| Group: \(.subjects[0].name)"' | \
+  jq -r '.items[] | "\(.metadata.name)\t| Group: \(.subjects[0].name)\t| Role: \(.roleRef.name)\t| Created: \(.metadata.creationTimestamp)"' | \
   column -t -s $'\t'
 
 # Expected output:
-# beta-admin-rb      | Role: admin  | Group: app-ocp-rbac-beta-ns-admin
-# beta-audit-rb      | Role: view   | Group: app-ocp-rbac-beta-ns-audit
-# beta-developer-rb  | Role: edit   | Group: app-ocp-rbac-beta-ns-developer
+# beta-admin-rb      | Group: app-ocp-rbac-beta-ns-admin      | Role: admin  | Created: 2026-03-16T23:50:22Z
+# beta-audit-rb      | Group: app-ocp-rbac-beta-ns-audit      | Role: view   | Created: 2026-03-16T23:50:22Z
+# beta-developer-rb  | Group: app-ocp-rbac-beta-ns-developer  | Role: edit   | Created: 2026-03-16T23:50:22Z
+```
+
+```bash
+# Option 3: Table format with headers (cleanest output)
+oc get rolebindings -n beta-rnd \
+  -l app.kubernetes.io/managed-by=namespace-configuration-operator -o json | \
+  jq -r '["NAME","GROUP","ROLE","CREATED"], (.items[] | [.metadata.name, .subjects[0].name, .roleRef.name, .metadata.creationTimestamp]) | @tsv' | \
+  column -t -s $'\t'
+
+# Expected output:
+# NAME               GROUP                           ROLE   CREATED
+# beta-admin-rb      app-ocp-rbac-beta-ns-admin      admin  2026-03-16T23:50:22Z
+# beta-audit-rb      app-ocp-rbac-beta-ns-audit      view   2026-03-16T23:50:22Z
+# beta-developer-rb  app-ocp-rbac-beta-ns-developer  edit   2026-03-16T23:50:22Z
 ```
 
 ### Verify Production Namespace RBAC
