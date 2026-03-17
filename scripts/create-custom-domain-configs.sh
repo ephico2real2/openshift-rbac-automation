@@ -4,7 +4,7 @@
 # Usage: ./create-custom-domain-configs.sh <new-domain>
 # Example: ./create-custom-domain-configs.sh pnc.net
 
-set -euo pipefail
+set -uo pipefail
 
 # Color codes for output
 GREEN='\033[0;32m'
@@ -63,6 +63,8 @@ created_count=0
 
 # Process each file
 for file in "${NAMESPACE_CONFIG_FILES[@]}"; do
+    echo ""  # Add blank line between files for readability
+    
     if [ ! -f "$file" ]; then
         log_warn "File not found: $file (skipping)"
         continue
@@ -75,22 +77,24 @@ for file in "${NAMESPACE_CONFIG_FILES[@]}"; do
     log_info "Input file size: $(wc -c < "$file") bytes"
     
     # Replace domain in file and create new file
-    sed "s/${ORIGINAL_DOMAIN}/${NEW_DOMAIN}/g" "$file" > "$output_file"
-    
-    if [ -f "$output_file" ]; then
-        output_size=$(wc -c < "$output_file")
-        log_info "Created: $output_file (${output_size} bytes)"
-        
-        # Verify the replacement actually happened
-        if grep -q "${NEW_DOMAIN}" "$output_file"; then
-            log_info "✓ Domain replacement verified in $output_file"
+    if sed "s/${ORIGINAL_DOMAIN}/${NEW_DOMAIN}/g" "$file" > "$output_file" 2>/dev/null; then
+        if [ -f "$output_file" ] && [ -s "$output_file" ]; then
+            output_size=$(wc -c < "$output_file")
+            log_info "Created: $output_file (${output_size} bytes)"
+            
+            # Verify the replacement actually happened
+            if grep -q "${NEW_DOMAIN}" "$output_file" 2>/dev/null; then
+                log_info "[OK] Domain replacement verified in $output_file"
+            else
+                log_warn "[WARN] No domain replacements found in $output_file"
+            fi
+            
+            created_count=$((created_count + 1))
         else
-            log_warn "⚠ No domain replacements found in $output_file"
+            log_error "Output file is empty or not created: $output_file"
         fi
-        
-        ((created_count++))
     else
-        log_error "Failed to create: $output_file"
+        log_error "sed command failed for: $file"
     fi
 done
 
