@@ -153,6 +153,34 @@ oc get rolebindings -n beta-rnd -l app.kubernetes.io/managed-by=namespace-config
 # beta-developer-rb   ClusterRole/edit    XXm
 ```
 
+**Show RoleBindings with Group Names:**
+
+```bash
+# Option 1: Using custom-columns (works everywhere, no jq required)
+oc get rolebindings -n beta-rnd \
+  -l app.kubernetes.io/managed-by=namespace-configuration-operator \
+  -o custom-columns='NAME:.metadata.name,ROLE:.roleRef.name,GROUP:.subjects[0].name'
+
+# Expected output:
+# NAME                ROLE    GROUP
+# beta-admin-rb       admin   app-ocp-rbac-beta-ns-admin
+# beta-audit-rb       view    app-ocp-rbac-beta-ns-audit
+# beta-developer-rb   edit    app-ocp-rbac-beta-ns-developer
+```
+
+```bash
+# Option 2: Pretty formatted with jq (more readable)
+oc get rolebindings -n beta-rnd \
+  -l app.kubernetes.io/managed-by=namespace-configuration-operator -o json | \
+  jq -r '.items[] | "\(.metadata.name)\t| Role: \(.roleRef.name)\t| Group: \(.subjects[0].name)"' | \
+  column -t -s $'\t'
+
+# Expected output:
+# beta-admin-rb      | Role: admin  | Group: app-ocp-rbac-beta-ns-admin
+# beta-audit-rb      | Role: view   | Group: app-ocp-rbac-beta-ns-audit
+# beta-developer-rb  | Role: edit   | Group: app-ocp-rbac-beta-ns-developer
+```
+
 ### Verify Production Namespace RBAC
 
 ```bash
