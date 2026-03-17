@@ -1,0 +1,81 @@
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: NamespaceConfig
+metadata:
+  name: prod-namespaceconfig-rbac
+  labels:
+    app.kubernetes.io/name: namespace-configuration-operator
+    app.kubernetes.io/component: rbac-automation
+    rbac.ocp.io/scope: namespace-scoped
+    rbac.ocp.io/kind: NamespaceConfig
+  annotations:
+    description: "Universal RBAC: audit/developer access for ALL environments (admin restricted to non-prod)"
+spec:
+  labelSelector:
+    matchExpressions:
+    - key: company.net/mnemonic
+      operator: Exists  # Match any namespace with mnemonic label
+    - key: company.net/app-environment
+      operator: In
+      values: ["prod"]  # EXPLICIT prod environments only
+  templates:
+    # Developer RoleBinding - Universal access for ALL environments (power users)
+    - objectTemplate: |
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: "{{ index .Labels "company.net/mnemonic" }}-developer-rb"
+          namespace: "{{ .Name }}"
+          labels:
+            app.kubernetes.io/managed-by: namespace-configuration-operator
+            app.kubernetes.io/version: 0.1.0
+            rbac.ocp.io/policy-version: 0.1.0
+            rbac.ocp.io/role-type: ns-developer
+            rbac.ocp.io/mnemonic: "{{ index .Labels "company.net/mnemonic" }}"
+            rbac.ocp.io/environment: "{{ index .Labels "company.net/app-environment" }}"
+            rbac.ocp.io/access-level: developer-prod-only
+            rbac.ocp.io/config-source: prod-rbac
+          annotations:
+            rbac.ocp.io/created-by: namespace-configuration-operator
+            rbac.ocp.io/source-namespace: "{{ .Name }}"
+            rbac.ocp.io/source-namespaceconfig: prod-namespaceconfig-rbac
+            rbac.ocp.io/group-pattern: "app-ocp-rbac-{{ index .Labels "company.net/mnemonic" }}-ns-developer"
+            rbac.ocp.io/environment-restriction: "prod-only"
+        subjects:
+        - kind: Group
+          name: "app-ocp-rbac-{{ index .Labels "company.net/mnemonic" }}-ns-developer"
+          apiGroup: rbac.authorization.k8s.io
+        roleRef:
+          kind: ClusterRole
+          name: edit
+          apiGroup: rbac.authorization.k8s.io
+
+    # Audit RoleBinding - Universal access for ALL environments (including prod)
+    - objectTemplate: |
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: "{{ index .Labels "company.net/mnemonic" }}-audit-rb"
+          namespace: "{{ .Name }}"
+          labels:
+            app.kubernetes.io/managed-by: namespace-configuration-operator
+            app.kubernetes.io/version: 0.1.0
+            rbac.ocp.io/policy-version: 0.1.0
+            rbac.ocp.io/role-type: ns-audit
+            rbac.ocp.io/mnemonic: "{{ index .Labels "company.net/mnemonic" }}"
+            rbac.ocp.io/environment: "{{ index .Labels "company.net/app-environment" }}"
+            rbac.ocp.io/access-level: audit-prod-only
+            rbac.ocp.io/config-source: prod-rbac
+          annotations:
+            rbac.ocp.io/created-by: namespace-configuration-operator
+            rbac.ocp.io/source-namespace: "{{ .Name }}"
+            rbac.ocp.io/source-namespaceconfig: prod-namespaceconfig-rbac
+            rbac.ocp.io/group-pattern: "app-ocp-rbac-{{ index .Labels "company.net/mnemonic" }}-ns-audit"
+            rbac.ocp.io/environment-restriction: "prod-only"
+        subjects:
+        - kind: Group
+          name: "app-ocp-rbac-{{ index .Labels "company.net/mnemonic" }}-ns-audit"
+          apiGroup: rbac.authorization.k8s.io
+        roleRef:
+          kind: ClusterRole
+          name: view
+          apiGroup: rbac.authorization.k8s.io

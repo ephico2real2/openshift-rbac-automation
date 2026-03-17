@@ -1,0 +1,40 @@
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: GroupSync
+metadata:
+  name: clusterrole-ldap-groupsync
+  namespace: group-sync-operator
+spec:
+  providers:
+  - name: ldap
+    ldap:
+      url: ldap://openldap-service.ldap-testing.svc.cluster.local:389
+      insecure: true
+      credentialsSecret:
+        name: ldap-group-sync
+        namespace: group-sync-operator
+      rfc2307:
+        groupsQuery:
+          baseDN: "ou=Groups,dc=ephico2real,dc=com"
+          scope: sub
+          derefAliases: never
+          filter: "(&(objectClass=groupOfNames)(cn=app-ocp-rbac-*-cluster-*))"
+          timeout: 0
+          pageSize: 0
+        groupUIDAttribute: dn
+        groupNameAttributes:
+        - cn
+        groupMembershipAttributes:
+        - member
+        usersQuery:
+          baseDN: "ou=People,dc=ephico2real,dc=com"
+          scope: sub
+          derefAliases: never
+          timeout: 0
+          pageSize: 0
+        userUIDAttribute: dn
+        userNameAttributes:
+        - uid
+        tolerateMemberNotFoundErrors: true
+        tolerateMemberOutOfScopeErrors: true
+      prune: true
+  schedule: "*/2 * * * *"

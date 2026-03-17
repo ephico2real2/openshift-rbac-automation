@@ -1,0 +1,153 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: rbac-standards-enforcement
+  annotations:
+    policies.kyverno.io/title: "RBAC Standards Enforcement"
+    policies.kyverno.io/category: "Multi-Tenancy"
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: "Namespace, Group"
+    kyverno.io/kyverno-version: "1.15.1"
+    policies.kyverno.io/minversion: "1.15.0"
+    kyverno.io/kubernetes-version: "1.24-1.29"
+    policies.kyverno.io/description: >-
+      Enforces RBAC naming standards and label validation.
+      Works in conjunction with Red Hat CoP Namespace Configuration Operator.
+  labels:
+    app.kubernetes.io/name: kyverno
+    app.kubernetes.io/component: rbac-validation
+    app.kubernetes.io/part-of: rbac-automation
+spec:
+  validationFailureAction: Audit  # Start with Audit, can change to Enforce later
+  background: true
+  rules:
+
+  # Validate mnemonic label format on namespaces
+  - name: validate-mnemonic-format
+    match:
+      any:
+      - resources:
+          kinds: ["Namespace"]
+    preconditions:
+      any:
+      - key: "{{ request.object.metadata.labels.\"company.net/mnemonic\" || '' }}"
+        operator: NotEquals
+        value: ""
+    validate:
+      message: "Invalid mnemonic format. Mnemonic must be 4 lowercase letters (e.g., 'abcd', 'paym', 'frnt')"
+      pattern:
+        metadata:
+          labels:
+            company.net/mnemonic: "^[a-z]{4}$"
+
+  # Validate environment label values
+  - name: validate-environment-values
+    match:
+      any:
+      - resources:
+          kinds: ["Namespace"]
+    preconditions:
+      any:
+      - key: "{{ request.object.metadata.labels.\"company.net/app-environment\" || '' }}"
+        operator: NotEquals
+        value: ""
+    validate:
+      message: "Invalid environment value. Must be one of: rnd, eng, qa, uat, prod"
+      pattern:
+        metadata:
+          labels:
+            company.net/app-environment: "^(rnd|eng|qa|uat|prod)$"
+
+  # Validate OpenShift Group naming patterns
+  - name: validate-group-naming-standards
+    match:
+      any:
+      - resources:
+          kinds: ["user.openshift.io/v1/Group"]
+          names: ["app-ocp-rbac-*"]
+    validate:
+      message: "Group name '{{ request.object.metadata.name }}' violates naming standards. Must follow: app-ocp-rbac-{mnemonic}-(ns|cluster)-(admin|developer|audit)"
+      deny:
+        conditions:
+          all:
+          - key: "{{ request.object.metadata.name }}"
+            operator: NotEqual
+            value: ""
+          - key: "{{ regex_match('^app-ocp-rbac-[a-z]{4}-(ns|cluster)-(admin|developer|audit)$', request.object.metadata.name) }}"
+            operator: Equals
+            value: false
+
+  # Validate custom ClusterRoles label format
+  - name: validate-custom-clusterroles-format
+    match:
+      any:
+      - resources:
+          kinds: ["Namespace"]
+    preconditions:
+      any:
+      - key: "{{ request.object.metadata.labels.\"rbac.company.net/custom-clusterroles\" || '' }}"
+        operator: NotEquals
+        value: ""
+    validate:
+      message: "Invalid custom ClusterRoles format. Must be comma-separated list of valid ClusterRole names (e.g., 'database-admin,security-policy-admin')"
+      pattern:
+        metadata:
+          labels:
+            rbac.company.net/custom-clusterroles: "^[a-z][a-z0-9-]*[a-z0-9](,[a-z][a-z0-9-]*[a-z0-9])*$"
+
+  # Validate mnemonic matches group name (if both present)
+  - name: validate-mnemonic-group-consistency
+    match:
+      any:
+      - resources:
+          kinds: ["Namespace"]
+    preconditions:
+      all:
+      - key: "{{ request.object.metadata.labels.\"company.net/mnemonic\" || '' }}"
+        operator: NotEquals
+        value: ""
+      - key: "{{ request.object.metadata.labels.\"rbac-groups-expected\" || '' }}"
+        operator: Equals
+        value: "true"
+    context:
+      - name: mnemonic
+        variable:
+          jmesPath: "request.object.metadata.labels.\"company.net/mnemonic\""
+      - name: expected_admin_group
+        variable:
+          value: "app-ocp-rbac-{{ mnemonic }}-ns-admin"
+      - name: expected_developer_group
+        variable:
+          value: "app-ocp-rbac-{{ mnemonic }}-ns-developer"
+      - name: expected_audit_group
+        variable:
+          value: "app-ocp-rbac-{{ mnemonic }}-ns-audit"
+    validate:
+      message: "Namespace mnemonic '{{ mnemonic }}' should correspond to groups: {{ expected_admin_group }}, {{ expected_developer_group }}, {{ expected_audit_group }}"
+      deny:
+        conditions:
+          # This is informational - actual validation happens when groups are created
+
+  # Recommend both mnemonic AND environment labels for RBAC automation
+  - name: require-rbac-labels
+    match:
+      any:
+      - resources:
+          kinds: ["Namespace"]
+    preconditions:
+      any:
+      # Skip system namespaces
+      - key: "{{ request.object.metadata.name }}"
+        operator: AnyNotIn
+        value: ["kube-system", "kube-public", "kube-node-lease", "default", "openshift-etcd", "openshift-apiserver", "openshift-authentication"]
+    validate:
+      message: "For RBAC automation, namespace should have both 'company.net/mnemonic' and 'company.net/app-environment' labels"
+      deny:
+        conditions:
+          any:
+          - key: "{{ request.object.metadata.labels.\"company.net/mnemonic\" || '' }}"
+            operator: Equals
+            value: ""
+          - key: "{{ request.object.metadata.labels.\"company.net/app-environment\" || '' }}"
+            operator: Equals
+            value: ""

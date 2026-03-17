@@ -1,0 +1,87 @@
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: GroupConfig
+metadata:
+  name: custom-crd-access
+  labels:
+    app.kubernetes.io/name: namespace-configuration-operator
+    app.kubernetes.io/component: custom-crd-access
+  annotations:
+    description: "Grant ns-admin and ns-developer groups access to custom CRDs and operators"
+spec:
+  selector:
+    matchExpressions:
+    # Match only ns-developer and ns-admin groups (not cluster groups)
+    - key: metadata.name
+      operator: MatchesRegex
+      values: 
+      - "^app-ocp-rbac-[a-z]{4}-ns-(admin|developer)$"
+  templates:
+    # Grant access to Tekton Pipeline CRDs (example)
+    - objectTemplate: |
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: "{{ .Name }}-tekton-pipelines-edit"
+          namespace: openshift-pipelines
+          labels:
+            app.kubernetes.io/managed-by: namespace-configuration-operator
+            rbac.ocp.io/role-type: custom-crd-access
+            rbac.ocp.io/target-namespace: openshift-pipelines
+            rbac.ocp.io/source-group: "{{ .Name }}"
+            rbac.ocp.io/custom-crd: tekton-pipelines
+        subjects:
+        - kind: Group
+          name: "{{ .Name }}"
+          apiGroup: rbac.authorization.k8s.io
+        roleRef:
+          kind: ClusterRole
+          name: tekton-pipelines-edit  # Custom ClusterRole for Tekton access
+          apiGroup: rbac.authorization.k8s.io
+
+    # Grant access to GitOps/ArgoCD CRDs (admin groups only)
+    - objectTemplate: |
+        {{- if contains "-ns-admin" .Name }}
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: "{{ .Name }}-gitops-admin"
+          namespace: openshift-gitops
+          labels:
+            app.kubernetes.io/managed-by: namespace-configuration-operator
+            rbac.ocp.io/role-type: custom-crd-access
+            rbac.ocp.io/target-namespace: openshift-gitops
+            rbac.ocp.io/source-group: "{{ .Name }}"
+            rbac.ocp.io/custom-crd: gitops-admin
+        subjects:
+        - kind: Group
+          name: "{{ .Name }}"
+          apiGroup: rbac.authorization.k8s.io
+        roleRef:
+          kind: ClusterRole
+          name: gitops-application-admin  # Custom ClusterRole for GitOps access
+          apiGroup: rbac.authorization.k8s.io
+        {{- end }}
+
+    # Grant access to Service Mesh CRDs (admin groups only)
+    - objectTemplate: |
+        {{- if contains "-ns-admin" .Name }}
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: "{{ .Name }}-servicemesh-admin"
+          namespace: istio-system
+          labels:
+            app.kubernetes.io/managed-by: namespace-configuration-operator
+            rbac.ocp.io/role-type: custom-crd-access
+            rbac.ocp.io/target-namespace: istio-system
+            rbac.ocp.io/source-group: "{{ .Name }}"
+            rbac.ocp.io/custom-crd: servicemesh-admin
+        subjects:
+        - kind: Group
+          name: "{{ .Name }}"
+          apiGroup: rbac.authorization.k8s.io
+        roleRef:
+          kind: ClusterRole
+          name: servicemesh-configuration-admin  # Custom ClusterRole for Service Mesh
+          apiGroup: rbac.authorization.k8s.io
+        {{- end }}

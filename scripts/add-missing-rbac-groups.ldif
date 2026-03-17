@@ -1,0 +1,28 @@
+# Missing RBAC Groups LDIF
+# This file adds the missing LDAP groups required for complete RBAC automation coverage
+# 
+# Missing Groups Identified:
+# - app-ocp-rbac-beta-ns-audit (for beta-prod audit-only access)
+# - app-ocp-rbac-jeff-ns-developer (for jeff team developer access)
+# - app-ocp-rbac-jeff-ns-audit (for jeff team audit access)
+
+# Beta team - Missing audit group
+dn: cn=app-ocp-rbac-beta-ns-audit,ou=Groups,dc=ephico2real,dc=com
+objectClass: groupOfNames
+cn: app-ocp-rbac-beta-ns-audit
+description: Beta team namespace audit access group (view permissions)
+member: cn=bob.wilson,ou=People,dc=ephico2real,dc=com
+
+# Jeff team - Missing developer group  
+dn: cn=app-ocp-rbac-jeff-ns-developer,ou=Groups,dc=ephico2real,dc=com
+objectClass: groupOfNames
+cn: app-ocp-rbac-jeff-ns-developer
+description: Jeff team namespace developer access group (edit permissions)
+member: uid=jeff,ou=People,dc=ephico2real,dc=com
+
+# Jeff team - Missing audit group
+dn: cn=app-ocp-rbac-jeff-ns-audit,ou=Groups,dc=ephico2real,dc=com
+objectClass: groupOfNames
+cn: app-ocp-rbac-jeff-ns-audit
+description: Jeff team namespace audit access group (view permissions)
+member: uid=jeff,ou=People,dc=ephico2real,dc=com
