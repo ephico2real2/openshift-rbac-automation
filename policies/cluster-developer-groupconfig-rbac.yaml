@@ -8,7 +8,7 @@ metadata:
     rbac.ocp.io/scope: cluster-wide
     rbac.ocp.io/kind: GroupConfig
   annotations:
-    description: "Cluster RBAC: view ClusterRole for cluster-developer groups"
+    description: "Cluster RBAC: edit ClusterRole for cluster-developer groups"
 spec:
   labelSelector:
     matchExpressions:
@@ -28,7 +28,7 @@ spec:
             rbac.ocp.io/policy-version: 0.1.0
             rbac.ocp.io/role-type: cluster-developer
             rbac.ocp.io/group-name: "{{ .Name }}"
-            rbac.ocp.io/access-level: view-cluster-wide
+            rbac.ocp.io/access-level: edit-cluster-wide
             rbac.ocp.io/config-source: cluster-rbac
           annotations:
             rbac.ocp.io/created-by: namespace-configuration-operator
@@ -42,5 +42,5 @@ spec:
         roleRef:
           apiGroup: rbac.authorization.k8s.io
           kind: ClusterRole
-          name: view
+          name: edit
         {{- end }}
