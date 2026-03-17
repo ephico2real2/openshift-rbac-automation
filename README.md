@@ -223,7 +223,9 @@ oc get clusterrolebindings \
 ```
 
 ```bash
-# Option 2: Filter by specific role type (e.g., cluster-admin)
+# Option 2: Filter by specific role type
+
+# Cluster-admin groups
 oc get clusterrolebindings \
   -l rbac.ocp.io/role-type=cluster-admin \
   -o custom-columns='NAME:.metadata.name,CLUSTERROLE:.roleRef.name,GROUP:.subjects[0].name'
@@ -233,6 +235,27 @@ oc get clusterrolebindings \
 # app-ocp-rbac-alpha-cluster-admin-crb      admin         app-ocp-rbac-alpha-cluster-admin
 # app-ocp-rbac-demo-cluster-admin-crb       admin         app-ocp-rbac-demo-cluster-admin
 # app-ocp-rbac-platform-cluster-admin-crb   admin         app-ocp-rbac-platform-cluster-admin
+
+# Cluster-developer groups
+oc get clusterrolebindings \
+  -l rbac.ocp.io/role-type=cluster-developer \
+  -o custom-columns='NAME:.metadata.name,CLUSTERROLE:.roleRef.name,GROUP:.subjects[0].name'
+
+# Expected output:
+# NAME                                          CLUSTERROLE   GROUP
+# app-ocp-rbac-alpha-cluster-developer-crb      view          app-ocp-rbac-alpha-cluster-developer
+# app-ocp-rbac-demo-cluster-developer-crb       view          app-ocp-rbac-demo-cluster-developer
+# app-ocp-rbac-finance-cluster-developer-crb    view          app-ocp-rbac-finance-cluster-developer
+
+# Cluster-audit groups
+oc get clusterrolebindings \
+  -l rbac.ocp.io/role-type=cluster-audit \
+  -o custom-columns='NAME:.metadata.name,CLUSTERROLE:.roleRef.name,GROUP:.subjects[0].name'
+
+# Expected output:
+# NAME                                      CLUSTERROLE   GROUP
+# app-ocp-rbac-alpha-cluster-audit-crb      view          app-ocp-rbac-alpha-cluster-audit
+# app-ocp-rbac-demo-cluster-audit-crb       view          app-ocp-rbac-demo-cluster-audit
 ```
 
 ```bash
