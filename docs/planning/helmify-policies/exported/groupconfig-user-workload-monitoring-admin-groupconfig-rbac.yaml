@@ -1,0 +1,75 @@
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: GroupConfig
+metadata:
+  annotations:
+    description: 'User Workload Monitoring RBAC: ns-admin groups get full monitoring
+      access'
+  finalizers:
+  - redhatcop.redhat.io/groupconfig-controller
+  labels:
+    app.kubernetes.io/component: user-workload-monitoring
+    app.kubernetes.io/name: namespace-configuration-operator
+    rbac.ocp.io/kind: GroupConfig
+    rbac.ocp.io/scope: namespace-scoped
+  name: user-workload-monitoring-admin-groupconfig-rbac
+spec:
+  annotationSelector: {}
+  labelSelector:
+    matchExpressions:
+    - key: group-sync-operator.redhat-cop.io/sync-provider
+      operator: Exists
+  templates:
+  - excludedPaths:
+    - .metadata
+    - .status
+    - .spec.replicas
+    objectTemplate: "{{- if hasSuffix \"-ns-admin\" .Name }}\napiVersion: rbac.authorization.k8s.io/v1\n\
+      kind: RoleBinding\nmetadata:\n  name: \"{{ .Name }}-monitoring-config-edit\"\
+      \n  namespace: openshift-user-workload-monitoring\n  labels:\n    app.kubernetes.io/managed-by:\
+      \ namespace-configuration-operator\n    app.kubernetes.io/version: 0.1.0\n \
+      \   rbac.ocp.io/policy-version: 0.1.0\n    rbac.ocp.io/role-type: openshift-user-workload-monitoring\n\
+      \    rbac.ocp.io/target-namespace: openshift-user-workload-monitoring\n    rbac.ocp.io/group-name:\
+      \ \"{{ .Name }}\"\n    rbac.ocp.io/access-level: monitoring-config-edit\n  \
+      \  rbac.ocp.io/config-source: user-workload-monitoring\n  annotations:\n   \
+      \ rbac.ocp.io/created-by: namespace-configuration-operator\n    rbac.ocp.io/source-groupconfig:\
+      \ user-workload-monitoring-admin-groupconfig-rbac\n    rbac.ocp.io/scope-restriction:\
+      \ \"openshift-user-workload-monitoring\"\nsubjects:\n- kind: Group\n  name:\
+      \ \"{{ .Name }}\"\n  apiGroup: rbac.authorization.k8s.io\nroleRef:\n  kind:\
+      \ Role\n  name: user-workload-monitoring-config-edit\n  apiGroup: rbac.authorization.k8s.io\n\
+      {{- end }}\n"
+  - excludedPaths:
+    - .metadata
+    - .status
+    - .spec.replicas
+    objectTemplate: "{{- if hasSuffix \"-ns-admin\" .Name }}\napiVersion: rbac.authorization.k8s.io/v1\n\
+      kind: RoleBinding\nmetadata:\n  name: \"{{ .Name }}-prometheus-rules-edit\"\n\
+      \  namespace: openshift-user-workload-monitoring\n  labels:\n    app.kubernetes.io/managed-by:\
+      \ namespace-configuration-operator\n    app.kubernetes.io/version: 0.1.0\n \
+      \   rbac.ocp.io/policy-version: 0.1.0\n    rbac.ocp.io/role-type: openshift-user-workload-monitoring\n\
+      \    rbac.ocp.io/target-namespace: openshift-user-workload-monitoring\n    rbac.ocp.io/group-name:\
+      \ \"{{ .Name }}\"\n    rbac.ocp.io/access-level: prometheus-rules-admin\n  \
+      \  rbac.ocp.io/config-source: user-workload-monitoring\n  annotations:\n   \
+      \ rbac.ocp.io/created-by: namespace-configuration-operator\n    rbac.ocp.io/source-groupconfig:\
+      \ user-workload-monitoring-admin-groupconfig-rbac\n    rbac.ocp.io/scope-restriction:\
+      \ \"openshift-user-workload-monitoring\"\nsubjects:\n- kind: Group\n  name:\
+      \ \"{{ .Name }}\"\n  apiGroup: rbac.authorization.k8s.io\nroleRef:\n  kind:\
+      \ ClusterRole\n  name: monitoring-rules-edit\n  apiGroup: rbac.authorization.k8s.io\n\
+      {{- end }}\n"
+  - excludedPaths:
+    - .status
+    - .spec.replicas
+    - .metadata
+    objectTemplate: "{{- if hasSuffix \"-ns-admin\" .Name }}\napiVersion: rbac.authorization.k8s.io/v1\n\
+      kind: RoleBinding\nmetadata:\n  name: \"{{ .Name }}-alert-routing-edit\"\n \
+      \ namespace: openshift-user-workload-monitoring\n  labels:\n    app.kubernetes.io/managed-by:\
+      \ namespace-configuration-operator\n    app.kubernetes.io/version: 0.1.0\n \
+      \   rbac.ocp.io/policy-version: 0.1.0\n    rbac.ocp.io/role-type: openshift-user-workload-monitoring\n\
+      \    rbac.ocp.io/target-namespace: openshift-user-workload-monitoring\n    rbac.ocp.io/group-name:\
+      \ \"{{ .Name }}\"\n    rbac.ocp.io/access-level: alert-routing-admin\n    rbac.ocp.io/config-source:\
+      \ user-workload-monitoring\n  annotations:\n    rbac.ocp.io/created-by: namespace-configuration-operator\n\
+      \    rbac.ocp.io/source-groupconfig: user-workload-monitoring-admin-groupconfig-rbac\n\
+      \    rbac.ocp.io/scope-restriction: \"openshift-user-workload-monitoring\"\n\
+      subjects:\n- kind: Group\n  name: \"{{ .Name }}\"\n  apiGroup: rbac.authorization.k8s.io\n\
+      roleRef:\n  kind: Role\n  name: alert-routing-edit\n  apiGroup: rbac.authorization.k8s.io\n\
+      {{- end }}\n"
+
