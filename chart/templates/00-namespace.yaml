@@ -1,0 +1,20 @@
+{{- if .Values.createNamespace }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.namespace }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: namespace
+    {{- with .Values.podSecurity.audit }}
+    pod-security.kubernetes.io/audit: {{ . }}
+    {{- end }}
+    {{- with .Values.podSecurity.warn }}
+    pod-security.kubernetes.io/warn: {{ . }}
+    {{- end }}
+  annotations:
+    # Create the namespace before the OperatorGroup and Subscription.
+    argocd.argoproj.io/sync-wave: "-2"
+    helm.sh/hook: pre-install
+    helm.sh/hook-weight: "-10"
+{{- end }}

@@ -1,0 +1,44 @@
+********************************************************************************
+  Namespace Configuration Operator (NCO) — install submitted.
+
+  Release {{ .Release.Name }} in namespace {{ .Values.namespace }}.
+********************************************************************************
+
+WHAT THIS INSTALLED
+===================
+{{ if .Values.createNamespace }}  - Namespace:     {{ .Values.namespace }}
+{{ end }}{{ if .Values.createOperatorGroup }}  - OperatorGroup: {{ .Values.namespace }} (AllNamespaces / global)
+{{ end }}  - Subscription:  {{ .Values.subscription.packageName }} (channel: {{ .Values.subscription.channel }}, source: {{ .Values.subscription.source }})
+
+OLM now resolves the InstallPlan and installs the operator CSV. This takes a minute.
+
+VERIFY
+======
+1. InstallPlan + CSV reach "Complete" / "Succeeded":
+   $ oc get installplan -n {{ .Values.namespace }}
+   $ oc get csv -n {{ .Values.namespace }} | grep namespace-configuration-operator
+
+2. The controller is running:
+   $ oc get pods -n {{ .Values.namespace }}
+   $ oc get deployment -n {{ .Values.namespace }}
+
+3. The CRDs are available (the operator provides these):
+   $ oc get crd | grep redhatcop.redhat.io
+   # expect: groupconfigs, namespaceconfigs, ...
+
+NEXT STEPS
+==========
+Apply your RBAC policies (GroupConfig / NamespaceConfig custom resources). These live
+in ../policies and are applied separately (they use the operator's own Go templating,
+so they are NOT part of this Helm chart):
+
+   $ oc apply -f policies/
+
+TROUBLESHOOTING
+===============
+- Stuck InstallPlan:
+    $ oc describe installplan -n {{ .Values.namespace }}
+- If you installed into a namespace that already had a global OperatorGroup, set
+  createOperatorGroup=false — two global OperatorGroups in one namespace conflict.
+- Operator logs:
+    $ oc logs -n {{ .Values.namespace }} deployment/namespace-configuration-operator-controller-manager -c manager --tail=100

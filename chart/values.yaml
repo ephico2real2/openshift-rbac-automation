@@ -1,0 +1,58 @@
+# Namespace Configuration Operator (NCO) — OLM install chart values
+# Installs the redhat-cop Namespace Configuration Operator via OLM.
+# Full guide: chart README.md. Policies (GroupConfig/NamespaceConfig) are separate.
+
+# -------------------- Install namespace --------------------
+# The operator is installed into this namespace. It watches ALL namespaces
+# (AllNamespaces / global mode), because it configures namespaces cluster-wide.
+namespace: namespace-configuration-operator
+
+# Create the install namespace as part of this release.
+# Set to false if the namespace already exists or is managed elsewhere
+# (e.g. installing into the built-in "openshift-operators" namespace).
+createNamespace: true
+
+# -------------------- OperatorGroup --------------------
+# Create an AllNamespaces (global) OperatorGroup in the install namespace.
+# NCO must watch every namespace, so the OperatorGroup has NO targetNamespaces
+# (an empty spec = AllNamespaces mode). This is the key difference from a targeted
+# operator like group-sync (which scopes to specific namespaces).
+#
+# IMPORTANT: set to false when installing into a namespace that ALREADY has a global
+# OperatorGroup (e.g. "openshift-operators") — two global OperatorGroups in one
+# namespace is an OLM conflict that breaks operator installs in that namespace.
+createOperatorGroup: true
+
+# -------------------- Subscription (OLM) --------------------
+subscription:
+  # Package name in the catalog source.
+  packageName: namespace-configuration-operator
+  # Update channel (alpha is the only channel published for this operator).
+  channel: alpha
+  # Catalog source and its namespace (default OpenShift community catalog).
+  source: community-operators
+  sourceNamespace: openshift-marketplace
+  # Automatic = OLM applies InstallPlans without manual approval.
+  installPlanApproval: Automatic
+  # Optional: pin the initial CSV version for reproducible installs.
+  # Leave empty to take the current head of the channel.
+  # Example: "namespace-configuration-operator.v1.2.6"
+  startingCSV: ""
+
+  # Operator runtime env, injected via Subscription spec.config.env (an OLM-supported
+  # override — spec.config accepts env/resources/tolerations/etc., but NOT image).
+  # zap logger controls (the operator uses controller-runtime's zap logger):
+  #   ZAP_LOG_LEVEL: verbosity — debug | info | error (or a level number)
+  #   ZAP_DEVEL:     development-mode logging (console encoder + stacktraces); "false" for prod
+  zapLogLevel: "info"
+  zapDevel: "false"
+  # Extra env vars appended to spec.config.env, as a list of {name, value}.
+  extraEnv: []
+
+# -------------------- Namespace Pod Security --------------------
+# NCO's controller runs with elevated privileges. The live operator namespace sets
+# audit/warn to "privileged" (non-enforcing — they only log/warn, never block).
+# Applied only when createNamespace is true.
+podSecurity:
+  audit: privileged
+  warn: privileged
