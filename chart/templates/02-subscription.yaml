@@ -26,6 +26,15 @@ spec:
         value: {{ .Values.subscription.zapLogLevel | quote }}
       - name: ZAP_DEVEL
         value: {{ .Values.subscription.zapDevel | quote }}
+      {{- with .Values.subscription.relatedImageManager }}
+      # Native, OLM-owned operator image override (no Kyverno/IDMS needed).
+      - name: RELATED_IMAGE_MANAGER
+        value: {{ . | quote }}
+      {{- end }}
       {{- with .Values.subscription.extraEnv }}
       {{- toYaml . | nindent 6 }}
       {{- end }}
+    {{- with .Values.subscription.resources }}
+    resources:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}

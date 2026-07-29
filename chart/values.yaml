@@ -32,22 +32,36 @@ subscription:
   # Catalog source and its namespace (default OpenShift community catalog).
   source: community-operators
   sourceNamespace: openshift-marketplace
-  # Automatic = OLM applies InstallPlans without manual approval.
-  installPlanApproval: Automatic
-  # Optional: pin the initial CSV version for reproducible installs.
-  # Leave empty to take the current head of the channel.
-  # Example: "namespace-configuration-operator.v1.2.6"
-  startingCSV: ""
+  # Manual = OLM stages an InstallPlan that you approve before the operator (re)installs.
+  # Automatic = OLM applies InstallPlans without approval.
+  installPlanApproval: Manual
+  # Pin the initial CSV version for reproducible installs (empty = channel head).
+  startingCSV: "namespace-configuration-operator.v1.2.6"
 
   # Operator runtime env, injected via Subscription spec.config.env (an OLM-supported
-  # override — spec.config accepts env/resources/tolerations/etc., but NOT image).
-  # zap logger controls (the operator uses controller-runtime's zap logger):
+  # override). zap logger controls (the operator uses controller-runtime's zap logger):
   #   ZAP_LOG_LEVEL: verbosity — debug | info | error (or a level number)
   #   ZAP_DEVEL:     development-mode logging (console encoder + stacktraces); "false" for prod
   zapLogLevel: "info"
   zapDevel: "false"
+
+  # Override the operator MANAGER image the SUPPORTED, native way — no Kyverno, no IDMS.
+  # The operator is built with operator-sdk and reads RELATED_IMAGE_MANAGER to set its
+  # manager image; injecting it here via spec.config.env makes OLM own the change.
+  # Empty = keep the upstream image referenced by the CSV.
+  relatedImageManager: "quay.io/ephico2real/namespace-configuration-operator:latest"
+
   # Extra env vars appended to spec.config.env, as a list of {name, value}.
   extraEnv: []
+
+  # Operator resource requests/limits (spec.config.resources). Empty {} to omit.
+  resources:
+    requests:
+      cpu: 250m
+      memory: 500Mi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
 
 # -------------------- Namespace Pod Security --------------------
 # NCO's controller runs with elevated privileges. The live operator namespace sets
