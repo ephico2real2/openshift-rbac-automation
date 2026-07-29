@@ -1,0 +1,77 @@
+{{- if .Values.subscription.autoApproveInstallPlan.enabled }}
+{{- $approveCSV := .Values.subscription.autoApproveInstallPlan.csv | default .Values.subscription.startingCSV }}
+{{- if not $approveCSV }}
+{{- fail "subscription.autoApproveInstallPlan is enabled but there is no CSV to approve: set subscription.startingCSV (the pinned version) or subscription.autoApproveInstallPlan.csv. Approving an unpinned InstallPlan would auto-approve arbitrary channel upgrades, which defeats installPlanApproval: Manual." }}
+{{- end }}
+# Approves the pinned InstallPlan so a Manual-approval Subscription can still install
+# unattended. Runs at a LOWER hook weight than the image-override Job (10), because that Job
+# waits on .status.installedCSV, which never appears until this approval happens.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "nco.approver.name" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: installplan-approver
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/hook: PostSync
+    # See 05-image-override-job.yaml: a Job's spec.template is immutable, so the previous run
+    # must be deleted before this one is created or the next sync fails.
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "5"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: {{ .Values.subscription.autoApproveInstallPlan.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.subscription.autoApproveInstallPlan.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ .Values.subscription.autoApproveInstallPlan.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "nco.labels" . | nindent 8 }}
+        app.kubernetes.io/component: installplan-approver
+    spec:
+      serviceAccountName: {{ include "nco.approver.name" . }}
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: approve-installplan
+          image: {{ .Values.operatorImage.job.image | quote }}
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "/scripts/approve-installplan.sh"]
+          env:
+            - name: NAMESPACE
+              value: {{ .Values.namespace | quote }}
+            - name: SUBSCRIPTION
+              value: {{ .Values.subscription.packageName | quote }}
+            - name: APPROVE_CSV
+              value: {{ $approveCSV | quote }}
+            - name: WAIT_SECONDS
+              value: {{ .Values.subscription.autoApproveInstallPlan.waitSeconds | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.operatorImage.job.resources | nindent 12 }}
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            # oc writes a cache under $HOME; the root filesystem is read-only.
+            - name: home
+              mountPath: /.kube
+      volumes:
+        - name: scripts
+          configMap:
+            name: {{ include "nco.approver.name" . }}
+            defaultMode: 0555
+        - name: home
+          emptyDir: {}
+{{- end }}

@@ -10,7 +10,12 @@ namespace: namespace-configuration-operator
 # Create the install namespace as part of this release.
 # Set to false if the namespace already exists or is managed elsewhere
 # (e.g. installing into the built-in "openshift-operators" namespace).
-createNamespace: true
+#
+# FALSE here because this namespace predates the chart (created 234d ago, already carries the
+# privileged audit/warn PSA labels). The namespace template is a pre-install HOOK, and Helm
+# creates hook resources rather than applying them — so with this true, `helm install` fails
+# with "namespaces already exists". Flip to true only for a genuinely new namespace.
+createNamespace: false
 
 # -------------------- OperatorGroup --------------------
 # Create an AllNamespaces (global) OperatorGroup in the install namespace.
@@ -34,9 +39,37 @@ subscription:
   sourceNamespace: openshift-marketplace
   # Manual = OLM stages an InstallPlan that you approve before the operator (re)installs.
   # Automatic = OLM applies InstallPlans without approval.
+  #
+  # MANUAL, and it stays honest: the autoApproveInstallPlan Job below approves ONLY the
+  # InstallPlan for the pinned startingCSV, so a fresh install still completes unattended
+  # while any later channel upgrade is staged and waits for a human. Declared state matches
+  # live state, which matters because this chart is ArgoCD-annotated — a Job that mutated
+  # this field instead would show as permanent drift and be reverted by self-heal.
   installPlanApproval: Manual
   # Pin the initial CSV version for reproducible installs (empty = channel head).
+  # With autoApproveInstallPlan below, this pin is also the APPROVAL AUTHORITY: only an
+  # InstallPlan for exactly this CSV is approved automatically.
   startingCSV: "namespace-configuration-operator.v1.2.6"
+
+  # Scoped InstallPlan approver. Makes installPlanApproval: Manual workable unattended.
+  #
+  # Approves only the InstallPlan installing `csv` (defaults to startingCSV) and owned by
+  # this chart's Subscription. Anything else — a newer CSV appearing in the alpha channel,
+  # or another operator's InstallPlan sharing the namespace — is logged and left unapproved.
+  # To adopt a new version, bump startingCSV and re-sync: the upgrade becomes a reviewable
+  # git change instead of an `oc patch` on the cluster.
+  #
+  # Set enabled: false for a strictly hands-on install (you approve the InstallPlan yourself,
+  # and the image-override hook will wait for you up to its own timeout).
+  autoApproveInstallPlan:
+    enabled: true
+    # Empty = use startingCSV. Set explicitly only to approve a CSV other than the pin.
+    csv: ""
+    # How long to wait for the InstallPlan to appear, and then to reach Complete.
+    waitSeconds: 300
+    backoffLimit: 3
+    activeDeadlineSeconds: 900
+    ttlSecondsAfterFinished: 3600
 
   # Operator runtime env, injected via Subscription spec.config.env (an OLM-supported
   # override). zap logger controls (the operator uses controller-runtime's zap logger):
@@ -56,13 +89,95 @@ subscription:
   extraEnv: []
 
   # Operator resource requests/limits (spec.config.resources). Empty {} to omit.
+  #
+  # SIZED FOR CRC. This single-node cluster allocates 4800m CPU and already sits at ~89%
+  # requested, leaving roughly 500m. A rolling update needs TWO operator pods briefly, so the
+  # previous 250m request (=500m for the pair) wedged the rollout with "Pending: Insufficient
+  # cpu" — that is the failure recorded in docs/local-testing/ §4c. 100m matches what the
+  # operator actually ran with under the CSV defaults and leaves headroom for the rollout.
+  # Raise these on a properly-sized cluster.
   resources:
     requests:
-      cpu: 250m
-      memory: 500Mi
+      cpu: 100m
+      memory: 128Mi
     limits:
-      cpu: 2000m
-      memory: 4Gi
+      cpu: 500m
+      memory: 512Mi
+
+# -------------------- Operator image override (CSV patch) --------------------
+# Runs our own build of the operator instead of the catalog's image.
+#
+# OLM has no supported operator-image override: Subscription.spec.config carries no image
+# field, and RELATED_IMAGE_MANAGER is an *operand* hint that this operator ignores (proven —
+# docs/local-testing/LOCAL_TEST_operator_image_override.md). What DOES work is patching the
+# installed CSV: OLM treats spec.install.spec.deployments[] as the source of truth for the
+# operator Deployment and re-applies it within seconds. A Job does that patch, replacing the
+# Kyverno image-rewrite policy.
+#
+# TRADE-OFF vs Kyverno: Kyverno enforced at admission, so it self-healed. This is a one-shot
+# patch — an OLM operator upgrade installs a fresh CSV and the upstream image comes back.
+# Enable `reconcile` below to get the self-healing behaviour back.
+operatorImage:
+  # ON: this chart now owns the operator image. The Kyverno policies that used to do it
+  # (replace-operator-image-to-dockerhub, inject-dockerhub-secret) have been deleted — they
+  # would fight this Job, mutating the Deployment back to docker.io at admission and making
+  # the Job's propagation check fail. Both are backed up in docs/local-testing/kyverno-backup/.
+  enabled: true
+
+  # The image to run. Must be pullable by the cluster (set imagePullSecret if private).
+  repository: quay.io/ephico2real/namespace-configuration-operator
+  tag: latest
+  # Always, so a moving ":latest" tag is re-pulled on every pod start.
+  pullPolicy: Always
+
+  # Safety guard. The patch is applied only when the CSV's current image either sits in the
+  # `repository` above (a tag bump — always in policy) or matches this pattern. Anything else
+  # is refused rather than silently overwritten, which is what makes the unattended reconcile
+  # CronJob safe. Widen it if you fork from a different upstream.
+  expectedImagePattern: '^quay\.io/redhat-cop/namespace-configuration-operator(@sha256:[0-9a-f]{64}|:[A-Za-z0-9_.-]+)$'
+
+  # Where inside the CSV to patch. Both are matched BY NAME and the array indices are
+  # discovered at runtime — in v1.2.6 the manager is containers[1] and kube-rbac-proxy is
+  # containers[0], and that ordering is a bundle detail, not a contract.
+  csvDeploymentName: namespace-configuration-operator-controller-manager
+  containerName: manager
+
+  # Pull secret for a private registry, written into the CSV deployment's podSpec. Leave
+  # empty for a public image — the default quay repo is public, so none is needed.
+  # (This is the knob that replaces the `inject-dockerhub-secret` Kyverno policy.)
+  imagePullSecret: ""
+
+  # Periodic drift correction — the Kyverno-equivalent self-healing. Each run is idempotent
+  # and exits early when the CSV is already correct. Leave off if you would rather the image
+  # revert visibly on an operator upgrade than be silently re-patched.
+  # ON: Kyverno used to enforce the image continuously at admission, and deleting it removed
+  # that self-healing. Without this CronJob an OLM operator upgrade would silently revert the
+  # operator to the upstream catalog image. Each run is a cheap no-op when the CSV is correct.
+  reconcile:
+    enabled: true
+    schedule: "*/10 * * * *"
+    startingDeadlineSeconds: 120
+    successfulJobsHistoryLimit: 1
+    failedJobsHistoryLimit: 3
+
+  job:
+    # `oc` client image. The openshift/cli imagestream ships on every OpenShift cluster and
+    # needs no pull credentials.
+    image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+    # Per-wait budget: how long to wait for the CSV to appear, for OLM to propagate the
+    # patch, and for the rollout. Generous, because with installPlanApproval=Manual the
+    # InstallPlan may sit unapproved for a while.
+    waitSeconds: 300
+    backoffLimit: 3
+    activeDeadlineSeconds: 1200
+    ttlSecondsAfterFinished: 3600
+    resources:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
 
 # -------------------- Namespace Pod Security --------------------
 # NCO's controller runs with elevated privileges. The live operator namespace sets

@@ -1,0 +1,180 @@
+{{- if .Values.operatorImage.enabled }}
+# Patch script shared by the image-override Job (Helm hook) and the optional reconcile
+# CronJob. Kept in a ConfigMap so both run byte-identical logic. All inputs arrive as env
+# vars from the pod spec, so the script itself is not Helm-templated.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nco.imageOverride.name" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: image-override
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+data:
+  patch-csv-image.sh: |
+    #!/bin/bash
+    # Rewrites the operator's own container image inside the installed ClusterServiceVersion.
+    #
+    # WHY THIS EXISTS: OLM offers no supported way to override an operator's OWN image.
+    # Subscription.spec.config has no image field, and RELATED_IMAGE_* is an *operand*-image
+    # hint — proven not to work for this operator (docs/local-testing/). OLM does, however,
+    # treat the installed CSV as the source of truth for the operator Deployment: patching
+    # spec.install.spec.deployments[].spec.template.spec.containers[] makes OLM re-apply the
+    # Deployment within seconds. That is the mechanism used here.
+    #
+    # This is a ONE-SHOT patch, not an admission-time policy. An OLM operator upgrade
+    # installs a fresh CSV from the catalog and the upstream image returns, which is why the
+    # reconcile CronJob exists.
+    set -euo pipefail
+
+    log()  { printf '%s  %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
+    fail() { log "ERROR: $*"; exit 1; }
+
+    # Repository part of a reference, with any :tag or @digest removed. The ':' test is
+    # scoped to the last path segment so a registry port (host:5000/repo) is not mistaken
+    # for a tag.
+    repo_of() {
+      local ref="${1%%@*}"
+      case "${ref##*/}" in
+        *:*) ref="${ref%:*}" ;;
+      esac
+      printf '%s' "$ref"
+    }
+
+    : "${NAMESPACE:?}" "${SUBSCRIPTION:?}" "${CSV_DEPLOYMENT:?}" "${CONTAINER:?}"
+    : "${TARGET_IMAGE:?}" "${PULL_POLICY:?}" "${EXPECTED_IMAGE_PATTERN:?}" "${WAIT_SECONDS:?}"
+    PULL_SECRET="${PULL_SECRET:-}"
+
+    log "namespace=${NAMESPACE} subscription=${SUBSCRIPTION} target=${TARGET_IMAGE}"
+
+    # --- 1. Resolve the CSV via the Subscription -----------------------------------------
+    # .status.installedCSV rather than a hardcoded name, so an operator version bump
+    # (or a different startingCSV) is followed automatically.
+    CSV=""
+    deadline=$(( $(date +%s) + WAIT_SECONDS ))
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+      CSV="$(oc get subscription "$SUBSCRIPTION" -n "$NAMESPACE" \
+              -o jsonpath='{.status.installedCSV}' 2>/dev/null || true)"
+      if [ -n "$CSV" ] && oc get csv "$CSV" -n "$NAMESPACE" >/dev/null 2>&1; then
+        break
+      fi
+      CSV=""
+      log "waiting for Subscription/${SUBSCRIPTION} to report an installed CSV..."
+      sleep 5
+    done
+    [ -n "$CSV" ] || fail "Subscription/${SUBSCRIPTION} reported no installed CSV within ${WAIT_SECONDS}s. With installPlanApproval=Manual the InstallPlan must be approved before a CSV exists."
+    log "target CSV: ${CSV}"
+
+    # Never patch an OLM replica — those are re-synced from the source and the change is lost.
+    COPIED="$(oc get csv "$CSV" -n "$NAMESPACE" \
+               -o jsonpath='{.metadata.labels.olm\.copiedFrom}' 2>/dev/null || true)"
+    [ -z "$COPIED" ] || fail "CSV ${CSV} in ${NAMESPACE} is an OLM copy (olm.copiedFrom=${COPIED}); the source CSV lives in ${COPIED}."
+
+    # Let a fresh install settle before patching. OLM applies the install strategy on the
+    # Pending->Installing transition, so patching mid-install races that apply and the
+    # original image can land after ours. Deliberately NON-fatal: a CSV already stuck in
+    # InstallWaiting (e.g. a previous run left a bad image) still needs this job to run so
+    # the guard and rollback logic below can act on it.
+    deadline=$(( $(date +%s) + WAIT_SECONDS ))
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+      PHASE="$(oc get csv "$CSV" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+      [ "$PHASE" = "Succeeded" ] && break
+      log "waiting for CSV ${CSV} to settle (phase=${PHASE:-<none>})"
+      sleep 5
+    done
+    [ "$PHASE" = "Succeeded" ] || log "WARNING: CSV phase is '${PHASE:-<none>}', not Succeeded; proceeding anyway"
+
+    # --- 2. Locate the deployment and container by NAME ----------------------------------
+    # Indices are discovered, never hardcoded: in this CSV the manager is containers[1]
+    # (kube-rbac-proxy is [0]), and that ordering is a property of the bundle, not a contract.
+    DEPLOY_NAMES="$(oc get csv "$CSV" -n "$NAMESPACE" \
+                     -o jsonpath='{.spec.install.spec.deployments[*].name}' | tr ' ' '\n')"
+    D_IDX="$(printf '%s\n' "$DEPLOY_NAMES" | grep -nxF "$CSV_DEPLOYMENT" | cut -d: -f1 || true)"
+    [ -n "$D_IDX" ] || fail "CSV ${CSV} has no install-strategy deployment named '${CSV_DEPLOYMENT}'. Found: $(printf '%s' "$DEPLOY_NAMES" | tr '\n' ' ')"
+    D_IDX=$((D_IDX - 1))
+
+    CONTAINER_NAMES="$(oc get csv "$CSV" -n "$NAMESPACE" \
+                        -o jsonpath="{.spec.install.spec.deployments[${D_IDX}].spec.template.spec.containers[*].name}" | tr ' ' '\n')"
+    C_IDX="$(printf '%s\n' "$CONTAINER_NAMES" | grep -nxF "$CONTAINER" | cut -d: -f1 || true)"
+    [ -n "$C_IDX" ] || fail "Deployment '${CSV_DEPLOYMENT}' in CSV ${CSV} has no container named '${CONTAINER}'. Found: $(printf '%s' "$CONTAINER_NAMES" | tr '\n' ' ')"
+    C_IDX=$((C_IDX - 1))
+    log "resolved deployments[${D_IDX}].containers[${C_IDX}] (${CSV_DEPLOYMENT}/${CONTAINER})"
+
+    BASE="/spec/install/spec/deployments/${D_IDX}/spec/template/spec"
+    CURRENT="$(oc get csv "$CSV" -n "$NAMESPACE" \
+                -o jsonpath="{.spec.install.spec.deployments[${D_IDX}].spec.template.spec.containers[${C_IDX}].image}")"
+    log "current CSV image: ${CURRENT}"
+
+    # --- 3. Patch (idempotent, and guarded against clobbering an unexpected image) --------
+    if [ "$CURRENT" = "$TARGET_IMAGE" ]; then
+      log "CSV already at target image; skipping patch"
+    else
+      # The guard is what makes an unattended CronJob safe: it patches the upstream image it
+      # was told to expect, and refuses anything else (a hand-set image, a different fork)
+      # instead of silently overwriting someone's deliberate change.
+      #
+      # Same-repository references are always in policy — otherwise bumping operatorImage.tag
+      # would leave the CSV holding our own repo at the old tag, matching neither the target
+      # nor an upstream-shaped pattern, and every run would fail.
+      if [ "$(repo_of "$CURRENT")" = "$(repo_of "$TARGET_IMAGE")" ]; then
+        log "current image is already in $(repo_of "$TARGET_IMAGE"); tag/digest change is in policy"
+      elif printf '%s' "$CURRENT" | grep -Eq "$EXPECTED_IMAGE_PATTERN"; then
+        log "current image matches expectedImagePattern"
+      else
+        fail "current image '${CURRENT}' is neither in '$(repo_of "$TARGET_IMAGE")' nor a match for operatorImage.expectedImagePattern '${EXPECTED_IMAGE_PATTERN}'; refusing to patch. Widen the pattern if this image is expected."
+      fi
+
+      # JSON Patch "add" on an object member is an upsert, so it works whether or not
+      # imagePullPolicy / imagePullSecrets are already present. "replace" would 404 on absent keys.
+      OPS="$(printf '{"op":"add","path":"%s/containers/%s/image","value":"%s"}' "$BASE" "$C_IDX" "$TARGET_IMAGE")"
+      OPS="${OPS},$(printf '{"op":"add","path":"%s/containers/%s/imagePullPolicy","value":"%s"}' "$BASE" "$C_IDX" "$PULL_POLICY")"
+      if [ -n "$PULL_SECRET" ]; then
+        OPS="${OPS},$(printf '{"op":"add","path":"%s/imagePullSecrets","value":[{"name":"%s"}]}' "$BASE" "$PULL_SECRET")"
+      fi
+      log "patching CSV ${CSV}"
+      oc patch csv "$CSV" -n "$NAMESPACE" --type=json -p "[${OPS}]"
+    fi
+
+    # --- 4. Verify OLM propagated it to the live Deployment ------------------------------
+    # The patch is only meaningful if OLM re-applies the Deployment; assert it rather than
+    # assuming. A mismatch that never converges means something else owns the image
+    # (e.g. a Kyverno mutation still rewriting it at admission).
+    LIVE=""
+    deadline=$(( $(date +%s) + WAIT_SECONDS ))
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+      LIVE="$(oc get deploy "$CSV_DEPLOYMENT" -n "$NAMESPACE" \
+               -o jsonpath="{.spec.template.spec.containers[?(@.name=='${CONTAINER}')].image}" 2>/dev/null || true)"
+      [ "$LIVE" = "$TARGET_IMAGE" ] && break
+      log "waiting for OLM to propagate to Deployment/${CSV_DEPLOYMENT} (currently: ${LIVE:-<none>})"
+      sleep 5
+    done
+    [ "$LIVE" = "$TARGET_IMAGE" ] \
+      || fail "Deployment/${CSV_DEPLOYMENT} container '${CONTAINER}' is '${LIVE:-<none>}', expected '${TARGET_IMAGE}' after ${WAIT_SECONDS}s. Is an admission mutation (Kyverno) still rewriting this image?"
+
+    log "deployment updated; waiting for rollout"
+    if oc rollout status "deploy/${CSV_DEPLOYMENT}" -n "$NAMESPACE" --timeout="${WAIT_SECONDS}s"; then
+      log "OK: ${CSV_DEPLOYMENT}/${CONTAINER} now runs ${TARGET_IMAGE}"
+      exit 0
+    fi
+
+    # --- 5. Roll back a rollout that never became ready ----------------------------------
+    # An unpullable or crash-looping target image WEDGES the operator: the rollout cannot
+    # finish, and OLM parks the CSV in InstallWaiting where it stops re-applying the
+    # Deployment entirely. Reverting only the CSV does NOT recover it (verified on-cluster) —
+    # OLM applies the install strategy on the Pending->Installing transition, not on every
+    # sync, so a wedged CSV never picks the revert up. The Deployment must be patched too,
+    # and that direct patch is what actually restarts the rollout.
+    if [ "$CURRENT" = "$TARGET_IMAGE" ]; then
+      fail "rollout of ${TARGET_IMAGE} did not become ready within ${WAIT_SECONDS}s, and the CSV already held this image on entry, so there is no previous value to roll back to. Inspect: oc describe deploy/${CSV_DEPLOYMENT} -n ${NAMESPACE}"
+    fi
+
+    log "ROLLBACK: rollout of ${TARGET_IMAGE} did not become ready; restoring ${CURRENT}"
+    oc patch csv "$CSV" -n "$NAMESPACE" --type=json \
+      -p "[$(printf '{"op":"add","path":"%s/containers/%s/image","value":"%s"}' "$BASE" "$C_IDX" "$CURRENT")]" \
+      || log "WARNING: CSV rollback patch failed; the CSV may still reference ${TARGET_IMAGE}"
+    oc set image "deploy/${CSV_DEPLOYMENT}" -n "$NAMESPACE" "${CONTAINER}=${CURRENT}" \
+      || log "WARNING: Deployment rollback failed; operator may be left wedged on ${TARGET_IMAGE}"
+    fail "rolled back to ${CURRENT}: ${TARGET_IMAGE} never became ready within ${WAIT_SECONDS}s. Check the image is pullable and the tag exists."
+{{- end }}
