@@ -45,11 +45,12 @@ subscription:
   zapLogLevel: "info"
   zapDevel: "false"
 
-  # Override the operator MANAGER image the SUPPORTED, native way — no Kyverno, no IDMS.
-  # The operator is built with operator-sdk and reads RELATED_IMAGE_MANAGER to set its
-  # manager image; injecting it here via spec.config.env makes OLM own the change.
-  # Empty = keep the upstream image referenced by the CSV.
-  relatedImageManager: "quay.io/ephico2real/namespace-configuration-operator:latest"
+  # RELATED_IMAGE_MANAGER env (spec.config.env). NOTE — local testing PROVED this does
+  # NOT change THIS operator's own image (it is an operand-image hint, and NCO deploys no
+  # operand pods; the env got injected but the manager image stayed upstream). See
+  # docs/local-testing/LOCAL_TEST_operator_image_override.md. Image override still needs
+  # Kyverno (or a custom CatalogSource). Kept configurable but OFF by default.
+  relatedImageManager: ""
 
   # Extra env vars appended to spec.config.env, as a list of {name, value}.
   extraEnv: []

@@ -68,28 +68,25 @@ oc apply -f ../policies/
 | `subscription.startingCSV` | Pin the initial CSV (empty = channel head) | `namespace-configuration-operator.v1.2.6` |
 | `subscription.zapLogLevel` | Operator log verbosity (`ZAP_LOG_LEVEL`) | `info` |
 | `subscription.zapDevel` | Development-mode logging (`ZAP_DEVEL`) | `"false"` |
-| `subscription.relatedImageManager` | Native operator image override (`RELATED_IMAGE_MANAGER`); empty = upstream | `quay.io/ephico2real/namespace-configuration-operator:latest` |
+| `subscription.relatedImageManager` | `RELATED_IMAGE_MANAGER` env — does NOT override this operator's image (tested); off by default | `""` |
 | `subscription.extraEnv` | Extra env appended to `spec.config.env` | `[]` |
 | `subscription.resources` | Operator resource requests/limits (`spec.config.resources`) | 250m/500Mi → 2/4Gi |
 | `podSecurity.audit` / `podSecurity.warn` | PSA labels on the created namespace | `privileged` |
 
-## Operator image — native override (no Kyverno)
+## Operator image — Kyverno is required (tested)
 
-Run a **custom-built** operator image the supported, OLM-owned way via
-`subscription.relatedImageManager`. The operator (operator-sdk based) reads the
-`RELATED_IMAGE_MANAGER` env var to set its manager image; this chart injects it through
-`Subscription.spec.config.env`, so OLM owns the change and it survives reconcile/restart —
-**no Kyverno mutation and no IDMS/mirror required.**
+Running our **custom-built** operator image still requires the Kyverno mutation. We tested
+whether OLM could do it natively and it **cannot** — see the full write-up in
+[`../docs/local-testing/LOCAL_TEST_operator_image_override.md`](../docs/local-testing/LOCAL_TEST_operator_image_override.md).
 
-```yaml
-subscription:
-  relatedImageManager: "quay.io/ephico2real/namespace-configuration-operator:latest"
-```
+- ❌ `Subscription.spec.config` has no `image` field.
+- ❌ `RELATED_IMAGE_MANAGER` (env) does **not** change *this* operator's own image — it's an
+  operand-image hint, and NCO deploys no operand pods. In testing the env was injected but
+  the manager image stayed upstream.
+- ❌ IDMS/ITMS only redirect *same-digest* mirrors; our image is a different-digest rebuild.
+- ✅ **What OLM `spec.config` CAN own:** the ZAP log env (`zapLogLevel` / `zapDevel`) and
+  `resources`. So the chart can replace the log-level Kyverno policy, but not the image one.
 
-Set it to `""` to keep the upstream image referenced by the CSV.
-
-Why this works: OLM's `Subscription.spec.config` has no raw container `image:` field, but
-it **does** support `env` — and `RELATED_IMAGE_MANAGER` is the operator's own image-override
-hook. So the image change goes in natively through supported config. If you previously
-swapped the image with a Kyverno mutation, you can remove it once `relatedImageManager` is
-set and the operator redeploys with your image.
+The only Kyverno-free alternative for the image would be a **custom CatalogSource** whose CSV
+points at our image (bigger effort, not done here). `subscription.relatedImageManager` is kept
+as a configurable env but is **empty by default** and does not override the image.
