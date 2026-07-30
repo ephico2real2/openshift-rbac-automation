@@ -9,6 +9,9 @@ metadata:
   name: oud-poc-trino
   labels:
     company.net/oud-group: bda-rbac-trino-alpha-users
+    # mnemonic "alpha" is 5 characters — FAILS the 3-4 letter convention, so Kyverno
+    # flags it while the namespace and its binding keep working (Audit).
+    company.net/mnemonic: alpha
   annotations:
     openshift.io/display-name: "oud-group PoC — trino/alpha/users"
 ---
@@ -20,6 +23,9 @@ metadata:
   name: oud-poc-crossfamily
   labels:
     company.net/oud-group: app-ocp-rbac-spar-ns-audit
+    # mnemonic "beta" is 4 characters — PASSES. Paired with alpha above so the two
+    # outcomes can be compared side by side.
+    company.net/mnemonic: beta
   annotations:
     openshift.io/display-name: "oud-group PoC — cross-family"
 ---

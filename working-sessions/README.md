@@ -347,6 +347,94 @@ Defaults are overridable, so the same script covers other families:
 LABEL=company.net/bda-team SUFFIX=bda-workload-submitter-rb ./verify-bda-rolebindings.sh
 ```
 
+## How NCO tracks and cleans up what it creates
+
+Worth knowing before assuming anything about drift, because the intuitive read from the
+Kubernetes side is wrong.
+
+**`ownerReferences` is empty** on every object NCO creates. The obvious inference — that
+Kubernetes garbage collection cannot cascade, so orphans accumulate — is **incorrect**. NCO
+does its own tracking, and it is thorough.
+
+### Cleanup: verified, all three cases
+
+| Scenario | Result | Evidence |
+|---|---|---|
+| Delete the NamespaceConfig | ✅ full cleanup | 3 RoleBindings **and** 3 Roles removed across 3 namespaces |
+| Change a namespace label so a **different object name** is derived | ✅ old object removed | relabelled `oud-poc-trino`; `bda-rbac-trino-alpha-users-rb` deleted, `bda-rbac-spark-theta-apps-rb` created |
+| Namespace stops matching the selector | ✅ full cleanup | removed the label from `oud-poc-crossfamily`; Role and RoleBinding both gone |
+
+> **A retracted claim.** An earlier draft of this document marked the middle row
+> "❌ orphan", reasoning from the empty `ownerReferences`. That was inference, not
+> measurement, and it was wrong — NCO cleans up on relabel. Any migration plan built on
+> "relabelling orphans the old binding" is unnecessary.
+
+### The mechanism, from the CRD
+
+The `NamespaceConfig` CRD describes `excludedPaths` as:
+
+> *"json paths that need not be considered by the **LockedResourceReconciler**"*
+
+NCO runs **one controller per managed resource**. Visible in the operator log:
+
+```
+controller_locked_object_rbac.authorization.k8s.io/v1/Role/oud-poc-trino/oud-group-submitter-role
+controller_locked_object_rbac.authorization.k8s.io/v1/RoleBinding/oud-poc-trino/bda-rbac-trino-alpha-users-rb
+```
+
+That per-object controller is the tracking, which is why no `ownerReferences` are needed.
+
+The CRD also declares `status.lockedResourceStatuses` — *"reconcile status for each of the
+managed resources"* — but on this version it is **empty** on every NamespaceConfig checked,
+including long-lived ones. The tracking is real; it is just not surfaced in status, so the
+operator log is the place to look.
+
+`excludedPaths` has **no CRD default**. The operator injects one at runtime — a template
+declaring `['.metadata', '.status']` is stored as `['.metadata', '.status', '.spec.replicas']`.
+
+### Two independent layers — this is the part that trips people
+
+| Layer | Scope | Behaviour |
+|---|---|---|
+| **Lifecycle** | the whole object | always tracked; deleted on CR-delete, relabel, or unmatch |
+| **Field enforcement** | paths *within* the object | `excludedPaths` are left alone |
+
+Every NamespaceConfig in this repo excludes `.metadata`, so those two layers produce
+different answers for different edits. Verified by changing one of each:
+
+```
+spec change      pods/log verbs ["get","list"] -> ["get","list","watch"]
+                 propagated automatically, no delete needed, and reverted the same way
+
+metadata change  adding an annotation to the template
+                 did NOT propagate — required delete + recreate
+```
+
+> ### GOTCHA 10 — template metadata edits do not reach existing objects
+>
+> Because `.metadata` is in `excludedPaths` on every NamespaceConfig here, editing labels or
+> annotations in an `objectTemplate` changes **nothing** on objects that already exist.
+> `oc apply` succeeds, the operator reports `ReconcileSuccess`, and the old metadata stays
+> indefinitely. Only newly created objects pick it up, so a cluster ends up with two
+> generations carrying different metadata.
+>
+> That matters when the metadata is *selected on*. The orphan-cleanup query below only finds
+> objects created **after** the label was added to the template:
+>
+> ```bash
+> oc get rolebinding -A -l rbac.ocp.io/source-namespaceconfig=<config>
+> ```
+>
+> To roll metadata forward, delete and let NCO rebuild:
+>
+> ```bash
+> oc delete rolebinding -A -l rbac.ocp.io/source-namespaceconfig=<config>
+> ```
+>
+> This is arguably the right default — it stops NCO fighting other controllers that annotate
+> resources — but it is silent, and it is the *only* drift case NCO does not self-heal.
+> Everything at the object level does.
+
 ## Why `bdp-namespace-config.yaml` was replaced
 
 It derived group names as `app-ocp-rbac-bdp-spark-<label>`. **Zero** groups on the cluster match

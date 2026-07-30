@@ -76,6 +76,7 @@ spec:
           annotations:
             rbac.ocp.io/created-by: namespace-configuration-operator
             rbac.ocp.io/source-namespace: "{{ .Name }}"
+            rbac.ocp.io/source-namespaceconfig: oud-group-namespaceconfig-rbac
         rules:
           - apiGroups: [""]
             resources:
@@ -118,6 +119,7 @@ spec:
           annotations:
             rbac.ocp.io/created-by: namespace-configuration-operator
             rbac.ocp.io/source-namespace: "{{ .Name }}"
+            rbac.ocp.io/source-namespaceconfig: oud-group-namespaceconfig-rbac
             rbac.ocp.io/group-name: "{{ index .Labels "company.net/oud-group" }}"
         subjects:
           - kind: Group
