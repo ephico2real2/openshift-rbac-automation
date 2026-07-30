@@ -1,0 +1,75 @@
+# =============================================================================
+# Guardrail for company.net/oud-group
+# =============================================================================
+# WHY THIS POLICY EXISTS
+# The bda-team design hardcoded "bda-rbac-" in the objectTemplate, so a namespace
+# could only ever bind a group from that family. The oud-group design puts the whole
+# group name in the label, which removes that constraint — a namespace could name
+# ANY group. This policy is where the constraint goes instead.
+#
+# That is a better home for it: a prefix buried in an objectTemplate is invisible to
+# anyone reading the namespace, cannot be reported on, and cannot be relaxed per
+# environment. A ClusterPolicy is visible, produces a PolicyReport, and can be moved
+# to Enforce independently.
+#
+# WHAT IT CHECKS
+# The label must name a group that conforms to one of the KNOWN families, using the
+# same conventions the group-naming policies apply to the Group objects themselves:
+#
+#   app-ocp-rbac-<mnemonic>-(ns|cluster)-(admin|developer|audit)   mnemonic 3-4 letters
+#   bda-rbac-(spark|flink|trino)-<tenant>-(apps|users)             tenant [a-z0-9]+
+#
+# So a namespace label and the group it names are judged by identical patterns —
+# which the split bda-team/app-ocp-rbac consistency rules could not do, because they
+# only ever saw a fragment.
+#
+# This does NOT verify the group exists. That needs a context apiCall, and the
+# kyverno-admission-controller ServiceAccount cannot read groups.user.openshift.io
+# (only the background controller can). A binding to a well-formed but non-existent
+# group is still created and still grants nobody.
+#
+# Audit while the oud-group approach is a proof of concept.
+# =============================================================================
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: namespace-oud-group-allowlist
+  annotations:
+    policies.kyverno.io/title: "Namespace oud-group allowlist"
+    policies.kyverno.io/category: "Multi-Tenancy"
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: "Namespace"
+    policies.kyverno.io/description: >-
+      Restricts company.net/oud-group to naming a group from a known family, replacing
+      the family prefix that was previously hardcoded in the NamespaceConfig template.
+  labels:
+    app.kubernetes.io/name: kyverno
+    app.kubernetes.io/component: oud-group-validation
+    app.kubernetes.io/part-of: rbac-automation
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: validate-oud-group-known-family
+      match:
+        any:
+          - resources:
+              kinds: ["Namespace"]
+      preconditions:
+        all:
+          - key: "{{ request.object.metadata.labels.\"company.net/oud-group\" || '' }}"
+            operator: NotEquals
+            value: ""
+      validate:
+        message: >-
+          Namespace label company.net/oud-group='{{ request.object.metadata.labels."company.net/oud-group" }}'
+          does not name a group from a known family. Expected either
+          app-ocp-rbac-<mnemonic>-(ns|cluster)-(admin|developer|audit) with a 3-4 letter mnemonic,
+          or bda-rbac-(spark|flink|trino)-<tenant>-(apps|users). Add the family here when
+          onboarding a new one.
+        deny:
+          conditions:
+            all:
+              - key: "{{ regex_match('^(app-ocp-rbac-[a-z]{3,4}-(ns|cluster)-(admin|developer|audit)|bda-rbac-(spark|flink|trino)-[a-z0-9]+-(apps|users))$', request.object.metadata.labels.\"company.net/oud-group\") }}"
+                operator: Equals
+                value: false

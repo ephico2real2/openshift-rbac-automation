@@ -1,0 +1,41 @@
+# PoC namespaces for company.net/oud-group. Reuses EXISTING synced groups — no new
+# LDAP entries needed. Deliberately carries no mnemonic/app-environment, so only the
+# oud-group NamespaceConfig matches and the output is not mixed with standard RBAC.
+---
+# Binds bda-rbac-trino-alpha-users (members: bob.wilson, charlie.brown)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: oud-poc-trino
+  labels:
+    company.net/oud-group: bda-rbac-trino-alpha-users
+  annotations:
+    openshift.io/display-name: "oud-group PoC — trino/alpha/users"
+---
+# Cross-family proof: the SAME config binds an app-ocp-rbac group, which the
+# bda-team design could not express at all.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: oud-poc-crossfamily
+  labels:
+    company.net/oud-group: app-ocp-rbac-spar-ns-audit
+  annotations:
+    openshift.io/display-name: "oud-group PoC — cross-family"
+---
+# Audit-mode proof: names a REAL, working group whose mnemonic ("platform", 8 chars)
+# violates the 3-4 letter convention. namespace-oud-group-allowlist FLAGS it and
+# blocks nothing — the namespace is created, the RoleBinding resolves to
+# jane.smith,john.doe, and access works. Verified on-cluster.
+#
+# This is the distinction between the two modes:
+#   Audit   (live)      -> "which namespaces would break if we enforced?"  -> this one
+#   Enforce (simulated) -> "does the regex judge correctly?"               -> it rejects this
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: oud-poc-platform
+  labels:
+    company.net/oud-group: app-ocp-rbac-platform-ns-admin
+  annotations:
+    openshift.io/display-name: "oud-group PoC — flagged by Kyverno, still works"
