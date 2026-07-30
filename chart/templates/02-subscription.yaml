@@ -17,20 +17,33 @@ spec:
   startingCSV: {{ . }}
   {{- end }}
   # spec.config injects operator env (OLM-supported override). No WATCH_NAMESPACE —
-  # NCO installs AllNamespaces and watches every namespace. The operator IMAGE cannot
-  # be set here (OLM's spec.config has no image field); it is installed by OLM from the
-  # CSV and mutated at admission time (e.g. by a Kyverno policy) if a custom image is used.
+  # NCO installs AllNamespaces and watches every namespace. The operator IMAGE cannot be
+  # set here: OLM's spec.config has no image field. A custom image is applied by patching
+  # the installed CSV instead — see operatorImage.enabled in values.yaml.
   config:
     env:
       - name: ZAP_LOG_LEVEL
         value: {{ .Values.subscription.zapLogLevel | quote }}
       - name: ZAP_DEVEL
         value: {{ .Values.subscription.zapDevel | quote }}
-      {{- with .Values.subscription.relatedImageManager }}
-      # Native, OLM-owned operator image override (no Kyverno/IDMS needed).
-      - name: RELATED_IMAGE_MANAGER
-        value: {{ . | quote }}
-      {{- end }}
+      # RELATED_IMAGE_MANAGER is DISABLED — this operator does not support it.
+      #
+      # Tested on-cluster: the env var is injected into the Deployment correctly, but the
+      # manager image stays upstream. RELATED_IMAGE_* tells an operator which image to use
+      # for the workloads IT deploys (its operands); NCO deploys no operand pods, so there
+      # is nothing for it to act on, and it never sets the operator's own image.
+      # See docs/local-testing/LOCAL_TEST_operator_image_override.md §4a.
+      #
+      # Use operatorImage.enabled instead — it patches the image into the installed CSV,
+      # which is the mechanism that actually works (chart/README.md).
+      #
+      # Left commented rather than deleted so this is not re-attempted. Note the block below
+      # is plain text: a "#" does NOT disable a Helm action, because templating runs before
+      # YAML parsing, so a commented-out {{`{{- with }}`}} would still be evaluated.
+      #
+      #   - name: RELATED_IMAGE_MANAGER
+      #     value: <.Values.subscription.relatedImageManager>
+      #
       {{- with .Values.subscription.extraEnv }}
       {{- toYaml . | nindent 6 }}
       {{- end }}
