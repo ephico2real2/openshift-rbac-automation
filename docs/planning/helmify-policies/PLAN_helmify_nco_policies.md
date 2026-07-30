@@ -31,12 +31,49 @@ Live CRs exported to [`exported/`](exported/) (cleaned of status/managedFields):
 | GroupConfig | user-workload-monitoring-admin-groupconfig-rbac | ✅ | monitoring access |
 | GroupConfig | user-workload-monitoring-developer-groupconfig-rbac | ✅ | monitoring access |
 | NamespaceConfig | nonprod-namespaceconfig-rbac | ✅ | env-aware (rnd/eng/qa/uat) → admin/edit/view |
-| NamespaceConfig | prod-namespaceconfig-rbac | ✅ | prod → audit only |
-| **NamespaceConfig** | **multitenant** | ❌ **DRIFT** | NetworkPolicies for `multitenant: 'true'` namespaces — live but NOT in the repo |
+| NamespaceConfig | prod-namespaceconfig-rbac | ✅ | prod → developer (`edit`) + audit (`view`), no admin — *as configured in this demo* |
+| NamespaceConfig | multitenant | ✅ | NetworkPolicies for `multitenant: 'true'` namespaces — drift now closed, see below |
 
-**Finding — config drift:** the `multitenant` NamespaceConfig exists on the cluster but is
-not tracked in `policies/`. Whatever we do, this should be brought into source control
-(now exported). A Helmify effort is a good moment to close the drift.
+> **These role assignments are a worked example, not a production standard.** What this repo
+> defines is the *mechanism*: the group-name patterns the policies match on, how those map to
+> roles, and how namespace labels select an environment. **What production should actually grant
+> is a company policy decision** — each organisation sets its own role map and adjusts the
+> templates to match.
+>
+> The table records what these demo policies are configured to do *today*, which matters for the
+> packaging work: an earlier revision said "prod → audit only", but `prod-namespaceconfig-rbac`
+> as written creates **two** RoleBindings — `{mnemonic}-developer-rb` → `ClusterRole/edit` and
+> `{mnemonic}-audit-rb` → `ClusterRole/view`. Verified on-cluster across `beta-prod`,
+> `demo-prod` and `demo-production`.
+>
+> The distinction matters here specifically: whichever role map an organisation adopts, the chart
+> must package the policies **as they are**. Building from a description that disagrees with the
+> files would silently change access — in this case dropping the developer binding from every
+> production namespace. Change the access model by editing the policy deliberately, never as a
+> side effect of packaging it.
+
+**Finding — config drift: CLOSED.** The `multitenant` NamespaceConfig ran on the cluster but
+was not tracked in `policies/`. It is now committed as
+[`policies/multitenant-namespaceconfig.yaml`](../../../policies/multitenant-namespaceconfig.yaml),
+so the Helmify work starts from a repo that matches the cluster.
+
+The committed copy is semantically identical to the live CR, not a byte-for-byte dump:
+
+- `finalizers` was dropped — that is operator-managed runtime state, and applying it back
+  would be wrong.
+- The `objectTemplate` strings are stored as YAML block literals (`|`) rather than the escaped
+  one-line form `oc get -o yaml` emits, so they are reviewable and diffable.
+- Stray trailing whitespace in the live copy (`name: default········`) was stripped. YAML
+  ignores it, so the rendered NetworkPolicies are unchanged.
+
+Verified: `labelSelector` equal, both templates present with matching `excludedPaths`,
+template[0] byte-identical and template[1] identical modulo that trailing whitespace.
+`oc apply --dry-run=server -f policies/` accepts the whole directory.
+
+**Remaining live-only resource — not exported.** `UserConfig/test-deletion-tracking-userconfig`
+(created 2025-12-10) has `templates: []` and empty selectors, so it produces nothing. It is a
+dead test artifact rather than a policy and is deliberately excluded from `policies/`; it should
+be deleted from the cluster rather than adopted into source control.
 
 ### Group naming the policies key off
 
@@ -176,7 +213,7 @@ policies:
     databaseAdmin: true
     monitoringAdmin: true
     monitoringDeveloper: true
-  multitenant: true            # closes the drift
+  multitenant: true            # drift closed — now in policies/
 
   # New parameterized family (Option C) — see OPEN QUESTIONS.
   bdaRbac:
@@ -190,7 +227,8 @@ policies:
 1. **Render-diff vs live.** `helm template` the Option-A policies and diff against the
    exported live CRs — must be byte-equivalent (proves packaging changed nothing).
 2. **Dry-run.** `oc apply --dry-run=server` the rendered output.
-3. **Drift close.** Commit `multitenant` (and any other live-only CR) into the chart.
+3. **Drift close.** ~~Commit `multitenant`~~ — done, it is in `policies/`. Re-run the live-vs-repo
+   comparison before building, in case new CRs have appeared since.
 4. **bda skeleton** only after §5 answers; validate the emitted RoleBindings on one test
    namespace before enabling broadly.
 
@@ -206,5 +244,5 @@ policies:
 ## 9. Next steps
 
 1. Operator reviews §4 (Option A vs C) and answers §5 (bda RBAC intent).
-2. On approval: build the Option-A policies chart + render-diff gate; commit the drift.
+2. On approval: build the Option-A policies chart + render-diff gate. (Drift already closed.)
 3. Then: build the bda policy family per the answers, validate on a test namespace.
