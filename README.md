@@ -60,21 +60,24 @@ This solution provides **automated RBAC management** for OpenShift clusters usin
 
 ### 1. Install Red Hat CoP Namespace Configuration Operator
 
+Use the Helm chart in [`chart/`](chart/README.md) — it creates the install namespace, an
+AllNamespaces OperatorGroup and the Subscription, and can run a custom operator build:
+
 ```bash
-oc apply -f - <<EOF
-apiVersion: operators.coreos.com/v1alpha1
-kind: Subscription
-metadata:
-  name: namespace-configuration-operator
-  namespace: openshift-marketplace
-spec:
-  channel: alpha
-  installPlanApproval: Automatic
-  name: namespace-configuration-operator
-  source: community-operators
-  sourceNamespace: openshift-marketplace
-EOF
+helm install nco ./chart --namespace namespace-configuration-operator
 ```
+
+See [`chart/README.md`](chart/README.md) for the options (image override, InstallPlan
+approval, resource sizing).
+
+> **Do not install with a hand-applied Subscription into `openshift-marketplace`.** That
+> namespace has no OperatorGroup, so the CSV lands in `Failed / NoOperatorGroup` and the
+> operator never runs. Earlier revisions of this README recommended exactly that; if you
+> followed them, check for an orphaned CSV:
+>
+> ```bash
+> oc get csv -n openshift-marketplace | grep namespace-configuration-operator
+> ```
 
 ### 2. Deploy RBAC Automation
 
@@ -115,10 +118,13 @@ oc label namespace payment-prod \
   company.net/mnemonic=paym \
   company.net/app-environment=prod
 
-# Verify only audit access
+# Verify admin is withheld, but developer/audit are not
 oc get rolebindings -n payment-prod
-# Expected: Only paym-audit-rb (no admin/developer access)
+# Expected: paym-developer-rb (edit) and paym-audit-rb (view) — NO paym-admin-rb
 ```
+
+> Production removes **admin**, not write access: developers keep `edit` in prod by design.
+> See the Security Model table above and [docs/architecture.md](docs/architecture.md).
 
 ### 5. Verify System Access
 
@@ -323,24 +329,31 @@ oc get rolebindings -n openshift-user-workload-monitoring -l app.kubernetes.io/m
 ## 📁 Repository Structure
 
 ```
-├── README.md                           # This file
-├── policies/                           # RBAC automation policies
-│   ├── nonprod-namespaceconfig-rbac.yaml    # Non-production namespace RBAC
-│   ├── prod-namespaceconfig-rbac.yaml       # Production namespace RBAC
+├── README.md                                # This file
+├── chart/                                   # Helm chart: installs the operator via OLM
+│   ├── values.yaml                          # Image override, InstallPlan approval, resources
+│   └── templates/                           # Namespace, OperatorGroup, Subscription, hook Jobs
+├── policies/                                # RBAC automation policies (oc apply -f policies/)
+│   ├── nonprod-namespaceconfig-rbac.yaml    # Non-prod: admin + developer + audit
+│   ├── prod-namespaceconfig-rbac.yaml       # Prod: developer + audit (no admin)
 │   ├── cluster-admin-groupconfig-rbac.yaml  # Cluster admin access
 │   ├── cluster-developer-groupconfig-rbac.yaml # Cluster developer access
 │   ├── cluster-audit-groupconfig-rbac.yaml  # Cluster audit access
 │   ├── database-admin-groupconfig-rbac.yaml # Database admin access
 │   ├── user-workload-monitoring-admin-groupconfig-rbac.yaml # Monitoring access
-│   └── kyverno-validation-only.yaml         # Optional: Standards validation
-├── docs/                              # Documentation
+│   └── kyverno-validation-only.yaml         # Optional: standards validation
+├── docs/
+│   ├── architecture.md                      # Policy behaviour, access matrix, security model
 │   ├── redhat-cop-rbac-deployment-guide.md  # Complete deployment guide
-│   ├── scaling-system-namespace-access.md    # Scaling guide for new systems
-│   ├── groups-and-bindings-examples.md       # Groups and bindings examples with commands
-│   └── examples/                              # Example templates
-│       └── redhat-cop-custom-crd-access.yaml     # CRD access template
-└── scripts/                          # Automation scripts
-    └── setup-test-namespaces.sh      # Test namespace creation
+│   ├── rbac-verification-guide.md           # Verification commands and expected output
+│   ├── scaling-system-namespace-access.md   # Adding access to new system namespaces
+│   ├── groups-and-bindings-examples.md      # Group and binding examples
+│   ├── known-issues.md                      # Operator bugs hit and how they were resolved
+│   ├── examples/
+│   │   ├── redhat-cop-custom-crd-access.yaml   # CRD access template
+│   │   └── ldap-groupsync.yaml                 # GroupSync CR (group-sync-operator)
+│   └── local-testing/                       # Image-override findings + Kyverno policy backups
+└── scripts/                                 # Operational helper scripts (see scripts/README.md)
 ```
 
 ## 🎯 Key Features
@@ -395,11 +408,14 @@ oc label namespace <namespace-name> \
 
 ## 📚 Documentation
 
+- **[Operator install chart](chart/README.md)** - Helm chart that installs the operator via OLM
+- **[Architecture](docs/architecture.md)** - What each policy does, access matrix, security model
 - **[Deployment Guide](docs/redhat-cop-rbac-deployment-guide.md)** - Complete installation and testing instructions
 - **[Verification Guide](docs/rbac-verification-guide.md)** - Comprehensive verification commands and expected outputs
 - **[Scaling Guide](docs/scaling-system-namespace-access.md)** - How to add new system namespace access patterns
 - **[Groups and Bindings Examples](docs/groups-and-bindings-examples.md)** - Examples of groups, RoleBindings, and ClusterRoleBindings with commands
-- **[Final Architecture](FINAL_ARCHITECTURE.md)** - Complete architecture overview
+- **[Known Issues](docs/known-issues.md)** - Operator bugs hit during rollout and how they were resolved
+- **[Local Testing](docs/local-testing/LOCAL_TEST_operator_image_override.md)** - Operator image override findings on CRC
 
 ## ⚠️ Important: GroupConfig Selector Filtering
 
