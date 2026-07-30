@@ -1,0 +1,38 @@
+{{- if .Values.operatorImage.enabled }}
+# Patches the operator image into the installed CSV once per helm install/upgrade.
+# Runs as a post-install/post-upgrade hook so the Subscription (a normal resource) already
+# exists and OLM has had a chance to create the CSV the script needs to patch.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "nco.imageOverride.name" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: image-override
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/hook: PostSync
+    # A Job's spec.template is IMMUTABLE. Without a delete policy the completed Job survives,
+    # and the next sync tries to create a Job that already exists -> "field is immutable" and
+    # the sync fails. Both policies below mean "delete the previous run, then create a fresh
+    # one", which is what makes this re-runnable on every upgrade/sync. Deliberately NOT
+    # hook-succeeded/HookSucceeded: keeping the last run lets you `oc logs` what it did.
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: {{ .Values.operatorImage.job.backoffLimit }}
+  # Bound the whole Job, not just one attempt, so a never-converging cluster fails visibly
+  # instead of retrying until the Helm hook times out with no explanation.
+  activeDeadlineSeconds: {{ .Values.operatorImage.job.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ .Values.operatorImage.job.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "nco.labels" . | nindent 8 }}
+        app.kubernetes.io/component: image-override
+    spec:
+      {{- include "nco.imageOverride.podSpec" . | nindent 6 }}
+{{- end }}

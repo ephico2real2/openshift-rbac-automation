@@ -60,6 +60,39 @@ Monitors Group Sync Operator status and group synchronization.
 ./scripts/watch-groupsync-operator.sh count
 ```
 
+### 4. `create-custom-domain-configs.sh`
+Generates copies of the NamespaceConfig policies rewritten for a different label domain, for
+organisations not using `company.net`.
+
+**Usage:**
+```bash
+# Produces <domain>-nonprod-namespaceconfig-rbac.yaml and <domain>-prod-...
+./scripts/create-custom-domain-configs.sh pnc.net
+```
+
+### 5. `manual-rbac-automation.sh`
+Creates the same RoleBindings the operator would, without the operator. Useful for testing the
+intended RBAC model on a cluster where the Namespace Configuration Operator is not installed,
+or for reproducing what a policy *should* have produced when debugging.
+
+**Usage:**
+```bash
+./scripts/manual-rbac-automation.sh --help
+```
+
+> Bypasses the operator, so anything it creates is unmanaged — it will not be reconciled, and
+> it will not be cleaned up when a NamespaceConfig changes. Prefer the operator for anything
+> long-lived.
+
+### 6. `add-missing-rbac-groups.ldif`
+Not a script — an LDIF fixture that adds RBAC groups missing from the test LDAP directory
+(`dc=ephico2real,dc=com`), so group-driven policies have something to bind to.
+
+**Usage:**
+```bash
+ldapadd -x -D "<bind-dn>" -W -f scripts/add-missing-rbac-groups.ldif
+```
+
 ## 🔍 RBAC Verification Commands
 
 ### Check Security Model Compliance

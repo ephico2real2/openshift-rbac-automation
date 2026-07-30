@@ -1,0 +1,55 @@
+{{- if .Values.subscription.autoApproveInstallPlan.enabled }}
+{{- $name := include "nco.approver.name" . }}
+# RBAC for the scoped InstallPlan approver. Separate ServiceAccount from the image-override
+# Job on purpose: approving InstallPlans is the authority to install operator code, and the
+# image-patch Job has no business holding it.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: installplan-approver
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: installplan-approver
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+rules:
+  # Read pending InstallPlans and approve the one matching the pinned CSV.
+  - apiGroups: ["operators.coreos.com"]
+    resources: ["installplans"]
+    verbs: ["get", "list", "patch"]
+  # Correlate an InstallPlan back to this chart's Subscription before touching it.
+  - apiGroups: ["operators.coreos.com"]
+    resources: ["subscriptions"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: installplan-approver
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Values.namespace }}
+{{- end }}

@@ -1,0 +1,47 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  annotations:
+    pod-policies.kyverno.io/autogen-controllers: none
+    policies.kyverno.io/category: Operator Configuration
+    policies.kyverno.io/description: Injects log level environment variables into
+      the namespace-configuration-operator Deployment. This policy works with OLM-managed
+      deployments and ensures log level configuration persists even when OLM updates
+      the Deployment.
+    policies.kyverno.io/severity: low
+    policies.kyverno.io/subject: Deployment
+    policies.kyverno.io/title: Configure Namespace Configuration Operator Log Level
+  name: configure-operator-log-level
+spec:
+  admission: true
+  background: false
+  emitWarning: false
+  rules:
+  - match:
+      any:
+      - resources:
+          kinds:
+          - Deployment
+          names:
+          - namespace-configuration-operator-controller-manager
+          namespaces:
+          - namespace-configuration-operator
+          operations:
+          - CREATE
+          - UPDATE
+    mutate:
+      patchStrategicMerge:
+        spec:
+          template:
+            spec:
+              containers:
+              - env:
+                - name: ZAP_LOG_LEVEL
+                  value: info
+                - name: ZAP_DEVEL
+                  value: 'false'
+                name: manager
+    name: inject-log-level-env
+    skipBackgroundRequests: true
+  validationFailureAction: Audit
+

@@ -1,0 +1,108 @@
+{{- if .Values.subscription.autoApproveInstallPlan.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nco.approver.name" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: installplan-approver
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+data:
+  approve-installplan.sh: |
+    #!/bin/bash
+    # Approves ONLY the InstallPlan that installs the pinned CSV.
+    #
+    # WHY: installPlanApproval=Manual is the upgrade gate we want, but it also blocks the
+    # FIRST install — OLM stages an unapproved InstallPlan and waits for a human, so an
+    # unattended `helm install` never completes and the image-override hook times out waiting
+    # for .status.installedCSV. Approving only the pinned version gives both halves: the
+    # version the chart declares installs unattended, and anything else waits for a person.
+    #
+    # The pin is therefore the approval authority. To adopt a new version you bump
+    # subscription.startingCSV in values and re-sync — a reviewable change in git — rather
+    # than approving an InstallPlan by hand on the cluster.
+    set -euo pipefail
+
+    log()  { printf '%s  %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
+    fail() { log "ERROR: $*"; exit 1; }
+
+    : "${NAMESPACE:?}" "${SUBSCRIPTION:?}" "${APPROVE_CSV:?}" "${WAIT_SECONDS:?}"
+
+    log "namespace=${NAMESPACE} subscription=${SUBSCRIPTION} approving-only=${APPROVE_CSV}"
+
+    APPROVAL_MODE="$(oc get subscription "$SUBSCRIPTION" -n "$NAMESPACE" \
+                      -o jsonpath='{.spec.installPlanApproval}' 2>/dev/null || true)"
+    if [ "$APPROVAL_MODE" != "Manual" ]; then
+      log "Subscription approval mode is '${APPROVAL_MODE:-<none>}', not Manual — OLM approves its own InstallPlans. Nothing to do."
+      exit 0
+    fi
+
+    # Already installed at the pinned version? Then there is nothing to approve, and saying so
+    # is better than waiting out the timeout on every re-sync.
+    INSTALLED="$(oc get subscription "$SUBSCRIPTION" -n "$NAMESPACE" \
+                  -o jsonpath='{.status.installedCSV}' 2>/dev/null || true)"
+    if [ "$INSTALLED" = "$APPROVE_CSV" ]; then
+      log "already installed at ${APPROVE_CSV}; no InstallPlan to approve"
+      exit 0
+    fi
+
+    # --- Find an InstallPlan for the pinned CSV, owned by OUR Subscription ----------------
+    # Ownership matters: several operators can share a namespace, and approving another
+    # operator's InstallPlan would install software this chart knows nothing about.
+    deadline=$(( $(date +%s) + WAIT_SECONDS ))
+    TARGET=""
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+      for ip in $(oc get installplan -n "$NAMESPACE" -o name 2>/dev/null || true); do
+        OWNER="$(oc get "$ip" -n "$NAMESPACE" \
+                  -o jsonpath='{.metadata.ownerReferences[?(@.kind=="Subscription")].name}' 2>/dev/null || true)"
+        case " $OWNER " in *" $SUBSCRIPTION "*) ;; *) continue ;; esac
+
+        APPROVED="$(oc get "$ip" -n "$NAMESPACE" -o jsonpath='{.spec.approved}' 2>/dev/null || true)"
+        [ "$APPROVED" = "true" ] && continue
+
+        # Space-separated list; an InstallPlan may carry dependencies alongside the operator.
+        CSVS="$(oc get "$ip" -n "$NAMESPACE" \
+                 -o jsonpath='{.spec.clusterServiceVersionNames[*]}' 2>/dev/null || true)"
+        case " $CSVS " in
+          *" $APPROVE_CSV "*)
+            TARGET="$ip"
+            log "match: ${ip} installs [${CSVS}]"
+            break
+            ;;
+          *)
+            log "SKIP ${ip}: installs [${CSVS}], which is not the pinned ${APPROVE_CSV}. Left unapproved for a human to review."
+            ;;
+        esac
+      done
+      [ -n "$TARGET" ] && break
+      log "waiting for an unapproved InstallPlan for ${APPROVE_CSV}..."
+      sleep 5
+    done
+
+    if [ -z "$TARGET" ]; then
+      # Non-fatal by design. A staged upgrade nobody has approved is a normal steady state;
+      # failing here would turn every routine `helm upgrade` red for as long as a newer
+      # version sits in the channel.
+      log "no unapproved InstallPlan for ${APPROVE_CSV} found within ${WAIT_SECONDS}s"
+      log "current state: installedCSV=${INSTALLED:-<none>}"
+      exit 0
+    fi
+
+    log "approving ${TARGET}"
+    oc patch "$TARGET" -n "$NAMESPACE" --type=merge -p '{"spec":{"approved":true}}'
+
+    # --- Confirm OLM acted on the approval ------------------------------------------------
+    deadline=$(( $(date +%s) + WAIT_SECONDS ))
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+      PHASE="$(oc get "$TARGET" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+      [ "$PHASE" = "Complete" ] && break
+      log "waiting for ${TARGET} to complete (phase=${PHASE:-<none>})"
+      sleep 5
+    done
+    [ "$PHASE" = "Complete" ] \
+      || fail "${TARGET} is phase '${PHASE:-<none>}' after ${WAIT_SECONDS}s. Inspect: oc describe ${TARGET} -n ${NAMESPACE}"
+
+    log "OK: ${APPROVE_CSV} installed via ${TARGET}"
+{{- end }}

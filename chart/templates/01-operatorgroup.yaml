@@ -1,0 +1,17 @@
+{{- if .Values.createOperatorGroup }}
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: {{ .Values.namespace }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  # AllNamespaces (global) mode: NO targetNamespaces. The Namespace Configuration
+  # Operator reconciles namespaces cluster-wide, so it must watch every namespace.
+  # An OperatorGroup with an empty spec (only upgradeStrategy) selects all namespaces.
+  # (Contrast with a targeted operator, which lists targetNamespaces here.)
+  upgradeStrategy: Default
+{{- end }}

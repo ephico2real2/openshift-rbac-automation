@@ -1,0 +1,63 @@
+{{- if .Values.operatorImage.enabled }}
+{{- $name := include "nco.imageOverride.name" . }}
+# RBAC for the CSV image-override Job/CronJob. Deliberately a namespaced Role, not a
+# ClusterRole: the only CSV that matters is the SOURCE one in the install namespace.
+# OLM copies that CSV into every namespace (label olm.copiedFrom), but the copies are
+# read-only replicas OLM re-syncs from the source, and the operator Deployment lives here.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: image-override
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: image-override
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+rules:
+  # Read .status.installedCSV to discover which CSV to patch (survives version bumps).
+  - apiGroups: ["operators.coreos.com"]
+    resources: ["subscriptions"]
+    verbs: ["get", "list"]
+  # The patch target itself.
+  - apiGroups: ["operators.coreos.com"]
+    resources: ["clusterserviceversions"]
+    verbs: ["get", "list", "patch"]
+  # get/list/watch: verify OLM propagated the patch and follow the rollout.
+  # patch: roll the Deployment back if the new image never becomes ready. Reverting the CSV
+  # alone cannot recover a wedged install — OLM stops re-applying the Deployment once the
+  # CSV is parked in InstallWaiting — so the rollback has to touch the Deployment directly.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: image-override
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Values.namespace }}
+{{- end }}

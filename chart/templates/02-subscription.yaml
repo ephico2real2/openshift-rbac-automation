@@ -1,0 +1,40 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: {{ .Values.subscription.packageName }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  channel: {{ .Values.subscription.channel }}
+  name: {{ .Values.subscription.packageName }}
+  source: {{ .Values.subscription.source }}
+  sourceNamespace: {{ .Values.subscription.sourceNamespace }}
+  installPlanApproval: {{ .Values.subscription.installPlanApproval }}
+  {{- with .Values.subscription.startingCSV }}
+  startingCSV: {{ . }}
+  {{- end }}
+  # spec.config injects operator env (OLM-supported override). No WATCH_NAMESPACE —
+  # NCO installs AllNamespaces and watches every namespace. The operator IMAGE cannot
+  # be set here (OLM's spec.config has no image field); it is installed by OLM from the
+  # CSV and mutated at admission time (e.g. by a Kyverno policy) if a custom image is used.
+  config:
+    env:
+      - name: ZAP_LOG_LEVEL
+        value: {{ .Values.subscription.zapLogLevel | quote }}
+      - name: ZAP_DEVEL
+        value: {{ .Values.subscription.zapDevel | quote }}
+      {{- with .Values.subscription.relatedImageManager }}
+      # Native, OLM-owned operator image override (no Kyverno/IDMS needed).
+      - name: RELATED_IMAGE_MANAGER
+        value: {{ . | quote }}
+      {{- end }}
+      {{- with .Values.subscription.extraEnv }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+    {{- with .Values.subscription.resources }}
+    resources:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}

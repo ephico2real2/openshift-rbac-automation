@@ -1,0 +1,40 @@
+{{- if and .Values.operatorImage.enabled .Values.operatorImage.reconcile.enabled }}
+# Drift correction. The Helm-hook Job only runs on helm install/upgrade, but the CSV can
+# revert to the upstream image without any Helm activity at all — an OLM operator upgrade
+# installs a fresh CSV from the catalog, and so does deleting/recreating the CSV. This
+# CronJob restores the override, which is what Kyverno's admission policy used to do
+# continuously. Each run is idempotent: it exits early when the CSV is already correct.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "nco.imageOverride.name" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: image-override-reconcile
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  schedule: {{ .Values.operatorImage.reconcile.schedule | quote }}
+  # A patch racing an in-flight OLM install would just fail and retry next tick; skipping
+  # is cheaper and keeps at most one reconcile in flight.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: {{ .Values.operatorImage.reconcile.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: {{ .Values.operatorImage.reconcile.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.operatorImage.reconcile.failedJobsHistoryLimit }}
+  jobTemplate:
+    metadata:
+      labels:
+        {{- include "nco.labels" . | nindent 8 }}
+        app.kubernetes.io/component: image-override-reconcile
+    spec:
+      backoffLimit: {{ .Values.operatorImage.job.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.operatorImage.job.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            {{- include "nco.labels" . | nindent 12 }}
+            app.kubernetes.io/component: image-override-reconcile
+        spec:
+          {{- include "nco.imageOverride.podSpec" . | nindent 10 }}
+{{- end }}
