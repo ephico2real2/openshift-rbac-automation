@@ -1,0 +1,228 @@
+# BDA workload-submitter RBAC — adapted from bdp-namespace-config.yaml to bind the
+# bda-rbac-* groups that the group-sync operator ACTUALLY syncs.
+#
+# ---------------------------------------------------------------------------------------
+# What changed from bdp-namespace-config.yaml, and why
+# ---------------------------------------------------------------------------------------
+# That file derived group names as:
+#     app-ocp-rbac-bdp-spark-<company.net/bdp-spark-team>
+# There are ZERO groups on this cluster matching app-ocp-rbac-bdp-spark-*, so every
+# RoleBinding it created would reference a group that does not exist. Kubernetes accepts
+# such a binding without complaint — it is created, looks healthy, and grants nobody.
+#
+# The groups that DO exist come from GroupSync/bda-rbac-groupsync
+# (filter: (&(objectClass=groupOfNames)(cn=bda-rbac-*))) and are named:
+#     bda-rbac-<service>-<tenant>-<kind>
+#       service ∈ spark | flink | trino
+#       tenant  ∈ alpha | delta | gamma | theta
+#       kind    ∈ users | apps
+# e.g. bda-rbac-spark-alpha-users, bda-rbac-trino-theta-apps.
+#
+# So this config keeps the same shape, and changes only the derivation:
+#     bda-rbac-<company.net/bda-team>
+# with the namespace label carrying "<service>-<tenant>-<kind>", e.g. spark-alpha-users.
+# One namespace binds ONE group — the label picks which.
+#
+# The Role's rules are carried over VERBATIM. Adapting how groups are matched should not
+# quietly change what access is granted; see the open question at the foot of this file.
+#
+# ---------------------------------------------------------------------------------------
+# Two axes, do not conflate them
+# ---------------------------------------------------------------------------------------
+# company.net/app-environment  rnd | eng | qa | uat | prod   <- lifecycle stage
+# tenant token in the group    alpha | delta | gamma | theta <- BDA tenant/instance
+# These are unrelated. A namespace needs both: which lifecycle env it is, and which BDA
+# tenant it serves. `bda-rbac-spark-alpha-users` says nothing about rnd vs prod.
+#
+# ---------------------------------------------------------------------------------------
+# This role map is an EXAMPLE
+# ---------------------------------------------------------------------------------------
+# The permissions below are a demonstration of the mechanism, not a recommended standard.
+# What access a BDA submitter should hold — and in which lifecycle environments — is a
+# company policy decision. Adjust the rules and the app-environment values to your own.
+---
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: NamespaceConfig
+metadata:
+  name: bda-workload-submitter-namespaceconfig-rbac
+  labels:
+    app.kubernetes.io/name: namespace-configuration-operator
+    app.kubernetes.io/component: rbac-automation
+    app.kubernetes.io/part-of: bda-platform
+    rbac.ocp.io/scope: namespace-scoped
+    rbac.ocp.io/kind: NamespaceConfig
+    rbac.ocp.io/policy-version: "1.0.0"
+    rbac.ocp.io/access-model: bda-workload-submitter
+  annotations:
+    description: "BDA workload-submitter RBAC for spark/flink/trino team namespaces"
+    rbac.ocp.io/purpose: "Binds bda-rbac-<service>-<tenant>-<kind> groups to a namespace-scoped submitter Role"
+    rbac.ocp.io/group-prefix: "bda-rbac-"
+spec:
+  labelSelector:
+    matchExpressions:
+      # Standard labelling, so the namespace also participates in the mnemonic-based RBAC.
+      - key: company.net/mnemonic
+        operator: Exists
+      # Carries "<service>-<tenant>-<kind>" — the suffix of the bda-rbac-* group to bind.
+      - key: company.net/bda-team
+        operator: Exists
+      - key: company.net/app-environment
+        operator: In
+        values:
+          - rnd
+          - eng
+          - qa
+          - uat
+          - prod
+  templates:
+    ###########################################################################
+    # BDA Workload Submitter Role — namespace-scoped
+    ###########################################################################
+    - excludedPaths:
+        - .metadata
+        - .status
+      objectTemplate: |
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: Role
+        metadata:
+          name: bda-workload-submitter-role
+          namespace: "{{ .Name }}"
+          labels:
+            app.kubernetes.io/managed-by: namespace-configuration-operator
+            app.kubernetes.io/component: bda-rbac
+            app.kubernetes.io/version: "1.0.0"
+            rbac.ocp.io/policy-version: "1.0.0"
+            rbac.ocp.io/access-model: bda-workload-submitter
+            rbac.ocp.io/rbac-type: custom-role
+            rbac.ocp.io/source-namespaceconfig: bda-workload-submitter-namespaceconfig-rbac
+            rbac.ocp.io/mnemonic: "{{ index .Labels "company.net/mnemonic" }}"
+            rbac.ocp.io/environment: "{{ index .Labels "company.net/app-environment" }}"
+            rbac.ocp.io/bda-team: "{{ index .Labels "company.net/bda-team" }}"
+            rbac.ocp.io/group-name: "bda-rbac-{{ index .Labels "company.net/bda-team" }}"
+          annotations:
+            rbac.ocp.io/created-by: namespace-configuration-operator
+            rbac.ocp.io/source-namespace: "{{ .Name }}"
+            rbac.ocp.io/source-namespaceconfig: bda-workload-submitter-namespaceconfig-rbac
+            rbac.ocp.io/group-name: "bda-rbac-{{ index .Labels "company.net/bda-team" }}"
+            rbac.ocp.io/purpose: "Allows BDA workload submission and management within namespace scope"
+        rules:
+          - apiGroups: [""]
+            resources:
+              - pods
+              - services
+              - configmaps
+              - persistentvolumeclaims
+            verbs:
+              - create
+              - get
+              - list
+              - watch
+              - delete
+              - deletecollection
+          - apiGroups: [""]
+            resources:
+              - pods/log
+            verbs:
+              - get
+              - list
+          - apiGroups: [""]
+            resources:
+              - secrets
+            verbs:
+              - create
+              - get
+              - watch
+              - delete
+
+    ###########################################################################
+    # RoleBinding — binds bda-rbac-<service>-<tenant>-<kind>
+    ###########################################################################
+    - excludedPaths:
+        - .metadata
+        - .status
+      objectTemplate: |
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: "{{ index .Labels "company.net/bda-team" }}-bda-workload-submitter-rb"
+          namespace: "{{ .Name }}"
+          labels:
+            app.kubernetes.io/managed-by: namespace-configuration-operator
+            app.kubernetes.io/component: bda-rbac
+            app.kubernetes.io/version: "1.0.0"
+            rbac.ocp.io/policy-version: "1.0.0"
+            rbac.ocp.io/access-model: bda-workload-submitter
+            rbac.ocp.io/access-level: submitter
+            rbac.ocp.io/role-type: custom-role
+            rbac.ocp.io/source-namespaceconfig: bda-workload-submitter-namespaceconfig-rbac
+            rbac.ocp.io/mnemonic: "{{ index .Labels "company.net/mnemonic" }}"
+            rbac.ocp.io/environment: "{{ index .Labels "company.net/app-environment" }}"
+            rbac.ocp.io/bda-team: "{{ index .Labels "company.net/bda-team" }}"
+            rbac.ocp.io/group-name: "bda-rbac-{{ index .Labels "company.net/bda-team" }}"
+          annotations:
+            rbac.ocp.io/created-by: namespace-configuration-operator
+            rbac.ocp.io/source-namespace: "{{ .Name }}"
+            rbac.ocp.io/source-namespaceconfig: bda-workload-submitter-namespaceconfig-rbac
+            rbac.ocp.io/group-name: "bda-rbac-{{ index .Labels "company.net/bda-team" }}"
+            rbac.ocp.io/purpose: "Namespace-scoped BDA workload submitter access"
+        subjects:
+          - kind: Group
+            name: "bda-rbac-{{ index .Labels "company.net/bda-team" }}"
+            apiGroup: rbac.authorization.k8s.io
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: Role
+          name: bda-workload-submitter-role
+
+# ---------------------------------------------------------------------------------------
+# The access model — deliberately simple
+# ---------------------------------------------------------------------------------------
+# ONE namespace label -> ONE group -> ONE RoleBinding. No conditionals, no multi-subject
+# bindings, no per-service branching. A person who needs access requests membership of the
+# group named by the label; the binding is already there waiting for them.
+#
+# "apps" and "users" are simply two different groups to request, and both bind to the same
+# Role. That is intended: keep the branching in the group-request process, where it is
+# visible and auditable, rather than in template logic here.
+#
+# ---------------------------------------------------------------------------------------
+# Facts about the current data — check these before rollout
+# ---------------------------------------------------------------------------------------
+# 1. "-apps" as a Group subject. A kind: Group subject matches LDAP group members, not
+#    ServiceAccounts. Today the bda-rbac-*-apps groups DO contain real users
+#    (bda-rbac-spark-alpha-apps -> john.doe), so they behave as user groups and this works.
+#    It would silently grant nobody if "-apps" ever came to mean ServiceAccounts instead.
+#
+# 2. secrets verbs. Carried over verbatim from bdp-namespace-config.yaml: create, get,
+#    watch, delete — no list, no update. "watch" without "list" is an odd pair: watch on
+#    the collection still lets a subject enumerate every secret in the namespace, so it does
+#    not restrict visibility, while the missing "list" breaks plain `oc get secrets`. Worth
+#    deciding deliberately rather than inheriting. Note also that secrets:get combined with
+#    pods:create is close to reading every secret in the namespace, since any secret can be
+#    mounted into a new pod. What access is appropriate here is a company policy decision.
+#
+# 3. Missing group. bda-rbac-spark-gamma-apps exists but bda-rbac-spark-gamma-users does
+#    NOT. A namespace labelled company.net/bda-team: spark-gamma-users would bind a
+#    non-existent group and silently grant nobody — no error, no event. Kubernetes does not
+#    validate that a subject exists, so a typo'd label fails exactly the same way. Until
+#    that is automated, verify before labelling:
+#      oc get group bda-rbac-<service>-<tenant>-<kind>
+#
+#    PLANNED: Kyverno will validate this at admission, rejecting a namespace whose
+#    company.net/bda-team label does not resolve to an existing group. Two findings from
+#    checking the cluster, for whoever builds it:
+#
+#      a) RBAC. Looking a Group up needs a context apiCall, and the calling ServiceAccount
+#         must be able to read groups.user.openshift.io. Checked on this cluster:
+#           kyverno-admission-controller  -> NO
+#           kyverno-background-controller -> yes
+#         So an admission-time deny needs extra RBAC granted to the admission controller
+#         (Kyverno aggregates ClusterRoles into kyverno:admission-controller). A
+#         background/audit policy that only reports would work today with no RBAC change,
+#         and is the cheaper first step.
+#
+#      b) No conflict with the existing policy. policies/kyverno-validation-only.yaml
+#         scopes its group-naming rule to names: ["app-ocp-rbac-*"], which does not glob-
+#         match bda-rbac-*. Applying it will not reject the groups group-sync creates. A
+#         bda naming rule would have to be added separately. (Note that file is not
+#         currently applied — the cluster has zero ClusterPolicies.)

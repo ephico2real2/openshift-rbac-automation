@@ -1,0 +1,87 @@
+# =============================================================================
+# Group naming — app-ocp-rbac-* family
+# =============================================================================
+# One policy per group family. See kyverno-group-naming-bda-rbac.yaml for the
+# sibling, and the "Adding a new family" note at the foot of this file.
+#
+# SCOPE. Deliberately narrow: this validates the NAME of groups already matched by
+# the family's glob. It does not decide what syncs — that is the GroupSync CR's
+# `filter`, a separate and independent gate:
+#
+#   GroupSync/ldap-groupsync   filter: (&(objectClass=groupOfNames)(cn=app-ocp-rbac-*))
+#
+# A group whose name does not match `names:` below is simply not this policy's
+# business. A group that does match but fails the regex is reported (Audit) — it
+# still exists and still works. Naming validation is hygiene, not access control.
+#
+# CURRENT STATE — read before switching to Enforce.
+# A background scan on 2026-07-30 flagged 15 pre-existing groups against the
+# mnemonic rule. Widening it from {4} to {3,4} does NOT clear them — the offending
+# mnemonics are 5-8 characters: alpha(5), devops(6), lateef(6), finance(7),
+# newteam(7), toolong(7), platform(8). They need renaming, or a wider pattern.
+# Switching this policy to Enforce today would cause group-sync to fail creating
+# those groups. Either widen the mnemonic pattern to match reality first, or
+# rename the groups in LDAP. Audit mode is the safe default until that is decided.
+# =============================================================================
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: group-naming-app-ocp-rbac
+  annotations:
+    policies.kyverno.io/title: "Group Naming — app-ocp-rbac"
+    policies.kyverno.io/category: "Multi-Tenancy"
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: "Group"
+    policies.kyverno.io/description: >-
+      Validates the naming convention for the app-ocp-rbac-* group family:
+      app-ocp-rbac-{mnemonic}-(ns|cluster)-(admin|developer|audit), where mnemonic
+      is 3 or 4 lowercase letters. Scoped to that family only.
+  labels:
+    app.kubernetes.io/name: kyverno
+    app.kubernetes.io/component: group-naming-validation
+    app.kubernetes.io/part-of: rbac-automation
+    rbac.ocp.io/group-family: app-ocp-rbac
+spec:
+  # Audit, not Enforce — see CURRENT STATE above.
+  validationFailureAction: Audit
+  # Background scanning reports pre-existing violations, not just new groups.
+  background: true
+  rules:
+    - name: validate-app-ocp-rbac-group-naming
+      match:
+        any:
+          - resources:
+              kinds: ["user.openshift.io/v1/Group"]
+              # Family selector — must mirror the GroupSync filter for this family.
+              names: ["app-ocp-rbac-*"]
+      validate:
+        message: >-
+          Group name '{{ request.object.metadata.name }}' violates the app-ocp-rbac naming
+          standard. Must match app-ocp-rbac-{mnemonic}-(ns|cluster)-(admin|developer|audit)
+          where {mnemonic} is 3 or 4 lowercase letters.
+        deny:
+          conditions:
+            all:
+              # Guard against an empty name; without it the regex would be evaluated
+              # against "" during some admission flows.
+              - key: "{{ request.object.metadata.name }}"
+                operator: NotEqual
+                value: ""
+              - key: "{{ regex_match('^app-ocp-rbac-[a-z]{3,4}-(ns|cluster)-(admin|developer|audit)$', request.object.metadata.name) }}"
+                operator: Equals
+                value: false
+
+# -----------------------------------------------------------------------------
+# Adding a new group family
+# -----------------------------------------------------------------------------
+# Copy this file to kyverno-group-naming-<family>.yaml and change five things:
+#   1. metadata.name                     group-naming-<family>
+#   2. labels.rbac.ocp.io/group-family   <family>
+#   3. rules[0].name                     validate-<family>-group-naming
+#   4. match ... names: ["<family>-*"]   must mirror that family's GroupSync filter
+#   5. the regex + message               the family's own convention
+#
+# Keep one family per file. That is what lets you run one family in Enforce while
+# another is still in Audit, and keeps a bad regex from taking down validation for
+# every other family.
+# -----------------------------------------------------------------------------

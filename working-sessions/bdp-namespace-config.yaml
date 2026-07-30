@@ -1,0 +1,132 @@
+# Read the following
+# The expectation is that namespaces wiil created with an additional metadata label "company.net/bdp-spark-team: <GROUP_NAME>-<users_or_apps>" 
+# for instane e.g.  company.net/bdp-spark-team: abcxyz-users" or company.net/bdp-spark-team: abcxyz-apps or company.net/bdp-trino-team: defghy-users etc.
+# This will match the consumers who belong to the LDAP groups : "app-ocp-rbac-bdp-spark-<GROUP_NAME>-<users_or_apps>"
+# The goal to match the ldap group pattern values as follows : "app-ocp-rbac-bdp-spark-{{ index .Labels "company.net/bdp-spark-team" }}"
+# Where company.net/bdp-spark-team: abcxyz-users, so ldap grop will be match "app-ocp-rbac-bdp-spark-abcxyz-users OR "app-ocp-rbac-bdp-spark-abcxyz-apps
+
+
+---
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: NamespaceConfig
+metadata:
+  name: spark-job-submitter-namespaceconfig-rbac
+  labels:
+    app.kubernetes.io/name: namespace-configuration-operator
+    app.kubernetes.io/component: rbac-automation
+    app.kubernetes.io/part-of: bdp-spark-platform
+    rbac.ocp.io/scope: namespace-scoped
+    rbac.ocp.io/kind: NamespaceConfig
+    rbac.ocp.io/policy-version: "1.0.0"
+    rbac.ocp.io/access-model: spark-job-submitter
+  annotations:
+    description: "Automated Spark Job Submitter RBAC for Spark team namespaces"
+    rbac.ocp.io/purpose: "Creates Spark Job Submitter roles and rolebindings based on namespace metadata"
+spec:
+  labelSelector:
+    matchExpressions:
+      - key: company.net/mnemonic
+        operator: Exists
+      - key: company.net/bdp-spark-team
+        operator: Exists
+      - key: company.net/app-environment
+        operator: In
+        values:
+          - rnd
+          - eng
+          - qa
+          - uat
+          - prod
+  templates:
+    ###########################################################################
+    # Spark Job Submitter Custom Role
+    ###########################################################################
+    - objectTemplate: |
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: Role
+        metadata:
+          name: spark-job-submitter-role
+          namespace: "{{ .Name }}"
+          labels:
+            app.kubernetes.io/managed-by: namespace-configuration-operator
+            app.kubernetes.io/component: spark-rbac
+            app.kubernetes.io/version: "1.0.0"
+            rbac.ocp.io/policy-version: "1.0.0"
+            rbac.ocp.io/access-model: spark-job-submitter
+            rbac.ocp.io/rbac-type: custom-role
+            rbac.ocp.io/source-namespaceconfig: spark-job-submitter-namespaceconfig-rbac
+            rbac.ocp.io/mnemonic: "{{ index .Labels "company.net/mnemonic" }}"
+            rbac.ocp.io/environment: "{{ index .Labels "company.net/app-environment" }}"
+            rbac.ocp.io/bdp-spark-team: "{{ index .Labels "company.net/bdp-spark-team" }}"
+            rbac.ocp.io/group-name: "app-ocp-rbac-bdp-spark-{{ index .Labels "company.net/bdp-spark-team" }}"
+          annotations:
+            rbac.ocp.io/created-by: namespace-configuration-operator
+            rbac.ocp.io/source-namespace: "{{ .Name }}"
+            rbac.ocp.io/source-namespaceconfig: spark-job-submitter-namespaceconfig-rbac
+            rbac.ocp.io/group-name: "app-ocp-rbac-bdp-spark-{{ index .Labels "company.net/bdp-spark-team" }}"
+            rbac.ocp.io/purpose: "Allows Spark workload submission and management within namespace scope"
+        rules:
+          - apiGroups: [""]
+            resources:
+              - pods
+              - services
+              - configmaps
+              - persistentvolumeclaims
+            verbs:
+              - create
+              - get
+              - list
+              - watch
+              - delete
+              - deletecollection
+          - apiGroups: [""]
+            resources:
+              - pods/log
+            verbs:
+              - get
+              - list
+          - apiGroups: [""]
+            resources:
+              - secrets
+            verbs:
+              - create
+              - get
+              - watch
+              - delete
+
+    ###########################################################################
+    # Automated RoleBinding
+    ###########################################################################
+    - objectTemplate: |
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: "{{ index .Labels "company.net/bdp-spark-team" }}-spark-job-submitter-rb"
+          namespace: "{{ .Name }}"
+          labels:
+            app.kubernetes.io/managed-by: namespace-configuration-operator
+            app.kubernetes.io/component: spark-rbac
+            app.kubernetes.io/version: "1.0.0"
+            rbac.ocp.io/policy-version: "1.0.0"
+            rbac.ocp.io/access-model: spark-job-submitter
+            rbac.ocp.io/access-level: submitter
+            rbac.ocp.io/role-type: custom-role
+            rbac.ocp.io/source-namespaceconfig: spark-job-submitter-namespaceconfig-rbac
+            rbac.ocp.io/mnemonic: "{{ index .Labels "company.net/mnemonic" }}"
+            rbac.ocp.io/environment: "{{ index .Labels "company.net/app-environment" }}"
+            rbac.ocp.io/bdp-spark-team: "{{ index .Labels "company.net/bdp-spark-team" }}"
+            rbac.ocp.io/group-name: "app-ocp-rbac-bdp-spark-{{ index .Labels "company.net/bdp-spark-team" }}"
+          annotations:
+            rbac.ocp.io/created-by: namespace-configuration-operator
+            rbac.ocp.io/source-namespace: "{{ .Name }}"
+            rbac.ocp.io/source-namespaceconfig: spark-job-submitter-namespaceconfig-rbac
+            rbac.ocp.io/group-name: "app-ocp-rbac-bdp-spark-{{ index .Labels "company.net/bdp-spark-team" }}"
+            rbac.ocp.io/purpose: "Namespace-scoped Spark Job Submitter access"
+        subjects:
+          - kind: Group
+            name: "app-ocp-rbac-bdp-spark-{{ index .Labels "company.net/bdp-spark-team" }}"
+            apiGroup: rbac.authorization.k8s.io
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: Role
+          name: spark-job-submitter-role

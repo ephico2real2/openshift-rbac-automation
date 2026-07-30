@@ -1,0 +1,94 @@
+# Sample namespaces for the BDA workload-submitter demo — APPLY THIS FIRST.
+#
+# Pairs with bda-namespace-config.yaml. Each namespace below is labelled so it binds a
+# bda-rbac-* group that ACTUALLY EXISTS and has members, so the demo grants real access
+# rather than creating an empty RoleBinding.
+#
+#   1. oc apply -f working-sessions/bda-namespace.yaml         <- this file
+#   2. oc apply -f working-sessions/bda-namespace-config.yaml  <- the NamespaceConfig
+#   3. oc get rolebinding -n spar-rnd -o wide                  <- verify the group is bound
+#
+# ---------------------------------------------------------------------------------------
+# Labels the selector requires
+# ---------------------------------------------------------------------------------------
+#   company.net/mnemonic          Exists. 4 lowercase letters — enforced by
+#                                 policies/kyverno-validation-only.yaml (^[a-z]{4}$).
+#   company.net/app-environment   One of rnd | eng | qa | uat | prod. LIFECYCLE stage.
+#   company.net/bda-team          "<service>-<tenant>-<kind>", interpolated into:
+#                                     bda-rbac-<value>
+#                                 spark-alpha-users -> bda-rbac-spark-alpha-users
+#
+# Note the two independent axes: app-environment is the lifecycle stage (rnd..prod), while
+# the tenant token inside bda-team (alpha/delta/gamma/theta) identifies the BDA tenant.
+# A namespace carries both; neither implies the other.
+#
+# ---------------------------------------------------------------------------------------
+# What else fires when you apply this
+# ---------------------------------------------------------------------------------------
+# These namespaces carry mnemonic + app-environment, so they ALSO match
+# nonprod-/prod-namespaceconfig-rbac and get the usual {mnemonic}-admin-rb /
+# -developer-rb / -audit-rb. The BDA RoleBinding is additive and targets a different group.
+#
+# Those standard bindings reference app-ocp-rbac-<mnemonic>-ns-* groups. Mnemonic "spar"
+# has none synced today, so they will be created and grant nobody — harmless for this demo,
+# but it is why you will see more RoleBindings than BDA ones.
+---
+# spark / alpha / users — binds bda-rbac-spark-alpha-users (members: jane.smith, bob.wilson)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spar-rnd
+  labels:
+    company.net/mnemonic: spar
+    company.net/app-environment: rnd
+    company.net/bda-team: spark-alpha-users
+    # Matches policies/multitenant-namespaceconfig.yaml (default-deny NetworkPolicies).
+    # Uncomment to include network isolation in the demo.
+    # multitenant: "true"
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
+  annotations:
+    openshift.io/display-name: "BDA demo — spark/alpha/users (non-prod)"
+    openshift.io/description: "Sample namespace for the BDA workload-submitter RBAC demo"
+---
+# spark / alpha / apps — binds bda-rbac-spark-alpha-apps (member: john.doe)
+#
+# Same tenant, "apps" kind. Note this currently grants the SAME access as the users group:
+# both bind through one template to bda-workload-submitter-role. See open question 1 in
+# bda-namespace-config.yaml if apps identities should differ.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spar-qa
+  labels:
+    company.net/mnemonic: spar
+    company.net/app-environment: qa
+    company.net/bda-team: spark-alpha-apps
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
+  annotations:
+    openshift.io/display-name: "BDA demo — spark/alpha/apps (qa)"
+    openshift.io/description: "Sample namespace for the BDA workload-submitter RBAC demo"
+---
+# trino / theta / users — binds bda-rbac-trino-theta-users (member: bob.wilson)
+#
+# Included to show the same policy serves every BDA service; only the label differs.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trno-uat
+  labels:
+    company.net/mnemonic: trno
+    company.net/app-environment: uat
+    company.net/bda-team: trino-theta-users
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
+  annotations:
+    openshift.io/display-name: "BDA demo — trino/theta/users (uat)"
+    openshift.io/description: "Sample namespace for the BDA workload-submitter RBAC demo"
