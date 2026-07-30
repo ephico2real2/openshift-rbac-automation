@@ -78,11 +78,16 @@ subscription:
   zapLogLevel: "info"
   zapDevel: "false"
 
-  # RELATED_IMAGE_MANAGER env (spec.config.env). NOTE — local testing PROVED this does
-  # NOT change THIS operator's own image (it is an operand-image hint, and NCO deploys no
-  # operand pods; the env got injected but the manager image stayed upstream). See
-  # docs/local-testing/LOCAL_TEST_operator_image_override.md. Image override still needs
-  # Kyverno (or a custom CatalogSource). Kept configurable but OFF by default.
+  # UNUSED — the template no longer reads this, so setting it has NO effect.
+  #
+  # RELATED_IMAGE_MANAGER does not change THIS operator's own image: it is an operand-image
+  # hint and NCO deploys no operand pods. Proven on-cluster — the env var was injected and
+  # the manager image stayed upstream (docs/local-testing/LOCAL_TEST_operator_image_override.md §4a),
+  # so the env block is commented out in templates/02-subscription.yaml.
+  #
+  # Use operatorImage.enabled below to override the image. This key is retained only so an
+  # existing values file that still sets it does not fail to render; it is inert and can be
+  # dropped once no environment references it.
   relatedImageManager: ""
 
   # Extra env vars appended to spec.config.env, as a list of {name, value}.
