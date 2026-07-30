@@ -40,7 +40,13 @@ This solution provides **automated RBAC management** for OpenShift clusters usin
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## 🔒 Security Model
+## 🔒 Security Model (example)
+
+> **This role map is a demonstration, not a production standard.** The reusable part of this
+> repo is the *mechanism* — the group-name patterns, how a matched group is assigned a role,
+> and how namespace labels drive environment-aware behaviour. **Which access level production
+> should actually grant is a company policy decision.** Adapt the templates in `policies/` to
+> your own standard; the table below records what these example policies currently do.
 
 | Environment | Admin Access | Developer Access | Audit Access |
 |-------------|--------------|------------------|--------------|
@@ -51,10 +57,15 @@ This solution provides **automated RBAC management** for OpenShift clusters usin
 | **prod**    | ❌ **No**    | ✅ Yes           | ✅ Yes       |
 | **other**   | ❌ **No**    | ✅ Yes           | ✅ Yes       |
 
-**Security Design**:
+**As configured in this example**:
 - **Admin access**: Restricted to non-production environments only
 - **Developer access**: Available in ALL environments (power users in prod)
 - **Audit access**: Universal read-only access across all environments
+
+Tightening production to read-only means removing the developer template from
+`policies/prod-namespaceconfig-rbac.yaml`; loosening it means adding one. The environment
+values themselves (`rnd`/`eng`/`qa`/`uat`/`prod`) are just label values the selectors match —
+they are equally yours to change.
 
 ## 🚀 Quick Start
 
@@ -123,8 +134,9 @@ oc get rolebindings -n payment-prod
 # Expected: paym-developer-rb (edit) and paym-audit-rb (view) — NO paym-admin-rb
 ```
 
-> Production removes **admin**, not write access: developers keep `edit` in prod by design.
-> See the Security Model table above and [docs/architecture.md](docs/architecture.md).
+> In this example the developer group keeps `edit` in production and only `admin` is withheld.
+> **That split is a company policy decision, not a rule** — adjust the templates in
+> `policies/` to match your own. See [docs/architecture.md](docs/architecture.md).
 
 ### 5. Verify System Access
 

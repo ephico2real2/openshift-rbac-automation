@@ -6,6 +6,22 @@ driven by LDAP group names and namespace labels.
 For installation see the [root README](../README.md); the operator itself is installed by the
 Helm chart in [`../chart`](../chart).
 
+> ### These policies are a worked example
+>
+> What this repo provides is the **mechanism**:
+>
+> - the **group-name patterns** the policies match on (`app-ocp-rbac-{mnemonic}-(ns|cluster)-(admin|developer|audit)`)
+> - how a matched group is **assigned a role**, via `objectTemplate`
+> - how **namespace labels** select an environment, so one policy can behave differently per environment
+>
+> The specific role map below — who gets `admin`, `edit` or `view`, and in which environments —
+> is **illustrative**. Which access level is appropriate for production is a **company policy
+> decision** and will differ between organisations, regulators and workloads.
+>
+> Read the tables as *"this is what these example policies currently do"*, not *"this is what
+> production ought to grant"*. Adapt the templates in `../policies` to your own standard; the
+> patterns and structure are the reusable part.
+
 ## Core policies
 
 | Policy | Purpose | Groups used | Environment aware |
@@ -49,11 +65,14 @@ RoleBindings. Admin is withheld; developer is **not**:
 | `{mnemonic}-developer-rb` | `edit` | `app-ocp-rbac-{mnemonic}-ns-developer` |
 | `{mnemonic}-audit-rb` | `view` | `app-ocp-rbac-{mnemonic}-ns-audit` |
 
-> **Production is not read-only.** Developers hold `edit` — write access — in production. This
-> is deliberate ("power users in prod"), and the policy's own description says so: *"audit/developer
-> access for ALL environments (admin restricted to non-prod)"*. What production removes is
-> **admin**, not write. Verified on-cluster: a prod namespace carries `{mnemonic}-developer-rb`
-> → `ClusterRole/edit` alongside `{mnemonic}-audit-rb` → `ClusterRole/view`.
+> **As configured here, production is not read-only** — the developer group holds `edit`, and
+> what production withholds is `admin`. Verified on-cluster: a prod namespace carries
+> `{mnemonic}-developer-rb` → `ClusterRole/edit` alongside `{mnemonic}-audit-rb` → `ClusterRole/view`.
+>
+> **This is an example, not a recommendation.** How much access production should grant is a
+> company policy decision. An organisation requiring read-only production removes the developer
+> template from `prod-namespaceconfig-rbac.yaml`; one wanting break-glass admin adds it. The
+> point of these files is to show *how* roles are assigned, not to prescribe *which* roles.
 
 ### Cluster-level access
 
