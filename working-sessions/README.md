@@ -13,6 +13,10 @@ Everything below was executed and the output is real, not illustrative.
 | `bda-namespace-config.yaml` | The BDA `NamespaceConfig` — binds `bda-rbac-*` groups |
 | `bdp-namespace-config.yaml` | Original spark draft, superseded — see "Why it was replaced" |
 | `verify-bda-rolebindings.sh` | Resolves every BDA RoleBinding to its real group membership — see "Verifying" |
+| `kyverno-label-test-namespaces.yaml` | 8 namespaces exercising every namespace-label rule, pass and fail |
+| `verify-kyverno-label-tests.sh` | Asserts Kyverno's verdicts match the declared expectations; exits non-zero on drift |
+| `oud-group-namespaceconfig.yaml` | PoC: label names the group directly, no prefix added by the template |
+| `oud-group-namespace.yaml` | PoC namespaces for the oud-group design |
 | `../../group-sync-chart/setup-local-ldap-testing/ldap-rbac-groups-spar-trno.ldif` | LDAP seed for the `spar` / `trno` mnemonics |
 
 ## The headline result
@@ -410,7 +414,7 @@ metadata change  adding an annotation to the template
                  did NOT propagate — required delete + recreate
 ```
 
-> ### GOTCHA 10 — template metadata edits do not reach existing objects
+> ### GOTCHA 9 — template metadata edits do not reach existing objects
 >
 > Because `.metadata` is in `excludedPaths` on every NamespaceConfig here, editing labels or
 > annotations in an `objectTemplate` changes **nothing** on objects that already exist.
@@ -435,6 +439,140 @@ metadata change  adding an annotation to the template
 > resources — but it is silent, and it is the *only* drift case NCO does not self-heal.
 > Everything at the object level does.
 
+## Kyverno gotchas
+
+Found while repairing `policies/kyverno-validation-only.yaml`. All three cost real time and
+none of them announce themselves.
+
+> ### GOTCHA 10 — `validate.pattern` is NOT regex
+>
+> Every rule in this repo that put a regex in `validate.pattern` was broken. `validate.pattern`
+> does **wildcard** matching (`*`, `?`) and treats `|` as its own **OR operator**. Three rules,
+> three different failure shapes:
+>
+> | Rule | Symptom |
+> |---|---|
+> | `validate-mnemonic-format` | failed **everything** — 14 false positives, incl. `beta-prod` (mnemonic `beta`) |
+> | `validate-environment-values` | failed **first and last** alternatives only — 8 false positives |
+> | `validate-custom-clusterroles-format` | validated an **impossible** value, never ran |
+>
+> The middle one is the dangerous one. `"^(rnd|eng|qa|uat|prod)$"` was split on `|` into five
+> alternatives:
+>
+> ```
+> ^(rnd  |  eng  |  qa  |  uat  |  prod)$
+>  ^^^^                            ^^^^^
+>  welded to "^("                  welded to ")$"
+> ```
+>
+> The middle three are clean literals and matched. The first and last carry the anchors and
+> could never match — so `qa` and `uat` passed while `rnd` and `prod` always failed.
+>
+> **A rule that fails everything looks broken. One that fails plausibly looks like it works.**
+> That is how this survived, and under Enforce it would have rejected every production
+> namespace.
+>
+> `regex_match()` inside `deny.conditions` is the correct idiom:
+>
+> ```yaml
+> deny:
+>   conditions:
+>     all:
+>     - key: "{{ regex_match('^(rnd|eng|qa|uat|prod)$', request.object.metadata.labels.\"company.net/app-environment\") }}"
+>       operator: Equals
+>       value: false
+> ```
+>
+> 22 false positives eliminated across the three rules.
+
+> ### GOTCHA 11 — narrowing a rule leaves STALE findings in the report
+>
+> After adding an `exclude` block, the report still showed all 115 findings — identical counts
+> — which looked like the fix had failed. It had not. Admission was correct immediately:
+>
+> ```
+> openshift-testexcl   ACCEPT (excluded)
+> app-testincl         REJECT (rule applies)
+> ```
+>
+> The cause is in the per-result timestamps:
+>
+> ```
+> openshift-* results   23:06:01   <- before the exclude was applied
+> app namespaces        23:12:52   <- after
+> ```
+>
+> **Once a resource becomes excluded, Kyverno stops evaluating it — and therefore never
+> rewrites its old result.** The stale `fail` lingers indefinitely. The max timestamp across
+> the report looks fresh, because the *still-evaluated* resources keep updating.
+>
+> Force a rebuild after narrowing any rule's scope:
+>
+> ```bash
+> oc delete clusterpolicyreport --all
+> ```
+>
+> Expect several minutes on a cluster with ~130 namespaces. After rebuild: 115 → 45, with the
+> 45 being genuine findings.
+>
+> **Do not measure a scope change without regenerating first** — the report will overstate.
+
+> ### GOTCHA 12 — a label value cannot hold a list
+>
+> `validate-custom-clusterroles-format` validated a comma-separated list held in a **label**.
+> That value cannot exist. The API restricts label values to:
+>
+> ```
+> (([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?
+> ```
+>
+> which excludes both `,` and ` `. Verified against the live API:
+>
+> ```
+> "database-admin,security-policy-admin"    -> rejected
+> "database-admin, security-policy-admin"   -> rejected
+> "database-admin"                          -> accepted
+> ```
+>
+> So the apiserver rejected any multi-role value **before Kyverno ever saw it**, and the rule
+> reported `skip` on every namespace — unused because it was unusable. A list has to be an
+> **annotation**, which has no such restriction.
+>
+> Same constraint bit the `company.net/oud-group` design: `system:`-prefixed role names cannot
+> be label values either, because of the colon.
+>
+> **When a label is supposed to carry structure, check it against the API's value regex first.**
+> `skip` on every resource is the tell — it usually means unusable, not unused.
+
+## Regression tests for these rules
+
+`kyverno-label-test-namespaces.yaml` creates eight namespaces that exercise every namespace-label
+rule, pass and fail, each named for what it proves.
+`verify-kyverno-label-tests.sh` compares actual verdicts against the expectations declared in the
+YAML header and **exits non-zero on a mismatch**, so a policy edit can be gated on it rather than
+eyeballed.
+
+```
+NAMESPACE                    RULE                          EXPECT  ACTUAL
+klt-pass-mnemonic-3char      consistency-app-ocp-rbac      pass    pass    ok
+klt-fail-bad-env             validate-environment-values   fail    fail    ok
+klt-fail-mnemonic-toolong    consistency-app-ocp-rbac      fail    fail    ok
+ocp-klt-excluded-no-labels   require-rbac-labels           absent  absent  ok
+...
+ALL EXPECTATIONS MET
+```
+
+`absent` is the interesting expectation — it asserts Kyverno produced **no result at all**, which
+is what distinguishes "excluded" from "passed". `klt-fail-bad-env` guards the Gotcha 10
+regression specifically, since `prod` was one of the two alternatives the broken pattern could
+never match.
+
+```bash
+oc apply -f working-sessions/kyverno-label-test-namespaces.yaml
+./working-sessions/verify-kyverno-label-tests.sh
+oc delete ns -l rbac.ocp.io/test-fixture=kyverno-labels   # teardown
+```
+
 ## Why `bdp-namespace-config.yaml` was replaced
 
 It derived group names as `app-ocp-rbac-bdp-spark-<label>`. **Zero** groups on the cluster match
@@ -446,7 +584,7 @@ The groups that actually exist come from `GroupSync/bda-rbac-groupsync`
 populated. `bda-namespace-config.yaml` changes only the derivation; the Role's rules are
 carried over verbatim so that adapting *matching* does not silently change *access*.
 
-> ### GOTCHA 9 — two different "environment" axes
+> ### GOTCHA 13 — two different "environment" axes
 >
 > ```
 > company.net/app-environment   rnd | eng | qa | uat | prod   <- lifecycle stage

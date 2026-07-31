@@ -32,17 +32,16 @@ spec:
   #             company.net/mnemonic: "^[a-z]{3,4}$"
   #
   # validate.pattern does WILDCARD matching (* and ?), not regex. The anchors and
-  # quantifiers were therefore compared more or less literally, no label value can
-  # ever equal that string, and every labelled namespace failed. All 14 reported
-  # violations were false positives — beta-prod (mnemonic "beta") was flagged
-  # despite being valid.
+  # quantifiers were compared more or less literally, no label value can ever equal that
+  # string, and every labelled namespace failed. All 14 reported violations were false
+  # positives — beta-prod (mnemonic "beta") was flagged despite being valid.
   #
   # The check it intended now lives in validate-mnemonic-group-consistency-app-ocp-rbac
-  # below, which uses regex_match() inside deny.conditions — the correct Kyverno idiom
-  # for regex — and passes the same 14 namespaces.
+  # below, which uses regex_match() inside deny.conditions — the correct Kyverno idiom for
+  # regex — and passes the same 14 namespaces.
   #
-  # If you reinstate a standalone format rule, use regex_match in deny.conditions, not
-  # a regex string in validate.pattern.
+  # If you reinstate a standalone format rule, use regex_match in deny.conditions, NOT a
+  # regex string in validate.pattern.
 
   # Validate environment label values
   - name: validate-environment-values
@@ -56,13 +55,13 @@ spec:
         operator: NotEquals
         value: ""
     # Was: validate.pattern with "^(rnd|eng|qa|uat|prod)$".
-    # validate.pattern does WILDCARD matching and treats "|" as its own OR operator, so
-    # that string was split into five alternatives:
+    # validate.pattern does WILDCARD matching and treats "|" as its own OR operator, so that
+    # string was split into five alternatives:
     #     ^(rnd  |  eng  |  qa  |  uat  |  prod)$
     # The middle three are clean literals and matched; the first and last carry the regex
-    # anchors "^(" and ")$" and could never match. Observed result: qa and uat passed
-    # while rnd and prod always failed — 8 false positives on valid namespaces.
-    # regex_match inside deny.conditions is the correct idiom for regex in Kyverno.
+    # anchors "^(" and ")$" and could never match. Observed: qa and uat passed while rnd and
+    # prod ALWAYS failed — 8 false positives on valid namespaces. A rule that fails
+    # everything looks broken; one that fails plausibly looks fine, which is how it survived.
     validate:
       message: >-
         Invalid environment value '{{ request.object.metadata.labels."company.net/app-environment" }}'.
@@ -84,25 +83,24 @@ spec:
   # Adding a family means adding a file, not editing a shared rule list.
   # This policy is now scoped to Namespace labels only.
 
-  # Validate custom ClusterRoles label format
   # Custom ClusterRoles must be an ANNOTATION, not a label.
   #
-  # The previous rule validated a comma-separated list held in a LABEL. That value can
-  # never exist: the Kubernetes API restricts label values to
+  # The previous rule validated a comma-separated list held in a LABEL. That value cannot
+  # exist: the API restricts label values to
   #     (([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?
   # which excludes both "," and " ". Verified against the live API:
   #     "database-admin,security-policy-admin"    -> rejected
   #     "database-admin, security-policy-admin"   -> rejected
   #     "database-admin"                          -> accepted
-  # So a multi-role list was rejected by the apiserver before Kyverno ever saw it, and
-  # the rule reported skip on every namespace — unused because it was unusable.
+  # So a multi-role list was rejected by the apiserver BEFORE Kyverno saw it, and the rule
+  # reported skip on every namespace — unused because it was unusable.
   #
   # Annotations have no such character restriction, so the list lives there.
   #
   # The regex is deliberately permissive, tested against 19 cases:
   #   accepts  single role, multi-role, optional spaces either side of the comma,
-  #            leading/trailing whitespace, system:-prefixed roles (colon), dotted
-  #            names such as monitoring.coreos.com-admin, single-character names
+  #            leading/trailing whitespace, system:-prefixed roles (colon), dotted names
+  #            such as monitoring.coreos.com-admin, single-character names
   #   rejects  empty, leading/trailing hyphen, uppercase, internal spaces,
   #            trailing/leading comma, doubled comma
   - name: validate-custom-clusterroles-format
@@ -129,9 +127,9 @@ spec:
             operator: Equals
             value: false
 
-  # A single ClusterRole MAY still be given as a label, since one name with no comma is
-  # a legal label value. Kept for the simple case; the annotation above is the only way
-  # to express more than one.
+  # A single ClusterRole MAY still be given as a label, since one name with no comma is a
+  # legal label value. Kept for the simple case; the annotation above is the only way to
+  # express more than one.
   - name: validate-custom-clusterroles-label-single
     match:
       any:
@@ -222,17 +220,61 @@ spec:
             value: false
 
   # Recommend both mnemonic AND environment labels for RBAC automation
+  # EXCLUSIONS. This previously used a preconditions array of literal namespace names. A
+  # cluster has ~62 openshift-* namespaces alone, so the rule flagged essentially every
+  # platform namespace: 115 findings, of which 64 were openshift-*/kube-*. That is noise,
+  # and noise is what stops anyone reading a report.
+  #
+  # Moved to a rule-level exclude block, which supports GLOBS — so platform namespaces are
+  # covered by pattern rather than by an ever-stale list. After the change: 115 -> 45, with
+  # the 45 being genuine findings.
+  #
+  # NOTE the reporting trap (see working-sessions/README.md, GOTCHA 11): once a resource
+  # becomes excluded Kyverno stops evaluating it and never rewrites its old result, so the
+  # report keeps showing stale failures. Run `oc delete clusterpolicyreport --all` after
+  # narrowing scope, or you will conclude the exclusion did not work.
+  #
+  # What deliberately REMAINS flagged: application namespaces genuinely missing the labels
+  # (test-*, pulse-*, demo-ns ...). A namespace with no mnemonic gets no RBAC automation at
+  # all, silently — that is a real finding.
   - name: require-rbac-labels
     match:
       any:
       - resources:
           kinds: ["Namespace"]
-    preconditions:
+    exclude:
       any:
-      # Skip system namespaces
-      - key: "{{ request.object.metadata.name }}"
-        operator: AnyNotIn
-        value: ["kube-system", "kube-public", "kube-node-lease", "default", "openshift-etcd", "openshift-apiserver", "openshift-authentication"]
+      # Platform namespaces, by pattern. Globs, so the list does not go stale as the
+      # platform grows. "openshift" and "ocp" are listed bare because the globs above them
+      # require the hyphen.
+      - resources:
+          kinds: ["Namespace"]
+          names:
+            - "openshift-*"
+            - "openshift"
+            - "kube-*"
+            - "ocp-*"
+            - "ocp"
+            - "default"
+      # Operator / infrastructure namespaces — no common prefix to glob.
+      - resources:
+          kinds: ["Namespace"]
+          names:
+            - "cert-manager"
+            - "cert-manager-operator"
+            - "dynatrace"
+            - "group-sync-operator"
+            - "hostpath-provisioner"
+            - "kyverno"
+            - "ldap-testing"
+            - "namespace-configuration-operator"
+      # Declarative opt-out, so onboarding an operator does not require a policy change:
+      #   oc label ns <name> rbac.ocp.io/exempt=true
+      - resources:
+          kinds: ["Namespace"]
+          selector:
+            matchLabels:
+              rbac.ocp.io/exempt: "true"
     validate:
       message: "For RBAC automation, namespace should have both 'company.net/mnemonic' and 'company.net/app-environment' labels"
       deny:
