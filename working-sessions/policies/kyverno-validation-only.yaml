@@ -1,0 +1,288 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: rbac-standards-enforcement
+  annotations:
+    policies.kyverno.io/title: "RBAC Standards Enforcement"
+    policies.kyverno.io/category: "Multi-Tenancy"
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: "Namespace, Group"
+    kyverno.io/kyverno-version: "1.15.1"
+    policies.kyverno.io/minversion: "1.15.0"
+    kyverno.io/kubernetes-version: "1.24-1.29"
+    policies.kyverno.io/description: >-
+      Enforces RBAC naming standards and label validation.
+      Works in conjunction with Red Hat CoP Namespace Configuration Operator.
+  labels:
+    app.kubernetes.io/name: kyverno
+    app.kubernetes.io/component: rbac-validation
+    app.kubernetes.io/part-of: rbac-automation
+spec:
+  validationFailureAction: Audit  # Start with Audit, can change to Enforce later
+  background: true
+  rules:
+
+  # REMOVED: validate-mnemonic-format
+  #
+  # It declared the mnemonic check as:
+  #     validate:
+  #       pattern:
+  #         metadata:
+  #           labels:
+  #             company.net/mnemonic: "^[a-z]{3,4}$"
+  #
+  # validate.pattern does WILDCARD matching (* and ?), not regex. The anchors and
+  # quantifiers were compared more or less literally, no label value can ever equal that
+  # string, and every labelled namespace failed. All 14 reported violations were false
+  # positives — beta-prod (mnemonic "beta") was flagged despite being valid.
+  #
+  # The check it intended now lives in validate-mnemonic-group-consistency-app-ocp-rbac
+  # below, which uses regex_match() inside deny.conditions — the correct Kyverno idiom for
+  # regex — and passes the same 14 namespaces.
+  #
+  # If you reinstate a standalone format rule, use regex_match in deny.conditions, NOT a
+  # regex string in validate.pattern.
+
+  # Validate environment label values
+  - name: validate-environment-values
+    match:
+      any:
+      - resources:
+          kinds: ["Namespace"]
+    preconditions:
+      any:
+      - key: "{{ request.object.metadata.labels.\"company.net/app-environment\" || '' }}"
+        operator: NotEquals
+        value: ""
+    # Was: validate.pattern with "^(rnd|eng|qa|uat|prod)$".
+    # validate.pattern does WILDCARD matching and treats "|" as its own OR operator, so that
+    # string was split into five alternatives:
+    #     ^(rnd  |  eng  |  qa  |  uat  |  prod)$
+    # The middle three are clean literals and matched; the first and last carry the regex
+    # anchors "^(" and ")$" and could never match. Observed: qa and uat passed while rnd and
+    # prod ALWAYS failed — 8 false positives on valid namespaces. A rule that fails
+    # everything looks broken; one that fails plausibly looks fine, which is how it survived.
+    validate:
+      message: >-
+        Invalid environment value '{{ request.object.metadata.labels."company.net/app-environment" }}'.
+        Must be one of: rnd, eng, qa, uat, prod
+      deny:
+        conditions:
+          all:
+          - key: "{{ regex_match('^(rnd|eng|qa|uat|prod)$', request.object.metadata.labels.\"company.net/app-environment\") }}"
+            operator: Equals
+            value: false
+
+  # NOTE: Group NAMING rules used to live here. They now have their own per-family
+  # policies, one file per group family, so a family can be enabled, audited or
+  # enforced independently of the others and of this namespace/label policy:
+  #
+  #   kyverno-group-naming-app-ocp-rbac.yaml   ->  app-ocp-rbac-*
+  #   kyverno-group-naming-bda-rbac.yaml       ->  bda-rbac-*
+  #
+  # Adding a family means adding a file, not editing a shared rule list.
+  # This policy is now scoped to Namespace labels only.
+
+  # Custom ClusterRoles must be an ANNOTATION, not a label.
+  #
+  # The previous rule validated a comma-separated list held in a LABEL. That value cannot
+  # exist: the API restricts label values to
+  #     (([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?
+  # which excludes both "," and " ". Verified against the live API:
+  #     "database-admin,security-policy-admin"    -> rejected
+  #     "database-admin, security-policy-admin"   -> rejected
+  #     "database-admin"                          -> accepted
+  # So a multi-role list was rejected by the apiserver BEFORE Kyverno saw it, and the rule
+  # reported skip on every namespace — unused because it was unusable.
+  #
+  # Annotations have no such character restriction, so the list lives there.
+  #
+  # The regex is deliberately permissive, tested against 19 cases:
+  #   accepts  single role, multi-role, optional spaces either side of the comma,
+  #            leading/trailing whitespace, system:-prefixed roles (colon), dotted names
+  #            such as monitoring.coreos.com-admin, single-character names
+  #   rejects  empty, leading/trailing hyphen, uppercase, internal spaces,
+  #            trailing/leading comma, doubled comma
+  - name: validate-custom-clusterroles-format
+    match:
+      any:
+      - resources:
+          kinds: ["Namespace"]
+    preconditions:
+      any:
+      - key: "{{ request.object.metadata.annotations.\"rbac.company.net/custom-clusterroles\" || '' }}"
+        operator: NotEquals
+        value: ""
+    validate:
+      message: >-
+        Invalid custom ClusterRoles annotation
+        '{{ request.object.metadata.annotations."rbac.company.net/custom-clusterroles" }}'.
+        Expected a comma-separated list of ClusterRole names, e.g.
+        'database-admin,security-policy-admin' or 'database-admin, security-policy-admin'.
+        Names may contain a-z, 0-9, '-', '.', ':' and must start and end alphanumeric.
+      deny:
+        conditions:
+          all:
+          - key: "{{ regex_match('^\\s*[a-z0-9]([-a-z0-9.:]*[a-z0-9])?(\\s*,\\s*[a-z0-9]([-a-z0-9.:]*[a-z0-9])?)*\\s*$', request.object.metadata.annotations.\"rbac.company.net/custom-clusterroles\") }}"
+            operator: Equals
+            value: false
+
+  # A single ClusterRole MAY still be given as a label, since one name with no comma is a
+  # legal label value. Kept for the simple case; the annotation above is the only way to
+  # express more than one.
+  - name: validate-custom-clusterroles-label-single
+    match:
+      any:
+      - resources:
+          kinds: ["Namespace"]
+    preconditions:
+      any:
+      - key: "{{ request.object.metadata.labels.\"rbac.company.net/custom-clusterroles\" || '' }}"
+        operator: NotEquals
+        value: ""
+    validate:
+      message: >-
+        Invalid custom ClusterRoles label
+        '{{ request.object.metadata.labels."rbac.company.net/custom-clusterroles" }}'.
+        A label can hold only ONE ClusterRole name — the API forbids ',' and ' ' in label
+        values. Use the rbac.company.net/custom-clusterroles ANNOTATION for a list.
+      deny:
+        conditions:
+          all:
+          - key: "{{ regex_match('^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$', request.object.metadata.labels.\"rbac.company.net/custom-clusterroles\") }}"
+            operator: Equals
+            value: false
+
+  # ---------------------------------------------------------------------------
+  # Mnemonic / group-name consistency — split per group family
+  #
+  # These check that a namespace label will DERIVE a conforming group name. They
+  # deliberately do NOT check that the group exists: that needs a context apiCall,
+  # and the kyverno-admission-controller ServiceAccount cannot read
+  # groups.user.openshift.io (verified — only the background controller can).
+  # Existence checking is tracked separately.
+  #
+  # The previous single rule had an EMPTY deny.conditions block, which is invalid —
+  # it produced 119 "error" results in the policy report rather than validating
+  # anything. Each rule below has real conditions.
+  # ---------------------------------------------------------------------------
+
+  # app-ocp-rbac-* : company.net/mnemonic must derive a valid group name, i.e.
+  #   app-ocp-rbac-<mnemonic>-ns-(admin|developer|audit)
+  - name: validate-mnemonic-group-consistency-app-ocp-rbac
+    match:
+      any:
+      - resources:
+          kinds: ["Namespace"]
+    preconditions:
+      all:
+      - key: "{{ request.object.metadata.labels.\"company.net/mnemonic\" || '' }}"
+        operator: NotEquals
+        value: ""
+    validate:
+      message: >-
+        Namespace mnemonic '{{ request.object.metadata.labels."company.net/mnemonic" }}' will not
+        derive a conforming group name. Expected app-ocp-rbac-<mnemonic>-ns-(admin|developer|audit)
+        with <mnemonic> being 3 or 4 lowercase letters, so the derived groups match the
+        group-naming-app-ocp-rbac policy.
+      deny:
+        conditions:
+          all:
+          - key: "{{ regex_match('^[a-z]{3,4}$', request.object.metadata.labels.\"company.net/mnemonic\") }}"
+            operator: Equals
+            value: false
+
+  # bda-rbac-* : company.net/bda-team must derive a valid group name, i.e.
+  #   bda-rbac-<service>-<tenant>-(apps|users)
+  # The label carries everything after the bda-rbac- prefix, so it must itself match
+  # <service>-<tenant>-<kind>.
+  - name: validate-mnemonic-group-consistency-bda-rbac
+    match:
+      any:
+      - resources:
+          kinds: ["Namespace"]
+    preconditions:
+      all:
+      - key: "{{ request.object.metadata.labels.\"company.net/bda-team\" || '' }}"
+        operator: NotEquals
+        value: ""
+    validate:
+      message: >-
+        Namespace bda-team '{{ request.object.metadata.labels."company.net/bda-team" }}' will not
+        derive a conforming group name. Expected <service>-<tenant>-(apps|users) with service one
+        of spark, flink, trino — the label is appended to "bda-rbac-" to form the bound group, so
+        it must match the group-naming-bda-rbac policy.
+      deny:
+        conditions:
+          all:
+          - key: "{{ regex_match('^(spark|flink|trino)-[a-z0-9]+-(apps|users)$', request.object.metadata.labels.\"company.net/bda-team\") }}"
+            operator: Equals
+            value: false
+
+  # Recommend both mnemonic AND environment labels for RBAC automation
+  # EXCLUSIONS. This previously used a preconditions array of literal namespace names. A
+  # cluster has ~62 openshift-* namespaces alone, so the rule flagged essentially every
+  # platform namespace: 115 findings, of which 64 were openshift-*/kube-*. That is noise,
+  # and noise is what stops anyone reading a report.
+  #
+  # Moved to a rule-level exclude block, which supports GLOBS — so platform namespaces are
+  # covered by pattern rather than by an ever-stale list. After the change: 115 -> 45, with
+  # the 45 being genuine findings.
+  #
+  # NOTE the reporting trap (see working-sessions/README.md, GOTCHA 11): once a resource
+  # becomes excluded Kyverno stops evaluating it and never rewrites its old result, so the
+  # report keeps showing stale failures. Run `oc delete clusterpolicyreport --all` after
+  # narrowing scope, or you will conclude the exclusion did not work.
+  #
+  # What deliberately REMAINS flagged: application namespaces genuinely missing the labels
+  # (test-*, pulse-*, demo-ns ...). A namespace with no mnemonic gets no RBAC automation at
+  # all, silently — that is a real finding.
+  - name: require-rbac-labels
+    match:
+      any:
+      - resources:
+          kinds: ["Namespace"]
+    exclude:
+      any:
+      # Platform namespaces, by pattern. Globs, so the list does not go stale as the
+      # platform grows. "openshift" and "ocp" are listed bare because the globs above them
+      # require the hyphen.
+      - resources:
+          kinds: ["Namespace"]
+          names:
+            - "openshift-*"
+            - "openshift"
+            - "kube-*"
+            - "ocp-*"
+            - "ocp"
+            - "default"
+      # Operator / infrastructure namespaces — no common prefix to glob.
+      - resources:
+          kinds: ["Namespace"]
+          names:
+            - "cert-manager"
+            - "cert-manager-operator"
+            - "dynatrace"
+            - "group-sync-operator"
+            - "hostpath-provisioner"
+            - "kyverno"
+            - "ldap-testing"
+            - "namespace-configuration-operator"
+      # Declarative opt-out, so onboarding an operator does not require a policy change:
+      #   oc label ns <name> rbac.ocp.io/exempt=true
+      - resources:
+          kinds: ["Namespace"]
+          selector:
+            matchLabels:
+              rbac.ocp.io/exempt: "true"
+    validate:
+      message: "For RBAC automation, namespace should have both 'company.net/mnemonic' and 'company.net/app-environment' labels"
+      deny:
+        conditions:
+          any:
+          - key: "{{ request.object.metadata.labels.\"company.net/mnemonic\" || '' }}"
+            operator: Equals
+            value: ""
+          - key: "{{ request.object.metadata.labels.\"company.net/app-environment\" || '' }}"
+            operator: Equals
+            value: ""

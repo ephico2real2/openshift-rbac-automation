@@ -1,0 +1,79 @@
+# =============================================================================
+# Group naming — bda-rbac-* family
+# =============================================================================
+# Sibling of kyverno-group-naming-app-ocp-rbac.yaml. One policy per group family;
+# see that file for the "Adding a new family" recipe.
+#
+# SCOPE. Validates the NAME of groups in this family only. Whether a group syncs at
+# all is decided independently by its GroupSync CR:
+#
+#   GroupSync/bda-rbac-groupsync   filter: (&(objectClass=groupOfNames)(cn=bda-rbac-*))
+#
+# CONVENTION.  bda-rbac-<service>-<tenant>-<kind>
+#
+#   service   spark | flink | trino   ENUMERATED on purpose. This is what catches a
+#                                     typo such as bda-rbac-sprak-alpha-users, which
+#                                     would otherwise sync and then bind nothing.
+#                                     Widen the alternation when a service is onboarded.
+#   tenant    [a-z0-9]+               LEFT OPEN on purpose. Tenants are added often;
+#                                     enumerating them would mean editing this policy
+#                                     every time, which is how policies rot.
+#   kind      apps | users            ENUMERATED. The kind drives which group a
+#                                     namespace binds, so a wrong value is a real bug.
+#
+# The asymmetry is the point: strict where a typo is likely and costly, permissive
+# where growth is expected.
+#
+# VERIFIED on 2026-07-30 against the live directory — 16 pass, 1 fail:
+#   pass  the 15 real bda-rbac-* groups, plus bda-rbac-spark-omega-users
+#         (a brand-new tenant, confirming no policy edit was needed)
+#   fail  bda-rbac-presto-alpha-users  (service "presto" not in the alternation —
+#         exactly the signal wanted when a new service appears unannounced)
+# =============================================================================
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: group-naming-bda-rbac
+  annotations:
+    policies.kyverno.io/title: "Group Naming — bda-rbac"
+    policies.kyverno.io/category: "Multi-Tenancy"
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: "Group"
+    policies.kyverno.io/description: >-
+      Validates the naming convention for the bda-rbac-* group family:
+      bda-rbac-{service}-{tenant}-(apps|users), where service is one of spark,
+      flink or trino. Scoped to that family only.
+  labels:
+    app.kubernetes.io/name: kyverno
+    app.kubernetes.io/component: group-naming-validation
+    app.kubernetes.io/part-of: rbac-automation
+    rbac.ocp.io/group-family: bda-rbac
+spec:
+  # Audit initially. Unlike the app-ocp-rbac family this one has only a single known
+  # violation, so it is a realistic candidate for Enforce once "presto" is resolved
+  # — either onboarded into the alternation or removed from the directory.
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: validate-bda-rbac-group-naming
+      match:
+        any:
+          - resources:
+              kinds: ["user.openshift.io/v1/Group"]
+              # Family selector — mirrors the bda-rbac-groupsync filter.
+              names: ["bda-rbac-*"]
+      validate:
+        message: >-
+          Group name '{{ request.object.metadata.name }}' violates the bda-rbac naming
+          standard. Must match bda-rbac-{service}-{tenant}-(apps|users) where service is
+          one of spark, flink, trino. If this is a new service, widen the alternation in
+          kyverno-group-naming-bda-rbac.yaml rather than renaming the group.
+        deny:
+          conditions:
+            all:
+              - key: "{{ request.object.metadata.name }}"
+                operator: NotEqual
+                value: ""
+              - key: "{{ regex_match('^bda-rbac-(spark|flink|trino)-[a-z0-9]+-(apps|users)$', request.object.metadata.name) }}"
+                operator: Equals
+                value: false

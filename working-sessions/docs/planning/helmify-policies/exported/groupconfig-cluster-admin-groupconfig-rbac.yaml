@@ -1,0 +1,40 @@
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: GroupConfig
+metadata:
+  annotations:
+    description: 'Cluster RBAC: admin ClusterRole for cluster-admin groups'
+    test-1765348813: trigger
+    test-1765379513: trigger
+    test-reconcile-1765379304: trigger
+  finalizers:
+  - redhatcop.redhat.io/groupconfig-controller
+  labels:
+    app.kubernetes.io/component: cluster-rbac-automation
+    app.kubernetes.io/name: namespace-configuration-operator
+    rbac.ocp.io/kind: GroupConfig
+    rbac.ocp.io/scope: cluster-wide
+  name: cluster-admin-groupconfig-rbac
+spec:
+  annotationSelector: {}
+  labelSelector:
+    matchExpressions:
+    - key: group-sync-operator.redhat-cop.io/sync-provider
+      operator: Exists
+  templates:
+  - excludedPaths:
+    - .metadata
+    - .status
+    - .spec.replicas
+    objectTemplate: "{{- if hasSuffix \"-cluster-admin\" .Name }}\napiVersion: rbac.authorization.k8s.io/v1\n\
+      kind: ClusterRoleBinding\nmetadata:\n  name: \"{{ .Name }}-crb\"\n  labels:\n\
+      \    app.kubernetes.io/managed-by: namespace-configuration-operator\n    app.kubernetes.io/version:\
+      \ 0.1.0\n    rbac.ocp.io/policy-version: 0.1.0\n    rbac.ocp.io/role-type: cluster-admin\n\
+      \    rbac.ocp.io/group-name: \"{{ .Name }}\"\n    rbac.ocp.io/access-level:\
+      \ admin-cluster-wide\n    rbac.ocp.io/config-source: cluster-rbac\n  annotations:\n\
+      \    rbac.ocp.io/created-by: namespace-configuration-operator\n    rbac.ocp.io/source-groupconfig:\
+      \ cluster-admin-groupconfig-rbac\n    rbac.ocp.io/group-pattern: \"app-ocp-rbac-*-cluster-admin\"\
+      \n    rbac.ocp.io/scope-restriction: \"cluster-wide\"\nsubjects:\n- kind: Group\n\
+      \  name: \"{{ .Name }}\"\n  apiGroup: rbac.authorization.k8s.io\nroleRef:\n\
+      \  apiGroup: rbac.authorization.k8s.io\n  kind: ClusterRole\n  name: admin\n\
+      {{- end }}\n"
+

@@ -1,0 +1,131 @@
+# =============================================================================
+# PROOF OF CONCEPT — company.net/oud-group
+# =============================================================================
+# Alternative to bda-workload-submitter-namespaceconfig-rbac. Instead of holding a
+# FRAGMENT that a template prefixes:
+#
+#   company.net/bda-team: spark-alpha-users   ->  "bda-rbac-" + label
+#
+# the label holds the WHOLE group name and the template uses it verbatim:
+#
+#   company.net/oud-group: bda-rbac-trino-alpha-users   ->  label
+#
+# WHAT THIS BUYS
+#   - Explicit. The label names the group outright. `oc get ns --show-labels` shows
+#     exactly what gets bound, and `oc get group <value>` works with no transformation.
+#   - Family-agnostic. One config can bind app-ocp-rbac-*, bda-rbac-*, or a future
+#     family, instead of one template per family with the prefix baked in.
+#
+# WHAT IT COSTS
+#   The hardcoded "bda-rbac-" prefix was a guardrail: it made it impossible for a
+#   namespace to bind anything outside that family. With the full name in the label
+#   that constraint has to move somewhere, so it moves to Kyverno —
+#   policies/kyverno-namespace-oud-group.yaml — where it is visible and auditable
+#   rather than buried in an objectTemplate. That is arguably where it belonged.
+#
+# DELIBERATELY NOT coupled to company.net/mnemonic or app-environment. The point of
+# this design is that the group is named directly, so the config does not need to know
+# anything else about the namespace. Requiring a mnemonic here would drag the
+# app-ocp-rbac naming convention into a family-agnostic policy.
+#
+# NOTE ON NAMING. The RoleBinding is named after the group it binds, which keeps the
+# link obvious. Naming it after the label AND the access model would produce
+# "bda-rbac-trino-alpha-users-oud-workload-submitter-rb" — the family prefix twice.
+# =============================================================================
+---
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: NamespaceConfig
+metadata:
+  name: oud-group-namespaceconfig-rbac
+  labels:
+    app.kubernetes.io/name: namespace-configuration-operator
+    app.kubernetes.io/component: rbac-automation
+    app.kubernetes.io/part-of: oud-group-poc
+    rbac.ocp.io/scope: namespace-scoped
+    rbac.ocp.io/kind: NamespaceConfig
+    rbac.ocp.io/policy-version: "0.1.0"
+    rbac.ocp.io/access-model: oud-group-direct
+  annotations:
+    description: "PoC: bind the group named directly by company.net/oud-group"
+    rbac.ocp.io/purpose: "Label carries the full LDAP group name; no prefix is added by the template"
+spec:
+  labelSelector:
+    matchExpressions:
+      # The ONLY requirement. No mnemonic, no environment — the label says everything.
+      - key: company.net/oud-group
+        operator: Exists
+  templates:
+    ###########################################################################
+    # Namespace-scoped submitter Role
+    ###########################################################################
+    - excludedPaths:
+        - .metadata
+        - .status
+      objectTemplate: |
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: Role
+        metadata:
+          name: oud-group-submitter-role
+          namespace: "{{ .Name }}"
+          labels:
+            app.kubernetes.io/managed-by: namespace-configuration-operator
+            rbac.ocp.io/access-model: oud-group-direct
+            rbac.ocp.io/rbac-type: custom-role
+            rbac.ocp.io/source-namespaceconfig: oud-group-namespaceconfig-rbac
+            rbac.ocp.io/oud-group: "{{ index .Labels "company.net/oud-group" }}"
+          annotations:
+            rbac.ocp.io/created-by: namespace-configuration-operator
+            rbac.ocp.io/source-namespace: "{{ .Name }}"
+            rbac.ocp.io/source-namespaceconfig: oud-group-namespaceconfig-rbac
+        rules:
+          - apiGroups: [""]
+            resources:
+              - pods
+              - services
+              - configmaps
+              - persistentvolumeclaims
+            verbs:
+              - create
+              - get
+              - list
+              - watch
+              - delete
+              - deletecollection
+          - apiGroups: [""]
+            resources:
+              - pods/log
+            verbs:
+              - get
+              - list
+
+    ###########################################################################
+    # RoleBinding — subject is the label value, used VERBATIM
+    ###########################################################################
+    - excludedPaths:
+        - .metadata
+        - .status
+      objectTemplate: |
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: "{{ index .Labels "company.net/oud-group" }}-rb"
+          namespace: "{{ .Name }}"
+          labels:
+            app.kubernetes.io/managed-by: namespace-configuration-operator
+            rbac.ocp.io/access-model: oud-group-direct
+            rbac.ocp.io/access-level: submitter
+            rbac.ocp.io/source-namespaceconfig: oud-group-namespaceconfig-rbac
+            rbac.ocp.io/oud-group: "{{ index .Labels "company.net/oud-group" }}"
+          annotations:
+            rbac.ocp.io/created-by: namespace-configuration-operator
+            rbac.ocp.io/source-namespace: "{{ .Name }}"
+            rbac.ocp.io/source-namespaceconfig: oud-group-namespaceconfig-rbac
+            rbac.ocp.io/group-name: "{{ index .Labels "company.net/oud-group" }}"
+        subjects:
+          - kind: Group
+            name: "{{ index .Labels "company.net/oud-group" }}"
+            apiGroup: rbac.authorization.k8s.io
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: Role
+          name: oud-group-submitter-role

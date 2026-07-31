@@ -1,0 +1,114 @@
+# =============================================================================
+# Kyverno namespace-label rule test matrix
+# =============================================================================
+# Exercises every rule in rbac-standards-enforcement, with a PASS and a FAIL case
+# for each. Namespaces are named for what they prove, so a policy report reads as a
+# test result rather than a list of findings.
+#
+# All policies are Audit, so nothing here is blocked — every namespace is created
+# and the verdicts land in the ClusterPolicyReport.
+#
+#   oc apply -f working-sessions/kyverno-label-test-namespaces.yaml
+#   ./working-sessions/verify-kyverno-label-tests.sh
+#
+# Teardown:
+#   oc delete ns -l rbac.ocp.io/test-fixture=kyverno-labels
+#
+# EXPECTED VERDICTS
+#
+#   namespace                    require-rbac  environment  mnemonic-consistency
+#   ---------------------------  ------------  -----------  --------------------
+#   klt-pass-both                pass          pass         pass
+#   klt-pass-mnemonic-3char      pass          pass         pass
+#   klt-fail-no-labels           FAIL          skip         skip
+#   klt-fail-only-mnemonic       FAIL          skip         pass
+#   klt-fail-only-env            FAIL          pass         skip
+#   klt-fail-bad-env             pass          FAIL         pass
+#   klt-fail-mnemonic-toolong    pass          pass         FAIL
+#   ocp-klt-excluded-no-labels   (excluded)    skip         skip
+#
+# "skip" means the rule's precondition did not fire because the label is absent —
+# that is a correct outcome, not a gap.
+# =============================================================================
+---
+# PASS baseline — both labels present and well formed.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: klt-pass-both
+  labels:
+    rbac.ocp.io/test-fixture: kyverno-labels
+    company.net/mnemonic: klta
+    company.net/app-environment: qa
+---
+# PASS — 3-character mnemonic. Guards the {3,4} widening: a {4}-only regex would
+# wrongly fail this one.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: klt-pass-mnemonic-3char
+  labels:
+    rbac.ocp.io/test-fixture: kyverno-labels
+    company.net/mnemonic: klt
+    company.net/app-environment: rnd
+---
+# FAIL require-rbac-labels — neither label. This is the real-world case the rule is
+# for: a namespace that silently gets no RBAC automation at all.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: klt-fail-no-labels
+  labels:
+    rbac.ocp.io/test-fixture: kyverno-labels
+---
+# FAIL require-rbac-labels — mnemonic only, no environment.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: klt-fail-only-mnemonic
+  labels:
+    rbac.ocp.io/test-fixture: kyverno-labels
+    company.net/mnemonic: kltb
+---
+# FAIL require-rbac-labels — environment only, no mnemonic.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: klt-fail-only-env
+  labels:
+    rbac.ocp.io/test-fixture: kyverno-labels
+    company.net/app-environment: prod
+---
+# FAIL validate-environment-values — "production" is not in rnd|eng|qa|uat|prod.
+# Deliberately close to a valid value; "prod" was one of the two alternatives the old
+# broken validate.pattern could never match, so this also guards that regression.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: klt-fail-bad-env
+  labels:
+    rbac.ocp.io/test-fixture: kyverno-labels
+    company.net/mnemonic: kltc
+    company.net/app-environment: production
+---
+# FAIL validate-mnemonic-group-consistency-app-ocp-rbac — 8 characters, so it cannot
+# derive a conforming app-ocp-rbac-<mnemonic>-ns-* group name. Same shape as the real
+# platform/finance/newteam mnemonics already flagged on this cluster.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: klt-fail-mnemonic-toolong
+  labels:
+    rbac.ocp.io/test-fixture: kyverno-labels
+    company.net/mnemonic: toolongx
+    company.net/app-environment: uat
+---
+# EXCLUDED — has no labels at all, and would fail require-rbac-labels, but the
+# "ocp-*" glob excludes it. If this ever appears as a finding, the exclusion has
+# regressed.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ocp-klt-excluded-no-labels
+  labels:
+    rbac.ocp.io/test-fixture: kyverno-labels

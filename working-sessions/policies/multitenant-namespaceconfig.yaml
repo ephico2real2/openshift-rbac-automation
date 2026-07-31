@@ -1,0 +1,58 @@
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: NamespaceConfig
+metadata:
+  name: multitenant
+  labels:
+    app.kubernetes.io/name: namespace-configuration-operator
+    app.kubernetes.io/component: network-isolation
+    rbac.ocp.io/scope: namespace-scoped
+    rbac.ocp.io/kind: NamespaceConfig
+  annotations:
+    description: "Multitenant network isolation: default-deny posture via NetworkPolicies for namespaces labelled multitenant=true"
+spec:
+  # Opt-in by namespace label — unlike the RBAC NamespaceConfigs, this keys off
+  # `multitenant: 'true'` rather than the company.net mnemonic/environment labels.
+  labelSelector:
+    matchLabels:
+      multitenant: 'true'
+  annotationSelector: {}
+  templates:
+    # Allow pods in the namespace to reach each other. On its own an ingress NetworkPolicy
+    # makes the namespace default-deny for everything not explicitly allowed, so this rule
+    # is what keeps intra-namespace traffic working once isolation is switched on.
+    - excludedPaths:
+        - .metadata
+        - .status
+        - .spec.replicas
+      objectTemplate: |
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        metadata:
+          name: allow-from-same-namespace
+          namespace: {{ .Name }}
+        spec:
+          podSelector: {}
+          ingress:
+          - from:
+            - podSelector: {}
+
+    # Allow traffic from the `default` namespace, matched by its `name: default` label.
+    # Note this relies on that label being present on the namespace; namespaceSelector
+    # matches namespace LABELS, not namespace names.
+    - excludedPaths:
+        - .status
+        - .spec.replicas
+        - .metadata
+      objectTemplate: |
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        metadata:
+          name: allow-from-default-namespace
+          namespace: {{ .Name }}
+        spec:
+          podSelector: {}
+          ingress:
+          - from:
+            - namespaceSelector:
+                matchLabels:
+                  name: default

@@ -1,0 +1,90 @@
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: NamespaceConfig
+metadata:
+  annotations:
+    description: 'Nonprod RBAC: admin/developer/audit access for rnd/eng/qa/uat environments
+      only'
+  finalizers:
+  - redhatcop.redhat.io/namespaceconfig-controller
+  labels:
+    app.kubernetes.io/component: rbac-automation
+    app.kubernetes.io/name: namespace-configuration-operator
+    rbac.ocp.io/kind: NamespaceConfig
+    rbac.ocp.io/scope: namespace-scoped
+  name: nonprod-namespaceconfig-rbac
+spec:
+  annotationSelector: {}
+  labelSelector:
+    matchExpressions:
+    - key: company.net/mnemonic
+      operator: Exists
+    - key: company.net/app-environment
+      operator: In
+      values:
+      - rnd
+      - eng
+      - qa
+      - uat
+    - key: company.net/app-environment
+      operator: NotIn
+      values:
+      - prod
+  templates:
+  - excludedPaths:
+    - .metadata
+    - .status
+    - .spec.replicas
+    objectTemplate: "apiVersion: rbac.authorization.k8s.io/v1\nkind: RoleBinding\n\
+      metadata:\n  name: \"{{ index .Labels \"company.net/mnemonic\" }}-admin-rb\"\
+      \n  namespace: \"{{ .Name }}\"\n  labels:\n    app.kubernetes.io/managed-by:\
+      \ namespace-configuration-operator\n    app.kubernetes.io/version: 0.1.0\n \
+      \   rbac.ocp.io/policy-version: 0.1.0\n    rbac.ocp.io/role-type: ns-admin\n\
+      \    rbac.ocp.io/mnemonic: \"{{ index .Labels \"company.net/mnemonic\" }}\"\n\
+      \    rbac.ocp.io/environment: \"{{ index .Labels \"company.net/app-environment\"\
+      \ }}\"\n    rbac.ocp.io/access-level: admin-non-prod-only\n    rbac.ocp.io/config-source:\
+      \ nonprod-rbac\n  annotations:\n    rbac.ocp.io/created-by: namespace-configuration-operator\n\
+      \    rbac.ocp.io/source-namespace: \"{{ .Name }}\"\n    rbac.ocp.io/source-namespaceconfig:\
+      \ nonprod-namespaceconfig-rbac\n    rbac.ocp.io/group-pattern: \"app-ocp-rbac-{{\
+      \ index .Labels \"company.net/mnemonic\" }}-ns-admin\"\n    rbac.ocp.io/environment-restriction:\
+      \ \"nonprod-only\"\nsubjects:\n- kind: Group\n  name: \"app-ocp-rbac-{{ index\
+      \ .Labels \"company.net/mnemonic\" }}-ns-admin\"\n  apiGroup: rbac.authorization.k8s.io\n\
+      roleRef:\n  kind: ClusterRole\n  name: admin\n  apiGroup: rbac.authorization.k8s.io\n"
+  - excludedPaths:
+    - .status
+    - .spec.replicas
+    - .metadata
+    objectTemplate: "apiVersion: rbac.authorization.k8s.io/v1\nkind: RoleBinding\n\
+      metadata:\n  name: \"{{ index .Labels \"company.net/mnemonic\" }}-developer-rb\"\
+      \n  namespace: \"{{ .Name }}\"\n  labels:\n    app.kubernetes.io/managed-by:\
+      \ namespace-configuration-operator\n    app.kubernetes.io/version: 0.1.0\n \
+      \   rbac.ocp.io/policy-version: 0.1.0\n    rbac.ocp.io/role-type: ns-developer\n\
+      \    rbac.ocp.io/mnemonic: \"{{ index .Labels \"company.net/mnemonic\" }}\"\n\
+      \    rbac.ocp.io/environment: \"{{ index .Labels \"company.net/app-environment\"\
+      \ }}\"\n    rbac.ocp.io/access-level: developer-non-prod-only\n    rbac.ocp.io/config-source:\
+      \ nonprod-rbac\n  annotations:\n    rbac.ocp.io/created-by: namespace-configuration-operator\n\
+      \    rbac.ocp.io/source-namespace: \"{{ .Name }}\"\n    rbac.ocp.io/source-namespaceconfig:\
+      \ nonprod-namespaceconfig-rbac\n    rbac.ocp.io/group-pattern: \"app-ocp-rbac-{{\
+      \ index .Labels \"company.net/mnemonic\" }}-ns-developer\"\n    rbac.ocp.io/environment-restriction:\
+      \ \"nonprod-only\"\nsubjects:\n- kind: Group\n  name: \"app-ocp-rbac-{{ index\
+      \ .Labels \"company.net/mnemonic\" }}-ns-developer\"\n  apiGroup: rbac.authorization.k8s.io\n\
+      roleRef:\n  kind: ClusterRole\n  name: edit\n  apiGroup: rbac.authorization.k8s.io\n"
+  - excludedPaths:
+    - .spec.replicas
+    - .metadata
+    - .status
+    objectTemplate: "apiVersion: rbac.authorization.k8s.io/v1\nkind: RoleBinding\n\
+      metadata:\n  name: \"{{ index .Labels \"company.net/mnemonic\" }}-audit-rb\"\
+      \n  namespace: \"{{ .Name }}\"\n  labels:\n    app.kubernetes.io/managed-by:\
+      \ namespace-configuration-operator\n    app.kubernetes.io/version: 0.1.0\n \
+      \   rbac.ocp.io/policy-version: 0.1.0\n    rbac.ocp.io/role-type: ns-audit\n\
+      \    rbac.ocp.io/mnemonic: \"{{ index .Labels \"company.net/mnemonic\" }}\"\n\
+      \    rbac.ocp.io/environment: \"{{ index .Labels \"company.net/app-environment\"\
+      \ }}\"\n    rbac.ocp.io/access-level: audit-non-prod-only\n    rbac.ocp.io/config-source:\
+      \ nonprod-rbac\n  annotations:\n    rbac.ocp.io/created-by: namespace-configuration-operator\n\
+      \    rbac.ocp.io/source-namespace: \"{{ .Name }}\"\n    rbac.ocp.io/source-namespaceconfig:\
+      \ nonprod-namespaceconfig-rbac\n    rbac.ocp.io/group-pattern: \"app-ocp-rbac-{{\
+      \ index .Labels \"company.net/mnemonic\" }}-ns-audit\"\n    rbac.ocp.io/environment-restriction:\
+      \ \"nonprod-only\"\nsubjects:\n- kind: Group\n  name: \"app-ocp-rbac-{{ index\
+      \ .Labels \"company.net/mnemonic\" }}-ns-audit\"\n  apiGroup: rbac.authorization.k8s.io\n\
+      roleRef:\n  kind: ClusterRole\n  name: view\n  apiGroup: rbac.authorization.k8s.io\n"
+
