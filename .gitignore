@@ -28,3 +28,8 @@ kubeconfig
 .idea/
 .vscode/
 *.swp
+
+# Session scratch notes — where we stopped and what was in flight. Deliberately NOT committed:
+# they name in-flight branches, background job ids and cluster revisions, all of which are stale
+# within a day and would read as documentation rather than as a scratchpad.
+RESUME.md
