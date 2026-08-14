@@ -1,6 +1,6 @@
 # How these templates work — `$group`, the derived variables, and the Helm functions
 
-A guide to the four policy templates in `chart/templates/rbac-policies/`. Everything here is taken from that code and
+A guide to the four policy templates in `charts/namespace-configuration-operator/templates/rbac-policies/`. Everything here is taken from that code and
 checked against the running cluster; where a claim has a number attached, the number was measured.
 
 The single idea you need before anything else makes sense:
@@ -19,7 +19,7 @@ Everything unusual in these templates follows from that one sentence.
 ```
 PHASE 1  helm upgrade                     PHASE 2  operator reconcile
 ─────────────────────────────             ──────────────────────────────────────
-Helm reads chart/values.yaml              The operator reads the CR from the cluster
+Helm reads charts/namespace-configuration-operator/values.yaml              The operator reads the CR from the cluster
 Helm evaluates {{ }} it can see           For each matching namespace / group:
 Result: a NamespaceConfig / GroupConfig      binds .Name and .Labels to that object
         CR, stored in etcd                   evaluates the objectTemplate STRING
