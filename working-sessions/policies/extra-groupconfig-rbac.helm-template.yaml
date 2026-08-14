@@ -1,3 +1,36 @@
+# =============================================================================
+# PARKED — a Helm template, NOT an applyable manifest
+# =============================================================================
+# This was chart/templates/13-extra-groupconfig-rbac.yaml, rendering one GroupConfig that granted the
+# OpenShift user-workload-monitoring roles to the -ns-admin / -ns-developer / -ns-audit tiers. It was
+# built, deployed and verified on CRC (50 RoleBindings across 28 groups), then withdrawn from the chart
+# because the access is not needed. Kept here rather than deleted: the work is sound and the research
+# behind it is expensive to redo.
+#
+# DO NOT `oc apply` THIS FILE. It is a Helm template — the `{{ }}` actions belong to two different
+# engines (see the header below) and it will not parse as a manifest. To use it again:
+#   1. move it back to chart/templates/13-extra-groupconfig-rbac.yaml
+#   2. paste the values stanza at the bottom of this file into chart/values.yaml
+#   3. bump the chart version
+#
+# WHY IT WAS WITHDRAWN, so the decision is not re-litigated blind: the grants it makes land in ONE
+# FIXED namespace, because a GroupConfig fires per GROUP and has no namespace context. That is right
+# for the UWM config ConfigMap, and wrong for anything a team needs in its OWN project — per
+# OpenShift's thanos-querier Service, the project-scoped endpoints need roles bound IN THE PROJECT
+# (port 9092 -> `view`, which namespaceConfigPolicy.baseline already grants; port 9093 ->
+# monitoring-rules-view or -edit, which nothing grants today). Per-project monitoring rights would
+# belong in a NamespaceConfig, not here.
+#
+# ONE THING WORTH KEEPING FROM IT REGARDLESS: the source policy
+# user-workload-monitoring-admin-groupconfig-rbac.yaml in this directory binds alert-routing-edit with
+# `kind: Role`, and it is a ClusterRole (openshift/cluster-monitoring-operator,
+# assets/cluster-monitoring-operator/alerting-edit-cluster-role.yaml). A RoleBinding whose roleRef
+# names a nonexistent Role is created successfully, reports healthy, and grants NOTHING. Measured on
+# CRC: 7 live bindings referenced Role/alert-routing-edit while no such Role existed. If that source
+# policy is ever applied for real, fix the kind first.
+#
+# =============================================================================
+
 {{- if .Values.extraGroupConfig.enabled }}
 {{- $e := .Values.extraGroupConfig }}
 {{- if not $e.syncProviderLabelKey }}
@@ -166,3 +199,104 @@ spec:
     {{- end }}
     {{- end }}
 {{- end }}
+
+# =============================================================================
+# THE VALUES STANZA THIS TEMPLATE NEEDS
+# =============================================================================
+# Removed from chart/values.yaml when the template was parked. Paste it back at the top level —
+# a sibling of namespaceConfigPolicy and clusterRbac, not a child of either.
+# =============================================================================
+# # ---------------------------------------------------------------------------
+# # ADDITIONAL access on top of the baseline, granted by REUSING roles the OpenShift monitoring stack
+# # already ships. This stanza defines no Role and no ClusterRole of its own.
+# #
+# # `customGroupConfig` IS RESERVED and intentionally absent: that name is for the future case where we
+# # define our own ClusterRoles and bind those. extra = the platform's roles, custom = ours. Please do
+# # not repurpose either name for the other — the distinction is the whole reason there are two.
+# #
+# # GROUP-TRIGGERED BUT NAMESPACE-SCOPED, which is why this is neither of the other two families: a
+# # GroupConfig fires per Group, and every object it creates here is a RoleBinding in ONE namespace.
+# extraGroupConfig:
+#   # OFF is chart safety. Turning it back off is a REVOCATION: the CR carries the
+#   # groupconfig-controller finalizer, so the operator deletes every RoleBinding it made.
+#   enabled: false
+#
+#   name: user-workload-monitoring-groupconfig-rbac
+#   description: "User Workload Monitoring RBAC: ns tiers get monitoring access, read-only for audit"
+#
+#   # ONE CR for all tiers. The source is two GroupConfigs in one file (admin and developer); this is
+#   # deliberately one, because they share a selector and differ only in data.
+#   configSource: user-workload-monitoring
+#
+#   # SYNCED GROUPS ONLY — the only thing narrowing the selector. The template refuses an empty value.
+#   syncProviderLabelKey: group-sync-operator.redhat-cop.io/sync-provider
+#
+#   # WHERE THE BINDINGS LAND. Every RoleBinding below is created in this namespace, so the access is
+#   # confined to it however broad the role is. openshift-user-workload-monitoring is where the UWM
+#   # config ConfigMap lives and where PrometheusRule/AlertmanagerConfig edits take effect.
+#   targetNamespace: openshift-user-workload-monitoring
+#
+#   policyVersion: "0.1.0"
+#
+#   # ONE objectTemplate PER (tier x binding), generated by ranging over this list — the same
+#   # construction the other two templates use, nested one level.
+#   #
+#   # A TIER IS PRESENT OR IT IS NOT IN THIS LIST. That is how a production cluster grants less: delete
+#   # the -ns-admin entry from a prod values file and admin groups get no monitoring access, exactly as
+#   # namespaceConfigPolicy.baseline's prod policy withholds ns-admin. No code path, no extra flag.
+#   #
+#   # roleKind IS EXPLICIT PER BINDING, and it is not boilerplate. The mix is real — one Role, the rest
+#   # ClusterRoles — and a wrong kind FAILS SILENTLY: RBAC happily creates a RoleBinding whose roleRef
+#   # names something that does not exist, reports healthy, and grants nothing. The source policy bound
+#   # the alert-routing-edit ClusterRole as a Role; measured on the reference cluster, 7 live bindings
+#   # grant nothing because of it. The template refuses anything but exactly Role or ClusterRole.
+#   #
+#   # THE ROLES, read from openshift/cluster-monitoring-operator's own manifests:
+#   #   user-workload-monitoring-config-edit  Role, this namespace. The UWM config ConfigMap only:
+#   #                                         get/list/watch AND patch/update. There is no read-only
+#   #                                         variant, which is why audit must not receive it — binding
+#   #                                         it for "read" would grant WRITE.
+#   #   monitoring-edit                       ClusterRole. servicemonitors + podmonitors +
+#   #                                         prometheusrules, all verbs.
+#   #   monitoring-rules-view                 ClusterRole. prometheusrules get/list/watch — the read-only
+#   #                                         counterpart, and the reason an audit tier is possible.
+#   #   alert-routing-edit                    ClusterRole. alertmanagerconfigs, all verbs. NO view
+#   #                                         counterpart exists, so audit gets nothing here.
+#   #
+#   # WHY monitoring-edit RATHER THAN monitoring-rules-edit, which the source used: monitoring-edit is a
+#   # strict superset adding servicemonitors and podmonitors. Without those a team cannot make Prometheus
+#   # scrape its workload at all, so the narrower role grants the right to alert on metrics nobody can
+#   # collect. A deliberately broader grant than the source.
+#   tiers:
+#     - suffix: -ns-admin
+#       bindings:
+#         - name: monitoring-config-edit
+#           roleKind: Role
+#           role: user-workload-monitoring-config-edit
+#         - name: monitoring-edit
+#           roleKind: ClusterRole
+#           role: monitoring-edit
+#         - name: alert-routing-edit
+#           roleKind: ClusterRole
+#           role: alert-routing-edit
+#
+#     # The source gave developer only the ConfigMap role, so a developer could reconfigure the whole UWM
+#     # stack but not alert on their own app. Reads as an oversight; monitoring-edit is added here.
+#     - suffix: -ns-developer
+#       bindings:
+#         - name: monitoring-config-edit
+#           roleKind: Role
+#           role: user-workload-monitoring-config-edit
+#         - name: monitoring-edit
+#           roleKind: ClusterRole
+#           role: monitoring-edit
+#
+#     # READ ONLY, and note the asymmetry: monitoring-rules-view is the counterpart of
+#     # monitoring-rules-edit, not of monitoring-edit. OpenShift ships no view role covering
+#     # servicemonitors or podmonitors, so audit can read PrometheusRules but not the ServiceMonitors the
+#     # tiers above can create. That gap is the platform's, not this chart's.
+#     - suffix: -ns-audit
+#       bindings:
+#         - name: monitoring-rules-view
+#           roleKind: ClusterRole
+#           role: monitoring-rules-view

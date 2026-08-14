@@ -16,12 +16,21 @@ type: application
 # 0.3.0, MINOR: a new template and a new values stanza. `namespaceConfigPolicy.baseline` renders the
 # nonprod and prod NamespaceConfigs — the standard access tiers every team receives. Nothing changes
 # for an existing release: like every policy here, both ship disabled.
-# 0.5.0, MINOR: a new template and a new top-level `extraGroupConfig` stanza — ADDITIONAL access on
-# top of the baseline, reusing the roles the OpenShift monitoring stack already ships. It also FIXES a
-# defect carried by the source policy: alert-routing-edit was bound as a Role when it is a ClusterRole,
-# which produces a binding that is created, reports healthy, and grants nothing.
-# `customGroupConfig` is reserved for a future stanza binding ClusterRoles we define ourselves.
-version: 0.5.0
+# 0.6.0, MINOR: WITHDRAWS the `extraGroupConfig` stanza and its template, which 0.5.0 added. The user
+# workload monitoring access it granted is not needed, so the chart no longer carries it. Setting
+# `extraGroupConfig.*` now has no effect — it renders nothing rather than failing, which is the quiet
+# direction, hence this note. The template and the values stanza it needs are parked together at
+# working-sessions/policies/extra-groupconfig-rbac.helm-template.yaml with the reasoning intact.
+#
+# MINOR rather than MAJOR: no release of this chart ever shipped the stanza enabled, and the flag
+# defaulted off, so no deployment loses access by upgrading. A cluster that DID enable it loses those
+# RoleBindings on upgrade — the operator revokes what its CR created — which is the behaviour to know
+# about and the reason this is not a patch.
+#
+# 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
+# gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
+# binding that reports healthy and grants nothing. See the parked file.
+version: 0.6.0
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:
