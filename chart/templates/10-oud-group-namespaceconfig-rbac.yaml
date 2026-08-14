@@ -1,0 +1,129 @@
+{{- if and .Values.namespaceConfigPolicy.enabled .Values.namespaceConfigPolicy.oudGroup.enabled }}
+{{- $p := .Values.namespaceConfigPolicy.oudGroup }}
+{{- if not $p.labelKey }}
+{{- fail "namespaceConfigPolicy.oudGroup.labelKey is empty. It is the label the NamespaceConfig selects on AND the label whose VALUE becomes the bound group, so empty would render a config that selects EVERY namespace and binds a group called \"\". Set it, or disable the policy." }}
+{{- end }}
+# =============================================================================
+# NamespaceConfig — company.net/oud-group
+# =============================================================================
+# Converted from working-sessions/policies/oud-group-namespaceconfig.yaml, which STAYS in the repo as
+# the readable reference and the record of why this access model exists. This file is the deployable
+# form; that file is the explanation. Neither replaces the other.
+#
+# ── THE ONE THING THAT MAKES THIS TEMPLATE UNUSUAL ───────────────────────────
+# There are TWO template engines in play and they use the same delimiters.
+#
+#   Helm          evaluates this file at `helm template` / `helm upgrade` time.
+#   The OPERATOR  evaluates each objectTemplate body LATER, once per matching namespace, where
+#                 .Name is the namespace and .Labels are its labels.
+#
+# An expression meant for the operator must SURVIVE Helm and reach the cluster unevaluated. Helm has
+# no leave-this-alone block, so the operator's two expressions are BUILT AS STRINGS below — $ns and
+# $group — and substituted in. Helm renders a string; it does not recurse into what it produced.
+#
+# NOTE THAT A # COMMENT IS NOT A HELM COMMENT. It is a YAML comment, and Helm processes this file as
+# text before YAML ever sees it — so an action written inside one of these comments IS EVALUATED.
+# That is why the paragraphs below describe the operator's expressions in words instead of quoting
+# them; an earlier draft quoted them and failed to render with `unexpected "\\" in operand`. The
+# literal syntax lives in the source policy file named above, and in $ns / $group below.
+#
+# WHY NOT PIPE THROUGH `quote`. It escapes the inner double quotes of the index expression, and that
+# breaks the operator: it renders each objectTemplate as a Go template FIRST and parses the result as
+# YAML SECOND, so at render time a backslash-quote is not an escape — it is a backslash inside an
+# action, and the parse fails. The quotes are therefore LITERAL TEXT here, outside the substitution.
+#
+# WHICH IS ALSO WHY AN objectTemplate IS NOT VALID YAML UNTIL IT IS RENDERED. Measured: handing one to
+# a YAML parser fails on the nested double quotes around the index expression — they only nest
+# correctly once the expression has been replaced by a plain value. So verify a change here by
+# rendering the expressions out and THEN parsing, never by parsing the objectTemplate directly.
+#
+# WHY NOT `.Files.Get`, which would sidestep the escaping entirely: the body would be opaque, so the
+# label key, the role name and the verbs could not come from values — the whole point of templating it.
+#
+# Equivalence to the source policy is proven rather than assumed: both objectTemplates were rendered
+# with the same namespace context and compared as parsed YAML. Identical, both templates.
+#
+# The operator's own expressions, as strings. printf takes the quote characters as ARGUMENTS, because
+# a literal escaped quote written inside a Helm action would be escaped again into the output.
+{{- $ns := "{{ .Name }}" }}
+{{- $group := printf "{{ index .Labels %s%s%s }}" "\"" $p.labelKey "\"" }}
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: NamespaceConfig
+metadata:
+  name: {{ $p.name }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac-automation
+    app.kubernetes.io/part-of: oud-group-poc
+    rbac.ocp.io/scope: namespace-scoped
+    rbac.ocp.io/kind: NamespaceConfig
+    rbac.ocp.io/policy-version: {{ $p.policyVersion | quote }}
+    rbac.ocp.io/access-model: oud-group-direct
+  annotations:
+    description: "PoC: bind the group named directly by {{ $p.labelKey }}"
+    rbac.ocp.io/purpose: "Label carries the full LDAP group name; no prefix is added by the template"
+    # After the operator is installed and its CSV is running. A NamespaceConfig applied before the CRD
+    # exists fails the release; applied before the controller is up it simply sits there.
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  labelSelector:
+    matchExpressions:
+      # The ONLY requirement. No mnemonic, no environment — the label says everything.
+      - key: {{ $p.labelKey }}
+        operator: Exists
+  templates:
+    # -------------------------------------------------------------------------
+    # Namespace-scoped submitter Role
+    # -------------------------------------------------------------------------
+    - excludedPaths:
+        {{- toYaml $p.excludedPaths | nindent 8 }}
+      objectTemplate: |
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: Role
+        metadata:
+          name: {{ $p.roleName }}
+          namespace: "{{ $ns }}"
+          labels:
+            app.kubernetes.io/managed-by: namespace-configuration-operator
+            rbac.ocp.io/access-model: oud-group-direct
+            rbac.ocp.io/rbac-type: custom-role
+            rbac.ocp.io/source-namespaceconfig: {{ $p.name }}
+            rbac.ocp.io/oud-group: "{{ $group }}"
+          annotations:
+            rbac.ocp.io/created-by: namespace-configuration-operator
+            rbac.ocp.io/source-namespace: "{{ $ns }}"
+            rbac.ocp.io/source-namespaceconfig: {{ $p.name }}
+        rules:
+          {{- toYaml $p.rules | nindent 10 }}
+
+    # -------------------------------------------------------------------------
+    # RoleBinding — subject is the label value, used VERBATIM
+    # -------------------------------------------------------------------------
+    - excludedPaths:
+        {{- toYaml $p.excludedPaths | nindent 8 }}
+      objectTemplate: |
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: "{{ $group }}-rb"
+          namespace: "{{ $ns }}"
+          labels:
+            app.kubernetes.io/managed-by: namespace-configuration-operator
+            rbac.ocp.io/access-model: oud-group-direct
+            rbac.ocp.io/access-level: {{ $p.accessLevel }}
+            rbac.ocp.io/source-namespaceconfig: {{ $p.name }}
+            rbac.ocp.io/oud-group: "{{ $group }}"
+          annotations:
+            rbac.ocp.io/created-by: namespace-configuration-operator
+            rbac.ocp.io/source-namespace: "{{ $ns }}"
+            rbac.ocp.io/source-namespaceconfig: {{ $p.name }}
+            rbac.ocp.io/group-name: "{{ $group }}"
+        subjects:
+          - kind: Group
+            name: "{{ $group }}"
+            apiGroup: rbac.authorization.k8s.io
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: Role
+          name: {{ $p.roleName }}
+{{- end }}

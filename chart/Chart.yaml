@@ -3,10 +3,11 @@ name: namespace-configuration-operator
 description: >-
   Installs the Red Hat CoP Namespace Configuration Operator (NCO) on OpenShift via
   OLM — a dedicated namespace, an AllNamespaces (global) OperatorGroup, and a
-  Subscription. Scope is the OPERATOR INSTALL only; the RBAC policies (GroupConfig /
-  NamespaceConfig CRs) live under ../policies and are applied separately.
+  Subscription. It can ALSO deploy RBAC policies (NamespaceConfig CRs) from
+  namespaceConfigPolicy, one policy per flag and every one off by default; the raw
+  manifests under ../policies stay the readable reference for those.
 type: application
-version: 0.1.0
+version: 0.2.0
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:

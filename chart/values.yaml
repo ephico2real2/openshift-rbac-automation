@@ -191,3 +191,100 @@ operatorImage:
 podSecurity:
   audit: privileged
   warn: privileged
+
+# -------------------- RBAC Policies (NamespaceConfig CRs) --------------------
+# THIS EXTENDS THE CHART'S SCOPE, deliberately, and Chart.yaml's description says so.
+#
+# Until now this chart installed the OPERATOR and nothing else, and the policies under
+# working-sessions/policies were applied by hand. That split costs something real: a policy applied
+# with `oc apply` has no owner, no release history and no `helm diff` — the only way to know what is
+# on the cluster is to look. Bringing a policy in here makes it versioned with the operator that
+# reads it, which is the thing it cannot work without.
+#
+# The raw YAML under working-sessions/policies/ IS NOT REPLACED. It stays as the readable reference
+# and the record of why each access model exists; this stanza is the deployable form. A policy is
+# converted one at a time, each behind its own flag, so a chart upgrade cannot adopt a policy the
+# operator did not ask for.
+#
+# OFF BY DEFAULT — all of it. A NamespaceConfig grants access, so nothing here may arrive because
+# somebody upgraded the operator. Turn on the parent flag, then the policy you want.
+namespaceConfigPolicy:
+  # Master switch for every policy below. With this false, no policy renders whatever its own flag
+  # says — one place to stop the chart writing RBAC at all.
+  enabled: false
+
+  # -------- company.net/oud-group --------
+  # The label holds the WHOLE group name and the template uses it verbatim:
+  #
+  #   company.net/oud-group: bda-rbac-trino-alpha-users   ->   bound as-is
+  #
+  # rather than holding a fragment that the template prefixes. That makes it explicit —
+  # `oc get ns --show-labels` shows exactly what gets bound, and `oc get group <value>` works with no
+  # transformation — and family-agnostic: one config binds app-ocp-rbac-*, bda-rbac-*, or a future
+  # family, instead of one config per family with the prefix baked in.
+  #
+  # THE COST, stated: the hardcoded prefix was a guardrail that made it impossible for a namespace to
+  # bind anything outside its family. With the full name in the label that constraint has to live
+  # somewhere else, so it lives in Kyverno — working-sessions/policies/kyverno-namespace-oud-group.yaml
+  # — where it is visible and auditable rather than buried in an objectTemplate.
+  oudGroup:
+    enabled: false
+
+    # The CR's name, and the value written into every generated object's
+    # rbac.ocp.io/source-namespaceconfig label — so a generated Role can be traced back to what made
+    # it. Changing it ORPHANS objects created under the old name: the operator no longer recognises
+    # them and will not clean them up.
+    name: oud-group-namespaceconfig-rbac
+
+    # THE LABEL, and it does two jobs: the CR selects namespaces that HAVE it, and the template binds
+    # whatever its VALUE says. Both, from one key — which is why the template refuses to render when
+    # it is empty rather than selecting every namespace and binding a group called "".
+    labelKey: company.net/oud-group
+
+    # Recorded on the CR so `oc get namespaceconfig --show-labels` says which revision of the policy
+    # a cluster is running, independently of the chart version.
+    policyVersion: "0.1.0"
+
+    # The Role the RoleBinding points at. One Role per namespace, created by the first template.
+    roleName: oud-group-submitter-role
+
+    # Written to rbac.ocp.io/access-level on the RoleBinding. Descriptive only — it grants nothing.
+    accessLevel: submitter
+
+    # Paths the operator IGNORES when comparing what it would create against what exists, so a
+    # cluster-assigned field does not read as drift and cause a rewrite every reconcile.
+    excludedPaths:
+      - .metadata
+      - .status
+
+    # THE ACTUAL PERMISSIONS. Namespace-scoped, so nothing here can grant cluster-wide access — a
+    # Role bound by a RoleBinding in one namespace.
+    #
+    # `deletecollection` is the one worth noticing: it lets the holder delete every pod in the
+    # namespace in one call. That is intended for a workload submitter cleaning up a run, and it is
+    # also the verb to remove first if this is ever narrowed.
+    #
+    # pods/log is a separate rule because it is a SUBRESOURCE — listing it beside `pods` in the same
+    # rule would grant get/list/create/delete on it too, and `oc auth can-i get pods/log` answers
+    # `no` even on a correct grant because it reads pods/log as a resource NAME. Use
+    # --subresource=log to check it.
+    rules:
+      - apiGroups: [""]
+        resources:
+          - pods
+          - services
+          - configmaps
+          - persistentvolumeclaims
+        verbs:
+          - create
+          - get
+          - list
+          - watch
+          - delete
+          - deletecollection
+      - apiGroups: [""]
+        resources:
+          - pods/log
+        verbs:
+          - get
+          - list
