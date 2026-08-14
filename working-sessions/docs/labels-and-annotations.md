@@ -35,29 +35,119 @@ block. Everything below them varies.
 
 ## 2. Object-level: what the policies create
 
-| key | nonprod RB | prod RB | cluster CRB | oud-group Role | oud-group RB |
-|---|---|---|---|---|---|
-| **L** `app.kubernetes.io/managed-by` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **L** `app.kubernetes.io/version` | 0.1.0 | 0.1.0 | 0.1.0 | **—** | **—** |
-| **L** `rbac.ocp.io/policy-version` | 0.1.0 | 0.1.0 | 0.1.0 | **—** | **—** |
-| **L** `rbac.ocp.io/config-source` | nonprod-rbac | prod-rbac | cluster-rbac | **—** | **—** |
-| **L** `rbac.ocp.io/role-type` | ns-admin | ns-audit | cluster-admin | **—** | **—** |
-| **L** `rbac.ocp.io/access-level` | admin-non-prod-only | audit-prod-only | admin-cluster-wide | **—** | submitter |
-| **L** `rbac.ocp.io/mnemonic` | beta | beta | — | — | — |
-| **L** `rbac.ocp.io/environment` | rnd | prod | — | — | — |
-| **L** `rbac.ocp.io/group-name` | — | — | app-ocp-rbac-… | — | — |
-| **L** `rbac.ocp.io/oud-group` | — | — | — | app-ocp-rbac-… | app-ocp-rbac-… |
-| **L** `rbac.ocp.io/access-model` | — | — | — | oud-group-direct | oud-group-direct |
-| **L** `rbac.ocp.io/rbac-type` | — | — | — | custom-role | — |
-| **L** `rbac.ocp.io/source-namespaceconfig` | — | — | — | ✓ | ✓ |
-| **A** `rbac.ocp.io/created-by` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **A** `rbac.ocp.io/source-namespaceconfig` | ✓ | ✓ | — | ✓ | ✓ |
-| **A** `rbac.ocp.io/source-groupconfig` | — | — | ✓ | — | — |
-| **A** `rbac.ocp.io/source-namespace` | beta-rnd | beta-prod | — | ✓ | ✓ |
-| **A** `rbac.ocp.io/group-name` | — | — | — | — | ✓ |
-| **A** `rbac.ocp.io/group-pattern` | ✓ | ✓ | ✓ | — | — |
-| **A** `rbac.ocp.io/environment-restriction` | nonprod-only | prod-only | — | — | — |
-| **A** `rbac.ocp.io/scope-restriction` | — | — | cluster-wide | — | — |
+Extracted by rendering every `objectTemplate` — 11 of them across the 5 chart CRs — and cross-checked
+against the 54 live objects the operator built from them (39 RoleBindings + 12 ClusterRoleBindings +
+3 Roles). `custom` is included below; it did not exist when this table was first written.
+
+| key | nonprod RB | prod RB | cluster CRB | custom CRB | oud-group Role | oud-group RB |
+|---|---|---|---|---|---|---|
+| **L** `app.kubernetes.io/managed-by` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **L** `rbac.ocp.io/policy-version` | 0.1.0 | 0.1.0 | 0.1.0 | 0.1.0 | **—** | **—** |
+| **L** `rbac.ocp.io/config-source` | nonprod-rbac | prod-rbac | cluster-rbac | custom-rbac | **—** | **—** |
+| **L** `rbac.ocp.io/role-type` | ns-admin | ns-audit | cluster-admin | database-admin | **—** | **—** |
+| **L** `rbac.ocp.io/access-level` | admin-non-prod-only | audit-prod-only | admin-cluster-wide | database-admin-cluster-wide | **—** | submitter |
+| **L** `rbac.ocp.io/mnemonic` | beta | beta | — | — | — | — |
+| **L** `rbac.ocp.io/environment` | rnd | prod | — | — | — | — |
+| **L** `rbac.ocp.io/group-name` | — | — | app-ocp-rbac-… | app-ocp-rbac-… | — | — |
+| **L** `rbac.ocp.io/custom-role` | — | — | — | database-admin | — | — |
+| **L** `rbac.ocp.io/oud-group` | — | — | — | — | app-ocp-rbac-… | app-ocp-rbac-… |
+| **L** `rbac.ocp.io/access-model` | — | — | — | — | oud-group-direct | oud-group-direct |
+| **L** `rbac.ocp.io/rbac-type` | — | — | — | — | custom-role | — |
+| **L** `rbac.ocp.io/source-namespaceconfig` | — | — | — | — | ✓ | ✓ |
+| **A** `rbac.ocp.io/created-by` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **A** `rbac.ocp.io/source-namespaceconfig` | ✓ | ✓ | — | — | ✓ | ✓ |
+| **A** `rbac.ocp.io/source-groupconfig` | — | — | ✓ | ✓ | — | — |
+| **A** `rbac.ocp.io/source-namespace` | beta-rnd | beta-prod | — | — | ✓ | ✓ |
+| **A** `rbac.ocp.io/group-name` | — | — | — | — | — | ✓ |
+| **A** `rbac.ocp.io/group-pattern` | ✓ | ✓ | ✓ | ✓ | — | — |
+| **A** `rbac.ocp.io/environment-restriction` | nonprod-only | prod-only | — | — | — | — |
+| **A** `rbac.ocp.io/scope-restriction` | — | — | cluster-wide | cluster-wide | — | — |
+
+`app.kubernetes.io/managed-by` is the only key on all 54 objects. Not every gap above is a defect —
+`source-groupconfig` cannot appear on a NamespaceConfig's objects, and `mnemonic` / `environment` are
+namespace-keyed by design. §2.1 separates the ones that are.
+
+### 2.1 What the object-level inspection found, measured
+
+**`rbac.ocp.io/access-level` does not mean the same thing in two families, and that breaks a query a
+reviewer would actually run.** Its first component is the **bound ClusterRole** in the cluster and
+custom families, but the **tier word** in nonprod and prod:
+
+| family | `role-type` | `access-level` | actual `roleRef` | first component is |
+|---|---|---|---|---|
+| nonprod | ns-admin | admin-non-prod-only | admin | the roleRef *(coincidence — the words match)* |
+| nonprod | ns-audit | **audit**-non-prod-only | **view** | the tier word |
+| nonprod | ns-developer | **developer**-non-prod-only | **edit** | the tier word |
+| prod | ns-audit | **audit**-prod-only | **view** | the tier word |
+| prod | ns-developer | **developer**-prod-only | **edit** | the tier word |
+| cluster | cluster-admin | admin-cluster-wide | admin | the roleRef |
+| cluster | cluster-audit | **view**-cluster-wide | view | the roleRef |
+| cluster | cluster-developer | **edit**-cluster-wide | edit | the roleRef |
+
+So "who holds `view`?" answered via this label returns **2 of the 15 objects that actually bind
+`ClusterRole/view`** — only the cluster-wide pair. The 13 namespace-scoped bindings grant the very same
+`view` ClusterRole and are labelled `audit-*`:
+
+```
+objects binding ClusterRole/view    labelled access-level=view-*
+  nonprod   10                        0
+  prod       3                        0
+  cluster    2                        2
+  ------------------------------------------
+  total     15                        2
+```
+
+A reviewer filtering `-l rbac.ocp.io/access-level=view-cluster-wide` sees 2 grants of `view` and misses
+13. The scopes do differ — the 2 are cluster-wide, the 13 are per-namespace — so the label is not
+lying about scope; it is inconsistent about **which ClusterRole**, and that is the axis someone asks
+about when they ask who can read. **The most consequential finding here** — a wrong answer, not an
+inconvenience.
+
+And `role-type` already answers it correctly. Measured across all six tiers, the mapping is 1:1 with
+no tier ever resolving to two roles:
+
+```
+role-type=cluster-admin      -> roleRef ['admin']      role-type=ns-admin      -> roleRef ['admin']
+role-type=cluster-audit      -> roleRef ['view']       role-type=ns-audit      -> roleRef ['view']
+role-type=cluster-developer  -> roleRef ['edit']       role-type=ns-developer  -> roleRef ['edit']
+```
+
+So §5's recommendation to drop `access-level` holds up under test: `role-type` + scope recover
+everything it encodes, and unlike `access-level` they mean the same thing in every family. Dropping it
+removes a key that gives a wrong answer rather than merely a redundant one.
+
+**The same restriction is spelled two ways on one object.** `access-level: admin-non-prod-only`
+alongside `environment-restriction: nonprod-only` — `non-prod-only` vs `nonprod-only`. Either spelling
+is fine; both on the same object means neither can be matched reliably.
+
+**Four keys carry a value that is already on the object under another key.** Verified on the live set:
+
+| duplicate | measured |
+|---|---|
+| **A** `created-by` == **L** `managed-by` | both `namespace-configuration-operator`, all 54 objects |
+| **A** `source-namespace` == `.metadata.namespace` | 30 of 30 nonprod RoleBindings |
+| **L** `role-type` == **L** `custom-role` (custom only) | both `database-admin` |
+| **L** `oud-group` == **A** `group-name` == `subjects[0].name` | all 3 oud-group RoleBindings |
+
+**oud-group is the outlier on five keys, and `-l` queries silently return partial sets because of it:**
+
+```
+-l rbac.ocp.io/role-type                       48 of 54    (oud-group uses rbac-type, or nothing)
+-l rbac.ocp.io/policy-version=0.1.0            48 of 54    (oud-group sets neither)
+-l rbac.ocp.io/access-model                     6 of 54    (ONLY oud-group sets it at object level)
+-l app.kubernetes.io/managed-by=…-operator     54 of 54    (the one key that answers completely)
+```
+
+It also spells the tier under `rbac-type: custom-role` where every other family uses `role-type` — two
+keys four characters apart, holding different axes. And its RoleBinding sets **neither**, so the tier is
+unqueryable there. `source-namespaceconfig` is a **label and an annotation** on its objects, which is
+why `-l` on that key works for oud-group and nothing else (§3.1).
+
+**Not a defect, though it looked like one:** `mnemonic` and `environment` are distinct facts, verified
+`beta` / `rnd` on a live object. An earlier pass flagged them as duplicates — that was an artifact of
+collapsing two different `index .Labels` expressions into one placeholder while rendering, not
+something on the cluster. Rendered templates are evidence about the template; only the live object is
+evidence about the object.
 
 ---
 
