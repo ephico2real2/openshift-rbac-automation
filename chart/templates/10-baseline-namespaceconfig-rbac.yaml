@@ -61,6 +61,14 @@
 # WHICH IS ALSO WHY AN objectTemplate IS NOT VALID YAML UNTIL IT IS RENDERED. Verify a change by
 # rendering the expressions out and THEN parsing, never by parsing the objectTemplate directly.
 #
+# ── NO app.kubernetes.io/version ON THE GENERATED OBJECTS ────────────────────
+# It is Helm's label with a defined meaning — the version of the APPLICATION — and
+# _helpers.tpl#nco.labels already sets it on the CR from Chart.AppVersion. Hand-setting it inside an
+# objectTemplate made the same key mean the OPERATOR version on the CR (1.2.6) and the POLICY version on
+# the objects that CR created (0.1.0): one policy, one key, two contradictory answers. The source policies
+# did that; this does not. Provenance is carried instead by rbac.ocp.io/source-namespaceconfig, which names
+# the CR that owns the object — a pointer that cannot go stale the way a copied version string does.
+#
 # ── WHAT EACH ROLE ENTRY IN VALUES EXPANDS TO ────────────────────────────────
 # Only `name` and `clusterRole` are irreducible. Everything else is derived, and identically in both
 # policies — measured against both source files before this template was written:
@@ -170,7 +178,6 @@ spec:
           namespace: "{{ $ns }}"
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            app.kubernetes.io/version: {{ $b.policyVersion }}
             rbac.ocp.io/policy-version: {{ $b.policyVersion }}
             rbac.ocp.io/role-type: ns-{{ $r.name }}
             rbac.ocp.io/mnemonic: "{{ $mn }}"

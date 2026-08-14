@@ -156,7 +156,6 @@ spec:
           {{- end }}
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            app.kubernetes.io/version: {{ $c.policyVersion }}
             rbac.ocp.io/policy-version: {{ $c.policyVersion }}
             rbac.ocp.io/role-type: {{ $entry.name }}
             rbac.ocp.io/group-name: "{{ $group }}"

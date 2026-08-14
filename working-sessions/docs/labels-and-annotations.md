@@ -63,7 +63,7 @@ block. Everything below them varies.
 
 ## 3. The four problems
 
-### 3.1 A DEFECT: `app.kubernetes.io/version` means two different things
+### 3.1 A DEFECT: `app.kubernetes.io/version` means two different things — FIXED IN THE CHART
 
 ```
 on a CR              app.kubernetes.io/version: 1.2.6    <- appVersion, the OPERATOR version
@@ -75,6 +75,37 @@ Same well-known key, two meanings, one policy. A reader filtering
 reverse. This is the only item here I would call a bug rather than an inconsistency — the key is part
 of the Kubernetes recommended-labels set with a defined meaning, and the object-level use contradicts
 it.
+
+**RESOLVED.** The hand-set line is gone from all three objectTemplates; the key is now written in
+exactly one place, `_helpers.tpl#nco.labels`, from `Chart.AppVersion`, and lands on the CR only. The
+version of the policy was never carried solely by this key — `rbac.ocp.io/policy-version: 0.1.0` is
+still on every generated object — so nothing became unqueryable:
+
+```
+$ helm template … | (per CR)
+  baseline-groupconfig-rbac       CR=1.2.6   objects mentioning app.kubernetes.io/version: none
+  custom-groupconfig-rbac         CR=1.2.6   objects mentioning app.kubernetes.io/version: none
+  nonprod-namespaceconfig-rbac    CR=1.2.6   objects mentioning app.kubernetes.io/version: none
+  prod-namespaceconfig-rbac       CR=1.2.6   objects mentioning app.kubernetes.io/version: none
+  oud-group-namespaceconfig-rbac  CR=1.2.6   objects mentioning app.kubernetes.io/version: none
+```
+
+This DIVERGES from the source policies under `working-sessions/policies/`, which do set it on their
+objects. Deliberate: the source is what had the defect.
+
+**The 48 objects already on the cluster keep the stale `0.1.0` — GOTCHA 9.** `.metadata` is in the
+`excludedPaths` the operator injects, so an objectTemplate metadata edit never reaches an object that
+already exists. Measured after `helm upgrade` to rev 17:
+
+```
+$ oc get rolebinding,clusterrolebinding -A -l app.kubernetes.io/version=0.1.0 --no-headers | wc -l
+48
+```
+
+Making it retroactive means `oc delete` by `rbac.ocp.io/source-*config` and letting the operator
+rebuild — a real revocation window (measured elsewhere in this repo: 2s to revoke, ~40s to restore).
+Whether a cosmetic label correction is worth that window is a judgement call, not a cleanup step, so
+it is deliberately not done here.
 
 ### 3.2 The same fact carried under different keys, and different kinds
 
@@ -187,7 +218,7 @@ Same keys on every policy and every object, each carrying exactly one fact.
 | `rbac.ocp.io/scope` | namespace-scoped \| cluster-wide | replaces the two `*-restriction` annotations |
 | `rbac.ocp.io/mnemonic`, `environment` | as now | namespace-keyed policies only, which is correct |
 | ~~`access-level`~~ | drop | compound; `role-type` + `scope` carry it selectably |
-| ~~`app.kubernetes.io/version`~~ | drop | §3.1 — it is the wrong key for a policy version |
+| ~~`app.kubernetes.io/version`~~ | **DROPPED — done** | §3.1 — it is the wrong key for a policy version |
 | **A** `source-namespaceconfig` / `source-groupconfig` | as now | annotation, not label — it is provenance, not a selector |
 
 **Migration cost is not zero, and this is the part to weigh.** Because every policy excludes
@@ -206,10 +237,15 @@ cluster. So this is a maintenance-window change, not a drive-by.
 
 ## 6. What I would do, in order
 
-1. **Drop `policyVersion`** (§4). Removes a constant, four values keys, and the wrong
-   `app.kubernetes.io/version` on objects. Lowest risk, clearest win.
-2. **Fix `app.kubernetes.io/version` on objects** — same change as (1), since that label only carried
-   the policy version.
+1. ~~**Fix `app.kubernetes.io/version` on objects**~~ — **DONE**, and done FIRST rather than second.
+   The original ordering had it following (2) on the reasoning that "that label only carried the policy
+   version", which implied the two had to move together. They do not: this one is the §3.1 *defect* —
+   a well-known key given a second, contradictory meaning — while (2) is a *preference* about whether
+   a version constant is worth carrying at all. Separating them let the defect ship on its own, with
+   `rbac.ocp.io/policy-version` left untouched so nothing became unqueryable. See §3.1 for the
+   verification and for why the 48 existing objects still read `0.1.0`.
+2. **Drop `policyVersion`** (§4). Removes a constant and four values keys. Still open, and now purely
+   a question of whether the constant earns its keep — no longer entangled with (1).
 3. **Add the three missing keys**: `rbac.ocp.io/scope` on custom-gc's CR, and `config-source` +
    `role-type` on oud-group's objects. Additive, no removals.
 4. **Unify `group-name`** — retire `rbac.ocp.io/oud-group`. One key for "which group is bound".
@@ -217,7 +253,8 @@ cluster. So this is a maintenance-window change, not a drive-by.
    The largest change and the one that most needs a window.
 6. **Rename `access-model`** to split its two axes, or leave it and document that it means two things.
 
-1–3 can ship together with no object churn beyond what (2) forces. 4–6 need the maintenance window.
+2–3 can ship together with no object churn. 4–6 need the maintenance window.
 
-Nothing here is applied. This document is the inventory and the argument; the changes are separate
-decisions.
+**Applied so far: (1) only.** The rest of this document is the inventory and the argument; those
+changes remain separate decisions. Note that (1) shipped in the chart but is NOT retroactive on the
+cluster — §3.1 explains why, and that gap is itself a decision left open rather than an oversight.
