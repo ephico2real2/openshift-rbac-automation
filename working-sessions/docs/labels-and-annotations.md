@@ -93,19 +93,32 @@ $ helm template … | (per CR)
 This DIVERGES from the source policies under `working-sessions/policies/`, which do set it on their
 objects. Deliberate: the source is what had the defect.
 
-**The 48 objects already on the cluster keep the stale `0.1.0` — GOTCHA 9.** `.metadata` is in the
-`excludedPaths` the operator injects, so an objectTemplate metadata edit never reaches an object that
-already exists. Measured after `helm upgrade` to rev 17:
+**GOTCHA 9 first blocked this, then a full rebuild closed it.** `.metadata` is in the `excludedPaths`
+the operator injects, so the objectTemplate edit reached nothing that already existed. Measured
+immediately after `helm upgrade` to rev 17:
 
 ```
 $ oc get rolebinding,clusterrolebinding -A -l app.kubernetes.io/version=0.1.0 --no-headers | wc -l
 48
 ```
 
-Making it retroactive means deleting the objects and letting the operator rebuild — a real revocation
-window (measured elsewhere in this repo: 2s to revoke, ~40s to restore). Whether a cosmetic label
-correction is worth that window is a judgement call, not a cleanup step, so it is deliberately not
-done here.
+The chart was correct and the cluster still wrong — exactly the two-generations state GOTCHA 9
+predicts. It was resolved at rev 18 by deleting every NamespaceConfig and GroupConfig and letting the
+operator rebuild from the chart, which is the only path that reaches existing objects:
+
+```
+$ oc get rolebinding,clusterrolebinding -A -l app.kubernetes.io/version=0.1.0 --no-headers | wc -l
+0
+$ oc get rolebinding,clusterrolebinding -A -l rbac.ocp.io/policy-version=0.1.0 --no-headers | wc -l
+48        # of 51 — oud-group's 3 never set it, per §3.2
+```
+
+**The cost is a real revocation window, and it is the number to plan around, not the label change.**
+Measured on this cluster across the delete/rebuild: **51 objects revoked in 4s**, all 51 restored
+within 50s. Free on CRC; on a shared cluster that is ~50s during which every one of those grants is
+absent. So a metadata realignment is a maintenance-window operation whose cost is set by the rebuild,
+not by how many keys are changing — which is the argument for batching §6's remaining items into one
+window rather than shipping them one at a time.
 
 **And if you do it, select on `config-source`.** `oc -l` matches labels only, and the baseline and
 cluster policies carry `rbac.ocp.io/source-namespaceconfig` / `source-groupconfig` as an
@@ -272,6 +285,11 @@ cluster. So this is a maintenance-window change, not a drive-by.
 
 2–3 can ship together with no object churn. 4–6 need the maintenance window.
 
-**Applied so far: (1) only.** The rest of this document is the inventory and the argument; those
-changes remain separate decisions. Note that (1) shipped in the chart but is NOT retroactive on the
-cluster — §3.1 explains why, and that gap is itself a decision left open rather than an oversight.
+**Applied so far: (1) only, and it IS live on the cluster** — the rev-18 rebuild (delete every CR, let
+the operator recreate from the chart) carried it onto all 51 existing objects. §3.1 has the before and
+after. The rest of this document is the inventory and the argument; those changes remain separate
+decisions.
+
+**The rebuild also re-priced items 2–6.** Their cost is dominated by the revocation window, not by the
+number of keys touched — 51 objects revoked in 4s and restored within 50s, regardless of what changed.
+So batching 2–6 into one window costs about what any single one of them costs alone.
