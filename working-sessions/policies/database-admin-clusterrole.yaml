@@ -1,0 +1,91 @@
+# =============================================================================
+# ClusterRole: database-admin — the custom role customGroupConfig binds
+# =============================================================================
+# The chart's customGroupConfig stanza (chart/templates/13-custom-groupconfig-rbac.yaml)
+# binds this role to every synced group whose name ends in -database-admin. It does NOT
+# create it, deliberately: a chart that both DEFINES a privileged ClusterRole and BINDS
+# it hides the grant's contents inside a values file. Keeping them apart means the role
+# is reviewed where roles are reviewed — which is this file.
+#
+# WHY IT HAS TO EXIST AT ALL. A ClusterRoleBinding whose roleRef names a nonexistent
+# ClusterRole is created SUCCESSFULLY, reports healthy, and grants NOTHING. That silent
+# dangle is the same defect the source user-workload-monitoring policy had with
+# alert-routing-edit. Without this file the customGroupConfig binding looks like it
+# works and does nothing.
+#
+# ── WHAT IT DELIBERATELY DOES NOT GRANT ──────────────────────────────────────
+# No cluster-wide read on secrets. A database admin plausibly wants connection
+# credentials, and it is the obvious rule to add — but `secrets: get,list` across all
+# namespaces reads every ServiceAccount token on the cluster, which is escalation to
+# effective cluster-admin by another name. If a specific team needs credentials, grant
+# secrets in THEIR namespace with a Role, not here.
+#
+# No create/delete on namespaces, no RBAC verbs, no CRD management. This role
+# administers database WORKLOADS; it does not administer the cluster.
+#
+# ── SCOPE ────────────────────────────────────────────────────────────────────
+# customGroupConfig's database-admin entry ships `scope: cluster`, so this becomes a
+# ClusterRoleBinding and these verbs apply in EVERY namespace. That is the blast radius
+# to weigh before enabling it. Switching that entry to `scope: namespace` with a
+# targetNamespace confines the same rules to one namespace instead.
+#
+# Apply:
+#   oc apply -f working-sessions/policies/database-admin-clusterrole.yaml
+# =============================================================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: database-admin
+  labels:
+    rbac.ocp.io/role-kind: custom
+    rbac.ocp.io/bound-by: custom-groupconfig-rbac
+  annotations:
+    description: >-
+      Administer database workloads (StatefulSets and their storage, services and
+      non-secret config) in any namespace. Deliberately excludes cluster-wide secret
+      access, RBAC verbs and namespace lifecycle.
+rules:
+  # Database workloads run as StatefulSets; the controller-owned objects below are what
+  # a workload admin actually has to touch to resize, restart or re-schedule one.
+  - apiGroups: ["apps"]
+    resources: ["statefulsets", "statefulsets/scale", "statefulsets/status", "deployments", "deployments/scale"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Storage. PVC edit is the point of the role — growing a full database volume is the
+  # single most common request. PVs are read-only: binding is the cluster's business.
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch"]
+
+  # Reachability and non-secret configuration.
+  - apiGroups: [""]
+    resources: ["services", "configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Diagnosis. exec and portforward are included because debugging a database without a
+  # client session is not a real grant; they are also why this role is not read-only and
+  # should be treated as privileged within the namespaces it covers.
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "pods/status"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/exec", "pods/portforward"]
+    verbs: ["create"]
+
+  # Capacity and failure context. Events explain why a StatefulSet is stuck; quotas and
+  # limits explain why it cannot grow.
+  - apiGroups: ["", "events.k8s.io"]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["resourcequotas", "limitranges"]
+    verbs: ["get", "list", "watch"]
+
+  # Read-only namespace visibility, so a holder can see where they have access.
+  # get/list only — no create, no delete.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
