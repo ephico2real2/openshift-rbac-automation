@@ -45,8 +45,10 @@ This solution provides **automated RBAC management** for OpenShift clusters usin
 > **This role map is a demonstration, not a production standard.** The reusable part of this
 > repo is the *mechanism* — the group-name patterns, how a matched group is assigned a role,
 > and how namespace labels drive environment-aware behaviour. **Which access level production
-> should actually grant is a company policy decision.** Adapt the templates in `policies/` to
-> your own standard; the table below records what these example policies currently do.
+> should actually grant is a company policy decision.** Change it in `chart/values.yaml` — the roles
+> each policy grants are values, not template edits. The manifests in `working-sessions/policies/` are
+> design references for reviewing the intent, not the thing to edit to change behaviour. The table below
+> records what these example policies currently do.
 
 | Environment | Admin Access | Developer Access | Audit Access |
 |-------------|--------------|------------------|--------------|
@@ -62,10 +64,11 @@ This solution provides **automated RBAC management** for OpenShift clusters usin
 - **Developer access**: Available in ALL environments (power users in prod)
 - **Audit access**: Universal read-only access across all environments
 
-Tightening production to read-only means removing the developer template from
-`policies/prod-namespaceconfig-rbac.yaml`; loosening it means adding one. The environment
-values themselves (`rnd`/`eng`/`qa`/`uat`/`prod`) are just label values the selectors match —
-they are equally yours to change.
+Tightening production to read-only means removing the `developer` entry from
+`namespaceConfigPolicy.baseline.policies.prod.roles` in `chart/values.yaml`; loosening it means adding
+one. Prod withholding `ns-admin` is a SHORTER LIST than nonprod, not a different structure, which is why
+both policies render from one template and differ only in data. The environment values themselves
+(`rnd`/`eng`/`qa`/`uat`/`prod`) are just label values the selectors match — equally yours to change.
 
 ## 🚀 Quick Start
 
@@ -92,18 +95,46 @@ approval, resource sizing).
 
 ### 2. Deploy RBAC Automation
 
-```bash
-# Deploy core RBAC policies
-oc apply -f policies/nonprod-namespaceconfig-rbac.yaml
-oc apply -f policies/prod-namespaceconfig-rbac.yaml
-oc apply -f policies/cluster-admin-groupconfig-rbac.yaml
-oc apply -f policies/cluster-developer-groupconfig-rbac.yaml
-oc apply -f policies/cluster-audit-groupconfig-rbac.yaml
-oc apply -f policies/database-admin-groupconfig-rbac.yaml
-oc apply -f policies/user-workload-monitoring-admin-groupconfig-rbac.yaml
+**Via the chart — every policy is a flag, and all of them default to off.** Do NOT `oc apply` the
+manifests under `working-sessions/policies/`: those are **design references**, kept readable so the
+intent of each policy can be reviewed. The chart is what deploys.
 
-# Optional: Deploy validation
-oc apply -f policies/kyverno-validation-only.yaml
+Just the baseline every team receives (nonprod + prod), per namespace:
+
+```bash
+helm upgrade --install nco chart -n namespace-configuration-operator \
+  --set namespaceConfigPolicy.enabled=true \
+  --set namespaceConfigPolicy.baseline.enabled=true
+```
+
+Or everything, which is one command rather than four — **the flags are not cumulative across
+invocations.** `helm upgrade` resets to chart defaults the moment either `-f` or `--set` is given, so a
+flag you leave off a later command is a policy you switch **off**, and switching a policy off revokes
+what it created:
+
+```bash
+helm upgrade --install nco chart -n namespace-configuration-operator \
+  --set namespaceConfigPolicy.enabled=true \
+  --set namespaceConfigPolicy.baseline.enabled=true \
+  --set clusterRbac.enabled=true \
+  --set namespaceConfigPolicy.oudGroup.enabled=true \
+  --set customGroupConfig.enabled=true
+```
+
+For anything beyond a quick test, put the flags in a values file and use `-f` — that way the enabled
+set is reviewable in git instead of living in someone's shell history.
+
+`customGroupConfig` binds ClusterRoles the chart does **not** create. Apply the role first, or the
+binding is created, reports healthy and grants nothing:
+
+```bash
+oc apply -f working-sessions/policies/database-admin-clusterrole.yaml
+```
+
+Optional standards validation (Kyverno, Audit mode — reports, does not block):
+
+```bash
+oc apply -f working-sessions/policies/kyverno-validation-only.yaml
 ```
 
 ### 3. Test with a Namespace
@@ -135,8 +166,8 @@ oc get rolebindings -n payment-prod
 ```
 
 > In this example the developer group keeps `edit` in production and only `admin` is withheld.
-> **That split is a company policy decision, not a rule** — adjust the templates in
-> `working-sessions/policies/` to match your own. See
+> **That split is a company policy decision, not a rule** — adjust
+> `namespaceConfigPolicy.baseline.policies.prod.roles` in `chart/values.yaml` to match your own. See
 > [architecture.md](working-sessions/docs/architecture.md).
 
 ### 5. Verify System Access
@@ -369,7 +400,11 @@ oc get rolebindings -n openshift-user-workload-monitoring -l app.kubernetes.io/m
 │           └── 13-custom-groupconfig-rbac.yaml          # ClusterRoles we define
 └── working-sessions/                             # Reference material and hand-applied manifests
     ├── README.md                                 # Operator behaviour, and the GOTCHAs — read this
-    ├── policies/                                 # The readable reference manifests + Kyverno policies
+    ├── policies/                                  # DESIGN REFERENCES — read these, do not apply them.
+    │                                              #   The chart deploys the equivalents. Exceptions:
+    │                                              #   database-admin-clusterrole.yaml (a supporting
+    │                                              #   ClusterRole the chart binds but cannot create)
+    │                                              #   and the kyverno-*.yaml validation policies.
     ├── scripts/                                  # Operational helpers (see scripts/README.md)
     └── docs/
         ├── labels-and-annotations.md             # THE label/annotation contract
@@ -385,9 +420,15 @@ oc get rolebindings -n openshift-user-workload-monitoring -l app.kubernetes.io/m
         └── planning/                             # Completed design notes
 ```
 
-**The policies ship as part of the chart, each behind its own flag and every flag off by default.** The
-manifests under `working-sessions/policies/` are the readable reference for what each policy does; the
-chart is what you deploy.
+**The policies ship as part of the chart, each behind its own flag and every flag off by default.**
+
+`working-sessions/policies/` holds **manual manifests kept for design purposes** — the readable
+statement of what each policy is meant to do, reviewed as YAML rather than as a template. They are not
+the deployment path and applying them would duplicate what the chart creates. Their labels are held to
+the same contract as the chart's output so the two can be compared line for line.
+
+Two deliberate exceptions are genuinely applied: `database-admin-clusterrole.yaml`, a supporting
+ClusterRole the chart binds but does not create, and the `kyverno-*.yaml` validation policies.
 
 ## 🎯 Key Features
 
