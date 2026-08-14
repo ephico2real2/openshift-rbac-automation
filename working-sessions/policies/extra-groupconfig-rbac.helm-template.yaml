@@ -1,7 +1,7 @@
 # =============================================================================
 # PARKED — a Helm template, NOT an applyable manifest
 # =============================================================================
-# This was chart/templates/13-extra-groupconfig-rbac.yaml, rendering one GroupConfig that granted the
+# This was chart/templates/14-extra-groupconfig-rbac.yaml, rendering one GroupConfig that granted the
 # OpenShift user-workload-monitoring roles to the -ns-admin / -ns-developer / -ns-audit tiers. It was
 # built, deployed and verified on CRC (50 RoleBindings across 28 groups), then withdrawn from the chart
 # because the access is not needed. Kept here rather than deleted: the work is sound and the research
@@ -9,7 +9,7 @@
 #
 # DO NOT `oc apply` THIS FILE. It is a Helm template — the `{{ }}` actions belong to two different
 # engines (see the header below) and it will not parse as a manifest. To use it again:
-#   1. move it back to chart/templates/13-extra-groupconfig-rbac.yaml
+#   1. move it back to chart/templates/14-extra-groupconfig-rbac.yaml
 #   2. paste the values stanza at the bottom of this file into chart/values.yaml
 #   3. bump the chart version
 #
@@ -84,7 +84,7 @@
 #
 # A GroupConfig cannot do that: it fires per GROUP and has no namespace context, so it can only bind
 # into a fixed namespace. Per-project monitoring rights would have to come from a NamespaceConfig — the
-# 11-baseline- family, which is keyed on the namespace. Worth knowing that
+# 10-baseline- family, which is keyed on the namespace. Worth knowing that
 # namespaceConfigPolicy.baseline already binds `view` per namespace, so port 9092 is covered for every
 # tier it grants; port 9093 is not granted by anything today.
 #
@@ -101,7 +101,7 @@
 # no such Role exists in the namespace. This template fixes that, and the guard below refuses any
 # roleKind that is not exactly Role or ClusterRole so it cannot come back as a typo.
 #
-# ── THE TWO-ENGINE PROBLEM, same as 12-baseline-groupconfig- ─────────────────
+# ── THE TWO-ENGINE PROBLEM, same as 11-baseline-groupconfig- ─────────────────
 # Helm evaluates this file at install time; the OPERATOR evaluates each objectTemplate later, once per
 # selected group, where .Name is the GROUP name. The guard below is a whole `if` action that must reach
 # the cluster UNEVALUATED — Helm would otherwise evaluate it with .Name undefined and silently render

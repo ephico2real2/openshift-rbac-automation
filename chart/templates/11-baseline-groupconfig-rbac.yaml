@@ -15,7 +15,7 @@
 # Converted from working-sessions/policies/cluster-{admin,audit,developer}-groupconfig-rbac.yaml,
 # which STAY in the repo as the readable reference. This file is the deployable form.
 #
-# ── A DIFFERENT CRD AND A DIFFERENT SCOPE FROM 11-baseline- ───────────────────
+# ── A DIFFERENT CRD AND A DIFFERENT SCOPE FROM 10-baseline- ───────────────────
 # That file is NamespaceConfig, keyed on a NAMESPACE, emitting RoleBindings. This is GroupConfig,
 # keyed on a GROUP, emitting ClusterRoleBindings. Inside an objectTemplate here `.Name` is the GROUP
 # name, not a namespace. Do not carry assumptions between the two.
@@ -24,7 +24,7 @@
 # The three sources share an IDENTICAL labelSelector and differ only in the suffix each guards on,
 # the ClusterRole it binds, and the labels derived from those. spec.templates is an ARRAY, so one CR
 # carries all three and the per-template guard does the narrowing — the same construction
-# 11-baseline- uses for its per-role templates, which is why the filenames are parallel.
+# 10-baseline- uses for its per-role templates, which is why the filenames are parallel.
 #
 # A TEMPLATE THAT DOES NOT MATCH RENDERS EMPTY, and the operator is fine with that. Measured before
 # this file existed: 63 synced groups against the three original CRs is 189 template evaluations
@@ -61,7 +61,7 @@
 #   rbac.ocp.io/access-level     <clusterRole>-cluster-wide
 #
 # ACCESS-LEVEL DERIVES FROM clusterRole, NOT FROM name — `audit` yields `view-cluster-wide`. That is
-# the opposite of 11-baseline-, where it derives from the role name. Do not copy that across.
+# the opposite of 10-baseline-, where it derives from the role name. Do not copy that across.
 #
 # AND THE TIER NAMES DO NOT MATCH THE CLUSTERROLES: the tier called `cluster-admin` binds ClusterRole
 # `admin`, and `cluster-audit` binds `view`. So clusterRole is an explicit values field — it cannot be
@@ -98,7 +98,7 @@ metadata:
     # who holds this access in the DIRECTORY — an edit to a ClusterRoleBinding is reverted by the next
     # reconcile, and adding a user to the OpenShift Group by hand is undone by the next sync.
     rbac.ocp.io/access-model: ldap-groups
-    # The family, matching 11-baseline-, so both halves of the baseline are queryable as one thing:
+    # The family, matching 10-baseline-, so both halves of the baseline are queryable as one thing:
     #   oc get groupconfig,namespaceconfig -l rbac.ocp.io/policy-family=baseline
     rbac.ocp.io/policy-family: baseline
   annotations:

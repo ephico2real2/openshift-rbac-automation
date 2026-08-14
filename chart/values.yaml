@@ -296,7 +296,7 @@ namespaceConfigPolicy:
   #
   # ONE TEMPLATE SERVES BOTH nonprod AND prod because they differ only in data — which environments,
   # which roles, which access-level suffix. See the header of
-  # chart/templates/11-baseline-namespaceconfig-rbac.yaml for when a future policy earns its own file
+  # chart/templates/10-baseline-namespaceconfig-rbac.yaml for when a future policy earns its own file
   # instead of an entry here.
   #
   # THESE BIND OPENSHIFT'S BUILT-IN CLUSTERROLES (admin / edit / view) through RoleBindings, which

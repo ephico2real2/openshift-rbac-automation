@@ -12,7 +12,7 @@
 # Converted from working-sessions/policies/{nonprod,prod}-namespaceconfig-rbac.yaml, which STAY in the
 # repo as the readable reference. This file is the deployable form; those are the explanation.
 #
-# ── WHY THIS FILE HOLDS TWO POLICIES AND 10-oud-group- HOLDS ONE ──────────────
+# ── WHY THIS FILE HOLDS TWO POLICIES AND 12-custom-oud-group- HOLDS ONE ──────────────
 # SAME SHAPE -> ONE TEMPLATE. DIFFERENT SHAPE -> ITS OWN FILE.
 #
 # `nonprod` and `prod` differ only in DATA: which environments they select, which roles they grant,

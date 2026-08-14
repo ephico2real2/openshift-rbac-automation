@@ -9,7 +9,7 @@
 # =============================================================================
 # GroupConfig — CUSTOM ClusterRoles, bound by group-name suffix
 # =============================================================================
-# The counterpart to 12-baseline-groupconfig-rbac.yaml. That one binds OpenShift's BUILT-IN aggregated
+# The counterpart to 11-baseline-groupconfig-rbac.yaml. That one binds OpenShift's BUILT-IN aggregated
 # ClusterRoles (admin / edit / view) to the three -cluster-* tiers. This one binds ClusterRoles the
 # platform does NOT ship — ones we define — to any suffix we choose.
 #
