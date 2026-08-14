@@ -59,6 +59,14 @@ metadata:
     rbac.ocp.io/kind: NamespaceConfig
     rbac.ocp.io/policy-version: {{ $p.policyVersion | quote }}
     rbac.ocp.io/access-model: oud-group-direct
+    # CUSTOM, because this policy DEFINES its own namespace-scoped Role from a permission set in
+    # values — a workload submitter no built-in tier expresses. The baseline policies bind
+    # OpenShift's admin/edit/view instead, and are labelled `baseline`. So the two kinds are one
+    # query apart across both CRDs:
+    #   oc get namespaceconfig,groupconfig -l rbac.ocp.io/policy-family=custom
+    # Before this label existed, that query returned only 13-custom-'s CR and silently omitted this
+    # one — the sort of gap that makes an inventory look complete when it is not.
+    rbac.ocp.io/policy-family: custom
   annotations:
     description: "Namespace RBAC: bind the group named directly by {{ $p.labelKey }}"
     rbac.ocp.io/purpose: "Label carries the full LDAP group name; no prefix is added by the template"
