@@ -1,0 +1,185 @@
+{{- if .Values.customGroupConfig.enabled }}
+{{- $c := .Values.customGroupConfig }}
+{{- if not $c.syncProviderLabelKey }}
+{{- fail "customGroupConfig.syncProviderLabelKey is empty. It is the ONLY thing narrowing this policy to synced groups, so empty would select every Group on the cluster and bind your custom roles to all of them. Set it, or disable customGroupConfig." }}
+{{- end }}
+{{- if not $c.entries }}
+{{- fail "customGroupConfig.entries is empty, so this would render a GroupConfig that selects every synced group and grants nothing — a silent no-op with the flag switched on. Give it entries, or disable customGroupConfig." }}
+{{- end }}
+# =============================================================================
+# GroupConfig — CUSTOM ClusterRoles, bound by group-name suffix
+# =============================================================================
+# The counterpart to 12-baseline-groupconfig-rbac.yaml. That one binds OpenShift's BUILT-IN aggregated
+# ClusterRoles (admin / edit / view) to the three -cluster-* tiers. This one binds ClusterRoles the
+# platform does NOT ship — ones we define — to any suffix we choose.
+#
+# The distinction comes from working-sessions/policies/database-admin-groupconfig-rbac.yaml, whose
+# roleRef carries the comment "Custom ClusterRole (must exist)". That is the whole idea: free-form
+# pairing of a group-name suffix with a role of our own, for custom roles and for CRD access.
+#
+# ── THIS CHART DOES NOT CREATE THE CLUSTERROLE ───────────────────────────────
+# Deliberately, not by omission. A chart that both DEFINES a privileged ClusterRole and BINDS it hides
+# the grant's contents inside a values file; keeping the two apart means the role is reviewed wherever
+# roles are reviewed. Nor can this template check existence: Helm's `lookup` returns empty during
+# `helm template` and `--dry-run=client`, so a render-time check would be a false negative half the
+# time and would teach people to ignore it.
+#
+# SO KNOW THE FAILURE MODE: a binding whose roleRef names a ClusterRole that does not exist is created
+# SUCCESSFULLY, reports healthy, and grants NOTHING. Exactly the silent dangle that the source
+# user-workload-monitoring policy suffered from with alert-routing-edit. If a grant appears to do
+# nothing, check the role exists before suspecting this policy:
+#   oc get clusterrole <name>
+#
+# ── WHY THE SELECTOR IS NOT CONFIGURABLE, THOUGH EVERYTHING ELSE IS ──────────
+# Because free-form selectors on this CRD fail DANGEROUSLY, and the repo already contains proof.
+# working-sessions/docs/examples/redhat-cop-custom-crd-access.yaml writes a regex selector as
+# `spec.selector` with operator MatchesRegex. Neither is in the GroupConfig schema, so the API PRUNES
+# the whole block and stores spec with templates and NO selector — while `oc apply` reports success.
+#
+# An absent labelSelector is not "match nothing". The operator calls
+# metav1.LabelSelectorAsSelector(&instance.Spec.LabelSelector) on a VALUE field, so the pointer is
+# never nil, and apimachinery returns labels.Everything() for a non-nil selector with no matchLabels
+# and no matchExpressions. Measured, both ends read from source. That example would therefore bind its
+# role to EVERY synced group on the cluster.
+#
+# So the selector here is fixed to the combination proven to narrow correctly — syncProviderLabelKey
+# Exists at CR level, plus a per-template hasSuffix guard — and the free-form axes are the ones where
+# freedom is safe: which suffix, which role, and cluster-wide or namespaced.
+#
+# ── THE TWO-ENGINE PROBLEM, as in the other two templates ────────────────────
+# Helm evaluates this file at install time; the OPERATOR evaluates each objectTemplate later, once per
+# selected group, where .Name is the GROUP name. The guard below is a whole `if` action that must reach
+# the cluster UNEVALUATED — Helm would otherwise evaluate it with .Name undefined and silently render
+# the binding away, with no error. So the guard, its end, and the group reference are BUILT AS STRINGS
+# and substituted; Helm renders a string and does not recurse into what it produced.
+#
+# A # COMMENT IS NOT A HELM COMMENT. It is a YAML comment, and Helm processes this file as text before
+# YAML sees it, so an action inside one of these comments IS EVALUATED. Hence prose, not quotes. And
+# never `| quote` on the built strings: the operator renders each objectTemplate as a Go template FIRST
+# and parses YAML SECOND, so a backslash-quote is a backslash inside an action there and the parse
+# fails. printf takes the quotes as ARGUMENTS.
+#
+# ── BINDING NAMES: <group>-<bindingSuffix, or name if unset> ─────────────────
+# The source policy hardcodes <group>-crb. That is fine for one entry and collides the moment two
+# entries want a binding for the same group — both render <group>-crb and the operator rewrites one over
+# the other on every reconcile. Reachable by ordinary use here, since arbitrary suffix/role pairs are
+# the whole point.
+#
+# So the name carries a per-entry component, defaulting to the entry's `name`. `bindingSuffix` overrides
+# it, which exists because the default STUTTERS when the entry name repeats the suffix: entry
+# `database-admin` with suffix `-database-admin` yields
+# app-ocp-rbac-x-database-admin-database-admin. Setting bindingSuffix: crb gives the source's exact
+# name back. The guard above refuses two entries resolving to the same value, so uniqueness is
+# structural rather than a convention to remember.
+#
+# ── NO excludedPaths, AND THE OPERATOR ADDS ITS OWN ──────────────────────────
+# Measured on this cluster: the operator writes [.metadata, .status, .spec.replicas] into the spec on
+# reconcile even when nothing sends them. Not mirrored, because .spec.replicas is meaningless for a
+# binding. It does mean GOTCHA 9 applies — editing labels or annotations below changes NOTHING on
+# bindings that already exist:
+#   oc delete clusterrolebinding -l rbac.ocp.io/source-groupconfig={{ $c.name }}
+{{- $group := "{{ .Name }}" }}
+{{- $endif := "{{- end }}" }}
+{{- $seen := dict }}
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: GroupConfig
+metadata:
+  name: {{ $c.name }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: custom-rbac-automation
+    rbac.ocp.io/kind: GroupConfig
+    rbac.ocp.io/policy-version: {{ $c.policyVersion | quote }}
+    # Identities come from the directory: the group family is synced from LDAP by GroupSync, which is
+    # also what sets the selector label below. Change who holds this access in the DIRECTORY.
+    rbac.ocp.io/access-model: ldap-groups
+    # CUSTOM, distinguishing it from the baseline families in one query:
+    #   oc get groupconfig -l rbac.ocp.io/policy-family=custom
+    rbac.ocp.io/policy-family: custom
+  annotations:
+    description: {{ $c.description | quote }}
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  labelSelector:
+    matchExpressions:
+      # SYNCED GROUPS ONLY, and NOT configurable — see the header for why a free-form selector on this
+      # CRD is silently pruned and ends up matching every group.
+      - key: {{ $c.syncProviderLabelKey }}
+        operator: Exists
+  templates:
+    {{- range $entry := $c.entries }}
+    {{- if not $entry.name }}
+    {{- fail "a customGroupConfig entry has no name. The name goes into every binding it creates, so it cannot be empty. Set it." }}
+    {{- end }}
+    {{- $bindKey := default $entry.name $entry.bindingSuffix }}
+    {{- if hasKey $seen $bindKey }}
+    {{- fail (printf "customGroupConfig has two entries resolving to the binding suffix %q. The binding name is <group>-<bindingSuffix, or name if unset>, so two entries sharing it can produce the same object name and the operator would rewrite one over the other on every reconcile. Give one of them a distinct name or bindingSuffix." $bindKey) }}
+    {{- end }}
+    {{- $seen = set $seen $bindKey true }}
+    {{- if not $entry.suffix }}
+    {{- fail (printf "customGroupConfig entry %q has no suffix. The suffix is what narrows the grant to a set of groups; without it the entry would bind its role to every synced group. Set it." $entry.name) }}
+    {{- end }}
+    {{- if not (hasPrefix "-" $entry.suffix) }}
+    {{- fail (printf "customGroupConfig entry %q has suffix %q, which does not start with a hyphen. hasSuffix would then match more than intended — suffix \"admin\" also matches -cluster-admin and -ns-admin, quietly granting a custom role to tiers nobody meant to include. Write it as \"-%s\"." $entry.name $entry.suffix $entry.suffix) }}
+    {{- end }}
+    {{- if not $entry.clusterRole }}
+    {{- fail (printf "customGroupConfig entry %q has no clusterRole, so its roleRef would name nothing — a binding that is created, reports healthy, and grants zero. Set it." $entry.name) }}
+    {{- end }}
+    {{- if not (has $entry.scope (list "cluster" "namespace")) }}
+    {{- fail (printf "customGroupConfig entry %q has scope %q. It must be exactly \"cluster\" (a ClusterRoleBinding, granting the role across all namespaces) or \"namespace\" (a RoleBinding in targetNamespace, granting it there only). Case-sensitive, because the difference is the blast radius." $entry.name (toString $entry.scope)) }}
+    {{- end }}
+    {{- if and (eq $entry.scope "namespace") (not $entry.targetNamespace) }}
+    {{- fail (printf "customGroupConfig entry %q has scope namespace but no targetNamespace. A RoleBinding without a namespace is not a valid object, and the operator would fail to create it every reconcile. Set it, or use scope cluster." $entry.name) }}
+    {{- end }}
+    {{- $guard := printf "{{- if hasSuffix %s%s%s .Name }}" "\"" $entry.suffix "\"" }}
+    {{- $bind := default $entry.name $entry.bindingSuffix }}
+    # ---------------------------------------------------------------------
+    # {{ $entry.name }} — groups ending {{ $entry.suffix }} get ClusterRole/{{ $entry.clusterRole }}
+    {{- if eq $entry.scope "namespace" }}
+    # scope: namespace — a RoleBinding in {{ $entry.targetNamespace }}, so the role applies there only
+    {{- else }}
+    # scope: cluster — a ClusterRoleBinding, so the role applies in EVERY namespace
+    {{- end }}
+    # ---------------------------------------------------------------------
+    - objectTemplate: |
+        {{ $guard }}
+        apiVersion: rbac.authorization.k8s.io/v1
+        {{- if eq $entry.scope "namespace" }}
+        kind: RoleBinding
+        {{- else }}
+        kind: ClusterRoleBinding
+        {{- end }}
+        metadata:
+          name: "{{ $group }}-{{ $bind }}"
+          {{- if eq $entry.scope "namespace" }}
+          namespace: {{ $entry.targetNamespace }}
+          {{- end }}
+          labels:
+            app.kubernetes.io/managed-by: namespace-configuration-operator
+            app.kubernetes.io/version: {{ $c.policyVersion }}
+            rbac.ocp.io/policy-version: {{ $c.policyVersion }}
+            rbac.ocp.io/role-type: {{ $entry.name }}
+            rbac.ocp.io/group-name: "{{ $group }}"
+            rbac.ocp.io/access-level: {{ $entry.clusterRole }}-{{ $entry.scope }}-wide
+            rbac.ocp.io/config-source: {{ $c.configSource }}
+            rbac.ocp.io/custom-role: {{ $entry.clusterRole }}
+          annotations:
+            rbac.ocp.io/created-by: namespace-configuration-operator
+            rbac.ocp.io/source-groupconfig: {{ $c.name }}
+            rbac.ocp.io/group-pattern: "{{ $c.groupPrefix }}-*{{ $entry.suffix }}"
+            {{- if eq $entry.scope "namespace" }}
+            rbac.ocp.io/scope-restriction: {{ $entry.targetNamespace | quote }}
+            {{- else }}
+            rbac.ocp.io/scope-restriction: "cluster-wide"
+            {{- end }}
+        subjects:
+        - kind: Group
+          name: "{{ $group }}"
+          apiGroup: rbac.authorization.k8s.io
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: {{ $entry.clusterRole }}
+        {{ $endif }}
+    {{- end }}
+{{- end }}

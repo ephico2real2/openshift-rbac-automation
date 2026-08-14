@@ -470,3 +470,83 @@ clusterRbac:
 
 # ---------------------------------------------------------------------------
 # EXTRA access  (GroupConfig -> RoleBindings in a platform namespace)
+
+# ---------------------------------------------------------------------------
+# CUSTOM ClusterRoles  (GroupConfig -> ClusterRoleBinding or RoleBinding)
+# ---------------------------------------------------------------------------
+# The counterpart to clusterRbac above. That binds OpenShift's BUILT-IN aggregated ClusterRoles
+# (admin / edit / view) to the three -cluster-* tiers. This binds ClusterRoles the platform does NOT
+# ship — ones we define — to any group-name suffix we choose. For custom roles, and for CRD access.
+#
+# THIS CHART DOES NOT CREATE THE CLUSTERROLE, and that is deliberate. A chart that both defines a
+# privileged ClusterRole and binds it hides the grant's contents in a values file; keeping them apart
+# means the role is reviewed wherever roles are reviewed. Nor can the template check existence: Helm's
+# `lookup` is empty during `helm template` and `--dry-run=client`, so the check would be a false
+# negative half the time.
+#
+# SO KNOW THE FAILURE MODE. A binding whose roleRef names a ClusterRole that does not exist is created
+# SUCCESSFULLY, reports healthy, and grants NOTHING. If a grant seems inert, check the role first:
+#   oc get clusterrole <name>
+#
+# THE SELECTOR IS FIXED, THOUGH EVERYTHING ELSE IS FREE-FORM. Free-form selectors on this CRD fail
+# dangerously and the repo has proof: working-sessions/docs/examples/redhat-cop-custom-crd-access.yaml
+# writes a regex selector that the API silently PRUNES, leaving a CR with no selector — which
+# apimachinery resolves to labels.Everything(), i.e. EVERY group. The template hardcodes the
+# combination proven to narrow (sync-provider Exists, plus a per-entry hasSuffix guard) and lets you
+# vary only the axes where variation is safe.
+customGroupConfig:
+  # OFF is chart safety. Turning it back off is a REVOCATION: the CR carries the
+  # groupconfig-controller finalizer, so the operator deletes every binding it made.
+  enabled: false
+
+  name: custom-groupconfig-rbac
+  description: "Custom RBAC: bind ClusterRoles defined outside this chart to chosen group suffixes"
+  configSource: custom-rbac
+
+  # SYNCED GROUPS ONLY — the only thing narrowing the selector, and the template refuses it empty.
+  syncProviderLabelKey: group-sync-operator.redhat-cop.io/sync-provider
+
+  # Documents the group family on each binding's rbac.ocp.io/group-pattern annotation. It does NOT
+  # narrow anything — the suffix guard does that.
+  groupPrefix: app-ocp-rbac
+
+  policyVersion: "0.1.0"
+
+  # FREE-FORM BY DESIGN: any suffix you choose, bound to any ClusterRole you have defined. Three axes
+  # vary — the suffix, the role, and whether the grant is cluster-wide or confined to one namespace.
+  # Add an entry per pairing. Two entries MAY share a suffix (a group gets both roles), because the
+  # binding name includes the entry name; what must be unique is `name`.
+  #
+  # scope: cluster    -> ClusterRoleBinding. The role applies in EVERY namespace. Use for genuinely
+  #                      cluster-wide grants.
+  # scope: namespace  -> RoleBinding in targetNamespace. The role applies THERE ONLY, however broad it
+  #                      is. Use for operator/CRD access that lives in one namespace.
+  #
+  # Guards refuse, at render time: a missing name/suffix/clusterRole, a duplicate name, a suffix
+  # without its leading hyphen (hasSuffix "admin" would also match -cluster-admin and -ns-admin), a
+  # scope that is not exactly cluster or namespace, and scope namespace with no targetNamespace.
+  entries:
+    # THE SHIPPED EXAMPLE, from working-sessions/policies/database-admin-groupconfig-rbac.yaml, whose
+    # roleRef comment — "Custom ClusterRole (must exist)" — is where this stanza came from.
+    #
+    # Inert today, and correctly so: the database-admin ClusterRole does not exist on the reference
+    # cluster, the repo does not define it, and 0 groups end in -database-admin. It is here as the
+    # worked shape, not as a live grant.
+    - name: database-admin
+      suffix: -database-admin
+      # OPTIONAL, defaults to `name`. Set here because the default would stutter — the group already
+      # ends in -database-admin, so <group>-database-admin reads twice. `crb` reproduces the source
+      # policy's exact binding name. Two entries may not resolve to the same value; the template
+      # refuses that, because the binding names would collide.
+      bindingSuffix: crb
+      scope: cluster
+      clusterRole: database-admin
+
+    # WHAT CRD ACCESS LOOKS LIKE — commented, not shipped. The pattern
+    # working-sessions/docs/examples/redhat-cop-custom-crd-access.yaml was reaching for, expressed in a
+    # way that actually narrows: an operator's own ClusterRole, bound in the operator's namespace.
+    # - name: tekton-pipelines-edit
+    #   suffix: -ns-developer
+    #   scope: namespace
+    #   targetNamespace: openshift-pipelines
+    #   clusterRole: tekton-pipelines-edit

@@ -30,7 +30,12 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
-version: 0.6.0
+# 0.7.0, MINOR: a new template and a new top-level `customGroupConfig` stanza — binding ClusterRoles the
+# platform does NOT ship, to any group-name suffix chosen in values. The counterpart to clusterRbac,
+# which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
+# privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
+# database-admin as an inert worked example.
+version: 0.7.0
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:
