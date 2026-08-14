@@ -48,15 +48,13 @@ metadata:
   labels:
     app.kubernetes.io/name: namespace-configuration-operator
     app.kubernetes.io/component: rbac-automation
-    app.kubernetes.io/part-of: bda-platform
     rbac.ocp.io/scope: namespace-scoped
     rbac.ocp.io/kind: NamespaceConfig
-    rbac.ocp.io/policy-version: "1.0.0"
-    rbac.ocp.io/access-model: bda-workload-submitter
+    rbac.ocp.io/policy-family: custom
+    rbac.ocp.io/identity-source: ldap-groups
+    rbac.ocp.io/group-naming: pattern
   annotations:
     description: "BDA workload-submitter RBAC for spark/flink/trino team namespaces"
-    rbac.ocp.io/purpose: "Binds bda-rbac-<service>-<tenant>-<kind> groups to a namespace-scoped submitter Role"
-    rbac.ocp.io/group-prefix: "bda-rbac-"
 spec:
   labelSelector:
     matchExpressions:
@@ -89,22 +87,14 @@ spec:
           namespace: "{{ .Name }}"
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            app.kubernetes.io/component: bda-rbac
-            app.kubernetes.io/version: "1.0.0"
-            rbac.ocp.io/policy-version: "1.0.0"
-            rbac.ocp.io/access-model: bda-workload-submitter
-            rbac.ocp.io/rbac-type: custom-role
-            rbac.ocp.io/source-namespaceconfig: bda-workload-submitter-namespaceconfig-rbac
+            rbac.ocp.io/config-source: bda-rbac
+            rbac.ocp.io/role-type: submitter
+            rbac.ocp.io/scope: namespace-scoped
             rbac.ocp.io/mnemonic: "{{ index .Labels "company.net/mnemonic" }}"
             rbac.ocp.io/environment: "{{ index .Labels "company.net/app-environment" }}"
             rbac.ocp.io/bda-team: "{{ index .Labels "company.net/bda-team" }}"
-            rbac.ocp.io/group-name: "bda-rbac-{{ index .Labels "company.net/bda-team" }}"
           annotations:
-            rbac.ocp.io/created-by: namespace-configuration-operator
-            rbac.ocp.io/source-namespace: "{{ .Name }}"
             rbac.ocp.io/source-namespaceconfig: bda-workload-submitter-namespaceconfig-rbac
-            rbac.ocp.io/group-name: "bda-rbac-{{ index .Labels "company.net/bda-team" }}"
-            rbac.ocp.io/purpose: "Allows BDA workload submission and management within namespace scope"
         rules:
           - apiGroups: [""]
             resources:
@@ -148,23 +138,16 @@ spec:
           namespace: "{{ .Name }}"
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            app.kubernetes.io/component: bda-rbac
-            app.kubernetes.io/version: "1.0.0"
-            rbac.ocp.io/policy-version: "1.0.0"
-            rbac.ocp.io/access-model: bda-workload-submitter
-            rbac.ocp.io/access-level: submitter
-            rbac.ocp.io/role-type: custom-role
-            rbac.ocp.io/source-namespaceconfig: bda-workload-submitter-namespaceconfig-rbac
+            rbac.ocp.io/config-source: bda-rbac
+            rbac.ocp.io/role-type: submitter
+            rbac.ocp.io/bound-role: bda-workload-submitter-role
+            rbac.ocp.io/scope: namespace-scoped
+            rbac.ocp.io/group-name: "bda-rbac-{{ index .Labels "company.net/bda-team" }}"
             rbac.ocp.io/mnemonic: "{{ index .Labels "company.net/mnemonic" }}"
             rbac.ocp.io/environment: "{{ index .Labels "company.net/app-environment" }}"
             rbac.ocp.io/bda-team: "{{ index .Labels "company.net/bda-team" }}"
-            rbac.ocp.io/group-name: "bda-rbac-{{ index .Labels "company.net/bda-team" }}"
           annotations:
-            rbac.ocp.io/created-by: namespace-configuration-operator
-            rbac.ocp.io/source-namespace: "{{ .Name }}"
             rbac.ocp.io/source-namespaceconfig: bda-workload-submitter-namespaceconfig-rbac
-            rbac.ocp.io/group-name: "bda-rbac-{{ index .Labels "company.net/bda-team" }}"
-            rbac.ocp.io/purpose: "Namespace-scoped BDA workload submitter access"
         subjects:
           - kind: Group
             name: "bda-rbac-{{ index .Labels "company.net/bda-team" }}"

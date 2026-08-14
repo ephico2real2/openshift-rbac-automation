@@ -79,10 +79,10 @@
 #   rbac.ocp.io/bound-role    <clusterRole>
 #   rbac.ocp.io/scope         namespace-scoped
 #
-# THERE IS NO access-level. It used to be <name>-<accessLevelSuffix>, e.g. audit-non-prod-only, which
-# fused the tier and the restriction into one string no selector could match half of — and named the
-# TIER where the sibling GroupConfig policy named the ROLE under the same key, so `-l access-level=view-*`
-# found 2 of the 15 objects binding view. role-type, bound-role and scope each carry one axis instead.
+# role-type is the TIER (ns-audit) and bound-role is the ROLE IT BINDS (view). Two keys because they are
+# two facts, and the words deliberately differ — audit binds view, developer binds edit. A reviewer asking
+# "who can read?" needs bound-role; one asking "who is a namespace admin?" needs role-type. The full
+# contract is working-sessions/docs/labels-and-annotations.md.
 #
 # `clusterRole` stays explicit because it IS the grant — admin versus view is what an auditor reads,
 # and it is not derivable from the role name (developer -> edit, audit -> view).
@@ -121,9 +121,10 @@ metadata:
     # An earlier draft set this to "mnemonic-environment", which was filler — it restated the selector
     # printed a few lines below. A label should carry a fact the spec does not.
     rbac.ocp.io/identity-source: ldap-groups
-    # How the GROUP NAME is derived — a separate axis from where the identities come from. Splitting
-    # the old access-model into these two is what fixes its under-reporting: every policy here is
-    # LDAP-backed, but they do not all derive the group name the same way.
+    # HOW THE GROUP NAME IS DERIVED — a separate axis from where the identities come from, and separate
+    # keys because every policy here is LDAP-backed while they do NOT all name groups the same way.
+    # `pattern` means computed from the naming convention (prefix + mnemonic + tier); 12-custom-oud-group
+    # sets `namespace-label` because it reads the name from a label value verbatim.
     rbac.ocp.io/group-naming: pattern
     # THE FAMILY, so the two halves are queryable as one thing:
     #   oc get namespaceconfig -l rbac.ocp.io/policy-family=built-in
@@ -200,11 +201,9 @@ spec:
             rbac.ocp.io/mnemonic: "{{ $mn }}"
             rbac.ocp.io/environment: "{{ $env }}"
           annotations:
-            # No group-pattern here. It used to carry "{{ $group }}", which for this policy renders a
-            # CONCRETE group name, not a pattern — measured identical to subjects[0].name on a live
-            # object. The name is now the rbac.ocp.io/group-name LABEL above, where it is selectable.
-            # group-pattern survives only on the two GroupConfig policies, where the value really is a
-            # wildcard the operator matched against.
+            # NO group-pattern on this policy: it computes a CONCRETE group name, not a wildcard, and
+            # that name is the rbac.ocp.io/group-name LABEL above where it can be selected on. The
+            # annotation exists only on the two GroupConfig policies, whose value really is a pattern.
             rbac.ocp.io/source-namespaceconfig: {{ $p.name }}
         subjects:
         - kind: Group

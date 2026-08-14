@@ -1,7 +1,7 @@
 # =============================================================================
 # ClusterRole: database-admin — the custom role customGroupConfig binds
 # =============================================================================
-# The chart's customGroupConfig stanza (chart/templates/13-custom-groupconfig-rbac.yaml)
+# The chart's customGroupConfig stanza (chart/templates/rbac-policies/13-custom-groupconfig-rbac.yaml)
 # binds this role to every synced group whose name ends in -database-admin. It does NOT
 # create it, deliberately: a chart that both DEFINES a privileged ClusterRole and BINDS
 # it hides the grant's contents inside a values file. Keeping them apart means the role
@@ -37,9 +37,13 @@ kind: ClusterRole
 metadata:
   name: database-admin
   labels:
-    rbac.ocp.io/role-kind: custom
-    rbac.ocp.io/bound-by: custom-groupconfig-rbac
+    # A SUPPORTING OBJECT, not one the operator generates — so the object-level contract in
+    # working-sessions/docs/labels-and-annotations.md §1 does not apply. It carries policy-family so it
+    # is findable alongside the policy that binds it, and the binding relationship is an annotation
+    # because it is provenance rather than something to select on.
+    rbac.ocp.io/policy-family: custom
   annotations:
+    rbac.ocp.io/bound-by: custom-groupconfig-rbac
     description: >-
       Administer database workloads (StatefulSets and their storage, services and
       non-secret config) in any namespace. Deliberately excludes cluster-wide secret

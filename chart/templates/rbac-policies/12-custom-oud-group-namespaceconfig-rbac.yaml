@@ -56,12 +56,12 @@ metadata:
     app.kubernetes.io/component: rbac-automation
     rbac.ocp.io/scope: namespace-scoped
     rbac.ocp.io/kind: NamespaceConfig
-    # LDAP-backed like every other policy here — the old access-model: oud-group-direct compared a
-    # different axis (name derivation) against the others' ldap-groups, so filtering on it
-    # under-reported this policy as though it were not LDAP at all.
+    # LDAP-backed, like every policy in this chart — the groups this binds are synced from the directory,
+    # so `-l rbac.ocp.io/identity-source=ldap-groups` must find this one too.
     rbac.ocp.io/identity-source: ldap-groups
-    # THIS is what oud-group-direct was really saying: the group name comes from a namespace label
-    # verbatim, not from a computed pattern.
+    # AND THE AXIS THAT MAKES THIS POLICY DIFFERENT: the group name is the namespace label's value,
+    # verbatim, with no prefix and no tier suffix. The other three compute theirs from the naming
+    # convention and are labelled `pattern`.
     rbac.ocp.io/group-naming: namespace-label
     # CUSTOM, because this policy DEFINES its own namespace-scoped Role from a permission set in
     # values — a workload submitter no built-in tier expresses. The baseline policies bind
@@ -72,8 +72,9 @@ metadata:
     # one — the sort of gap that makes an inventory look complete when it is not.
     rbac.ocp.io/policy-family: custom
   annotations:
-    description: "Namespace RBAC: bind the group named directly by {{ $p.labelKey }}"
-    rbac.ocp.io/purpose: "Label carries the full LDAP group name; no prefix is added by the template"
+    # One description key, on every policy — the "no prefix is added" fact is stated selectably by
+    # rbac.ocp.io/group-naming: namespace-label above, so it does not need a second annotation here.
+    description: "Namespace RBAC: bind the group named by the {{ $p.labelKey }} label value, verbatim and with no prefix added"
     # After the operator is installed and its CSV is running. A NamespaceConfig applied before the CRD
     # exists fails the release; applied before the controller is up it simply sits there.
     argocd.argoproj.io/sync-wave: "3"
@@ -126,9 +127,9 @@ spec:
             rbac.ocp.io/role-type: {{ $p.roleType }}
             rbac.ocp.io/bound-role: {{ $p.roleName }}
             rbac.ocp.io/scope: namespace-scoped
-            # ONE key for the bound group, everywhere. This used to be rbac.ocp.io/oud-group as a label
-            # AND rbac.ocp.io/group-name as an annotation — the same value twice, under two keys, in two
-            # kinds, so neither `-l group-name=X` nor `-l oud-group=X` found everything bound to a group.
+            # THE SAME KEY EVERY POLICY USES for the bound group, so one query finds every grant to a
+            # group across all of them:
+            #   oc get rolebinding,clusterrolebinding -A -l rbac.ocp.io/group-name=<group>
             rbac.ocp.io/group-name: "{{ $group }}"
           annotations:
             # No group-pattern: this policy's group comes from a NAMESPACE LABEL, not from a name

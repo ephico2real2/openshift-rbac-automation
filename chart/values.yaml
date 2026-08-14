@@ -241,20 +241,18 @@ namespaceConfigPolicy:
     # it is empty rather than selecting every namespace and binding a group called "".
     labelKey: company.net/oud-group
 
-    # The policy's short name, written to rbac.ocp.io/config-source on every object it creates. That is
-    # the ONE label which reliably selects a policy's objects for the delete-and-rebuild a metadata
-    # change requires — see working-sessions/docs/labels-and-annotations.md §3.1. This policy carried no
-    # config-source at all until the alignment, which is exactly why `-l` behaved differently here than
-    # on every sibling and why four documented remediation commands silently selected nothing.
+    # The policy's short name, written to rbac.ocp.io/config-source on every object this policy creates.
+    # That label is the ONE reliable way to select a policy's objects — which a metadata change needs,
+    # since it requires deleting and rebuilding them. See working-sessions/docs/labels-and-annotations.md
+    # §6. Keep it short and distinct from every other policy's.
     configSource: oud-group-rbac
 
     # The Role the RoleBinding points at. One Role per namespace, created by the first template.
     roleName: oud-group-submitter-role
 
-    # The TIER, written to rbac.ocp.io/role-type — the same key every other policy uses, so one query
-    # finds every tier across all of them. This was rbac.ocp.io/access-level on the RoleBinding and
-    # rbac.ocp.io/rbac-type on the Role; neither matched the siblings, and the RoleBinding carried no
-    # role-type at all. Descriptive only — it grants nothing; `rules` below is the grant.
+    # The TIER, written to rbac.ocp.io/role-type on both the Role and the RoleBinding — the same key
+    # every policy uses, so one query finds every tier across all of them. Descriptive only: it grants
+    # nothing, `rules` below is the grant.
     roleType: submitter
 
     # Paths the operator IGNORES when comparing what it would create against what exists, so a
@@ -300,9 +298,9 @@ namespaceConfigPolicy:
   # standard access tiers for that environment, with no per-namespace configuration. oudGroup above is
   # a PoC beside it; this is the documented flow the README's install steps run.
   #
-  # ONE TEMPLATE SERVES BOTH nonprod AND prod because they differ only in data — which environments,
-  # which roles, which access-level suffix. See the header of
-  # chart/templates/10-baseline-namespaceconfig-rbac.yaml for when a future policy earns its own file
+  # ONE TEMPLATE SERVES BOTH nonprod AND prod because they differ only in data — which environments and
+  # which roles. See the header of
+  # chart/templates/rbac-policies/10-baseline-namespaceconfig-rbac.yaml for when a future policy earns its own file
   # instead of an entry here.
   #
   # THESE BIND OPENSHIFT'S BUILT-IN CLUSTERROLES (admin / edit / view) through RoleBindings, which
@@ -362,9 +360,10 @@ namespaceConfigPolicy:
 
 
         # `name` names the group and the binding; `clusterRole` IS the grant. Everything else — the
-        # RoleBinding name, role-type, access-level, group name — derives from `name`; see the
-        # template header for the four derivations. clusterRole is explicit because it is not
-        # derivable and because it is the field an auditor reads.
+        # RoleBinding name, role-type, bound-role, group name — derives from these two; see
+        # working-sessions/docs/templating-guide.md §3 for the full derivation table. clusterRole is
+        # explicit because it is NOT derivable from the tier (developer -> edit, audit -> view) and
+        # because it is the field an auditor reads.
         roles:
           - name: admin
             clusterRole: admin

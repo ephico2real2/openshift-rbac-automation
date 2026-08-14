@@ -137,10 +137,9 @@ metadata:
     # one — group-triggered, namespace-scoped in effect.
     rbac.ocp.io/scope: namespace-scoped
     rbac.ocp.io/kind: GroupConfig
-    rbac.ocp.io/policy-version: {{ $e.policyVersion | quote }}
     # Identities come from the directory: the group family is synced from LDAP by GroupSync, which is
     # also what sets the selector label below. Change who holds this access in the DIRECTORY.
-    rbac.ocp.io/access-model: ldap-groups
+    rbac.ocp.io/identity-source: ldap-groups
     # EXTRA, not baseline — so the two are one query apart:
     #   oc get groupconfig -l rbac.ocp.io/policy-family=extra
     rbac.ocp.io/policy-family: extra
@@ -179,17 +178,14 @@ spec:
           namespace: {{ $e.targetNamespace }}
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            app.kubernetes.io/version: {{ $e.policyVersion }}
-            rbac.ocp.io/policy-version: {{ $e.policyVersion }}
-            rbac.ocp.io/role-type: {{ $e.targetNamespace }}
-            rbac.ocp.io/target-namespace: {{ $e.targetNamespace }}
-            rbac.ocp.io/group-name: "{{ $group }}"
-            rbac.ocp.io/access-level: {{ $b.name }}
             rbac.ocp.io/config-source: {{ $e.configSource }}
+            rbac.ocp.io/role-type: {{ $tier.name }}
+            rbac.ocp.io/bound-role: {{ $r.name }}
+            rbac.ocp.io/scope: namespace-scoped
+            rbac.ocp.io/group-name: "{{ $group }}"
           annotations:
-            rbac.ocp.io/created-by: namespace-configuration-operator
             rbac.ocp.io/source-groupconfig: {{ $e.name }}
-            rbac.ocp.io/scope-restriction: {{ $e.targetNamespace | quote }}
+            rbac.ocp.io/group-pattern: "{{ $e.groupPrefix }}-*{{ $tier.suffix }}"
         subjects:
         - kind: Group
           name: "{{ $group }}"

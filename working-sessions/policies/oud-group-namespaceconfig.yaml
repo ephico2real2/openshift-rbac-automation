@@ -40,14 +40,13 @@ metadata:
   labels:
     app.kubernetes.io/name: namespace-configuration-operator
     app.kubernetes.io/component: rbac-automation
-    app.kubernetes.io/part-of: oud-group-poc
     rbac.ocp.io/scope: namespace-scoped
     rbac.ocp.io/kind: NamespaceConfig
-    rbac.ocp.io/policy-version: "0.1.0"
-    rbac.ocp.io/access-model: oud-group-direct
+    rbac.ocp.io/policy-family: custom
+    rbac.ocp.io/identity-source: ldap-groups
+    rbac.ocp.io/group-naming: namespace-label
   annotations:
     description: "PoC: bind the group named directly by company.net/oud-group"
-    rbac.ocp.io/purpose: "Label carries the full LDAP group name; no prefix is added by the template"
 spec:
   labelSelector:
     matchExpressions:
@@ -69,13 +68,10 @@ spec:
           namespace: "{{ .Name }}"
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            rbac.ocp.io/access-model: oud-group-direct
-            rbac.ocp.io/rbac-type: custom-role
-            rbac.ocp.io/source-namespaceconfig: oud-group-namespaceconfig-rbac
-            rbac.ocp.io/oud-group: "{{ index .Labels "company.net/oud-group" }}"
+            rbac.ocp.io/config-source: oud-group-rbac
+            rbac.ocp.io/role-type: submitter
+            rbac.ocp.io/scope: namespace-scoped
           annotations:
-            rbac.ocp.io/created-by: namespace-configuration-operator
-            rbac.ocp.io/source-namespace: "{{ .Name }}"
             rbac.ocp.io/source-namespaceconfig: oud-group-namespaceconfig-rbac
         rules:
           - apiGroups: [""]
@@ -112,15 +108,13 @@ spec:
           namespace: "{{ .Name }}"
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            rbac.ocp.io/access-model: oud-group-direct
-            rbac.ocp.io/access-level: submitter
-            rbac.ocp.io/source-namespaceconfig: oud-group-namespaceconfig-rbac
-            rbac.ocp.io/oud-group: "{{ index .Labels "company.net/oud-group" }}"
-          annotations:
-            rbac.ocp.io/created-by: namespace-configuration-operator
-            rbac.ocp.io/source-namespace: "{{ .Name }}"
-            rbac.ocp.io/source-namespaceconfig: oud-group-namespaceconfig-rbac
+            rbac.ocp.io/config-source: oud-group-rbac
+            rbac.ocp.io/role-type: submitter
+            rbac.ocp.io/bound-role: oud-group-submitter-role
+            rbac.ocp.io/scope: namespace-scoped
             rbac.ocp.io/group-name: "{{ index .Labels "company.net/oud-group" }}"
+          annotations:
+            rbac.ocp.io/source-namespaceconfig: oud-group-namespaceconfig-rbac
         subjects:
           - kind: Group
             name: "{{ index .Labels "company.net/oud-group" }}"

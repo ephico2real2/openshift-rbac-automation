@@ -136,7 +136,8 @@ oc get rolebindings -n payment-prod
 
 > In this example the developer group keeps `edit` in production and only `admin` is withheld.
 > **That split is a company policy decision, not a rule** — adjust the templates in
-> `policies/` to match your own. See [docs/architecture.md](docs/architecture.md).
+> `working-sessions/policies/` to match your own. See
+> [architecture.md](working-sessions/docs/architecture.md).
 
 ### 5. Verify System Access
 
@@ -236,6 +237,18 @@ oc get clusterrolebindings -l app.kubernetes.io/managed-by=namespace-configurati
 oc get clusterrolebindings -l rbac.ocp.io/role-type=cluster-admin
 oc get clusterrolebindings -l rbac.ocp.io/role-type=cluster-developer
 oc get clusterrolebindings -l rbac.ocp.io/role-type=cluster-audit
+
+# By the role ACTUALLY BOUND, which is the effective-permission question and spans both scopes.
+# role-type is the tier we promised; bound-role is the ClusterRole that tier resolves to — and the
+# words differ on purpose (cluster-audit binds view, cluster-developer binds edit).
+oc get rolebinding,clusterrolebinding -A -l rbac.ocp.io/bound-role=view
+oc get rolebinding,clusterrolebinding -A -l rbac.ocp.io/bound-role=admin
+
+# Everything granted to one group, across every policy
+oc get rolebinding,clusterrolebinding -A -l rbac.ocp.io/group-name=app-ocp-rbac-beta-ns-admin
+
+# Every cluster-wide grant — the blast-radius question
+oc get clusterrolebinding -l rbac.ocp.io/scope=cluster-wide
 ```
 
 **Show ClusterRoleBindings with Group Names:**
@@ -341,32 +354,40 @@ oc get rolebindings -n openshift-user-workload-monitoring -l app.kubernetes.io/m
 ## 📁 Repository Structure
 
 ```
-├── README.md                                # This file
-├── chart/                                   # Helm chart: installs the operator via OLM
-│   ├── values.yaml                          # Image override, InstallPlan approval, resources
-│   └── templates/                           # Namespace, OperatorGroup, Subscription, hook Jobs
-├── policies/                                # RBAC automation policies (oc apply -f policies/)
-│   ├── nonprod-namespaceconfig-rbac.yaml    # Non-prod: admin + developer + audit
-│   ├── prod-namespaceconfig-rbac.yaml       # Prod: developer + audit (no admin)
-│   ├── cluster-admin-groupconfig-rbac.yaml  # Cluster admin access
-│   ├── cluster-developer-groupconfig-rbac.yaml # Cluster developer access
-│   ├── cluster-audit-groupconfig-rbac.yaml  # Cluster audit access
-│   ├── database-admin-groupconfig-rbac.yaml # Database admin access
-│   ├── user-workload-monitoring-admin-groupconfig-rbac.yaml # Monitoring access
-│   └── kyverno-validation-only.yaml         # Optional: standards validation
-├── docs/
-│   ├── architecture.md                      # Policy behaviour, access matrix, security model
-│   ├── redhat-cop-rbac-deployment-guide.md  # Complete deployment guide
-│   ├── rbac-verification-guide.md           # Verification commands and expected output
-│   ├── scaling-system-namespace-access.md   # Adding access to new system namespaces
-│   ├── groups-and-bindings-examples.md      # Group and binding examples
-│   ├── known-issues.md                      # Operator bugs hit and how they were resolved
-│   ├── examples/
-│   │   ├── redhat-cop-custom-crd-access.yaml   # CRD access template
-│   │   └── ldap-groupsync.yaml                 # GroupSync CR (group-sync-operator)
-│   └── local-testing/                       # Image-override findings + Kyverno policy backups
-└── scripts/                                 # Operational helper scripts (see scripts/README.md)
+├── README.md                                     # This file
+├── chart/                                        # Helm chart — installs the operator AND the policies
+│   ├── Chart.yaml
+│   ├── values.yaml                               # Every policy flag; all ship DISABLED
+│   └── templates/
+│       ├── 00-namespace.yaml … 09-…-job.yaml     # Operator install: OLM, image override, InstallPlan
+│       ├── _helpers.tpl                          # Shared label block (nco.labels)
+│       └── rbac-policies/                        # ← THE POLICIES. Edit here, not above.
+│           ├── _README.txt                       # What each one grants, and the rules for editing
+│           ├── 10-baseline-namespaceconfig-rbac.yaml    # nonprod + prod, per namespace
+│           ├── 11-baseline-groupconfig-rbac.yaml        # cluster-wide tiers
+│           ├── 12-custom-oud-group-namespaceconfig-rbac.yaml  # bespoke submitter Role
+│           └── 13-custom-groupconfig-rbac.yaml          # ClusterRoles we define
+└── working-sessions/                             # Reference material and hand-applied manifests
+    ├── README.md                                 # Operator behaviour, and the GOTCHAs — read this
+    ├── policies/                                 # The readable reference manifests + Kyverno policies
+    ├── scripts/                                  # Operational helpers (see scripts/README.md)
+    └── docs/
+        ├── labels-and-annotations.md             # THE label/annotation contract
+        ├── templating-guide.md                   # How the templates work, $group, Helm functions
+        ├── architecture.md                       # Policy behaviour, access matrix, security model
+        ├── redhat-cop-rbac-deployment-guide.md
+        ├── rbac-verification-guide.md
+        ├── scaling-system-namespace-access.md
+        ├── groups-and-bindings-examples.md
+        ├── known-issues.md
+        ├── examples/                             # GroupSync CR, CRD-access example
+        ├── local-testing/                        # Image-override findings, Kyverno backups
+        └── planning/                             # Completed design notes
 ```
+
+**The policies ship as part of the chart, each behind its own flag and every flag off by default.** The
+manifests under `working-sessions/policies/` are the readable reference for what each policy does; the
+chart is what you deploy.
 
 ## 🎯 Key Features
 
@@ -420,14 +441,28 @@ oc label namespace <namespace-name> \
 
 ## 📚 Documentation
 
-- **[Operator install chart](chart/README.md)** - Helm chart that installs the operator via OLM
-- **[Architecture](docs/architecture.md)** - What each policy does, access matrix, security model
-- **[Deployment Guide](docs/redhat-cop-rbac-deployment-guide.md)** - Complete installation and testing instructions
-- **[Verification Guide](docs/rbac-verification-guide.md)** - Comprehensive verification commands and expected outputs
-- **[Scaling Guide](docs/scaling-system-namespace-access.md)** - How to add new system namespace access patterns
-- **[Groups and Bindings Examples](docs/groups-and-bindings-examples.md)** - Examples of groups, RoleBindings, and ClusterRoleBindings with commands
-- **[Known Issues](docs/known-issues.md)** - Operator bugs hit during rollout and how they were resolved
-- **[Local Testing](docs/local-testing/LOCAL_TEST_operator_image_override.md)** - Operator image override findings on CRC
+Start here if you are changing a policy:
+
+- **[Labels and annotations — the contract](working-sessions/docs/labels-and-annotations.md)** — every
+  label and annotation this project sets, what each answers, and a query cookbook. If a key is not in
+  there, we do not set it.
+- **[Templating guide](working-sessions/docs/templating-guide.md)** — how the templates compute their
+  values: the two template engines, the three ways `$group` is derived, every Helm function in use, and
+  the traps. Read before editing `chart/templates/rbac-policies/`.
+- **[chart/templates/rbac-policies/_README.txt](chart/templates/rbac-policies/_README.txt)** — what each
+  of the four policies grants, and the rules for adding one.
+
+Background and operations:
+
+- **[Operator behaviour and GOTCHAs](working-sessions/README.md)** — the measured behaviour of the
+  Namespace Configuration Operator, including that deleting a policy CR **revokes what it created**
+- **[Architecture](working-sessions/docs/architecture.md)** — what each policy does, access matrix, security model
+- **[Deployment Guide](working-sessions/docs/redhat-cop-rbac-deployment-guide.md)** — installation and testing
+- **[Verification Guide](working-sessions/docs/rbac-verification-guide.md)** — verification commands and expected output
+- **[Scaling Guide](working-sessions/docs/scaling-system-namespace-access.md)** — adding new system namespace access
+- **[Groups and Bindings Examples](working-sessions/docs/groups-and-bindings-examples.md)** — groups, RoleBindings, ClusterRoleBindings
+- **[Known Issues](working-sessions/docs/known-issues.md)** — operator bugs hit during rollout and how they were resolved
+- **[Local Testing](working-sessions/docs/local-testing/LOCAL_TEST_operator_image_override.md)** — operator image override findings on CRC
 
 ## ⚠️ Important: GroupConfig Selector Filtering
 

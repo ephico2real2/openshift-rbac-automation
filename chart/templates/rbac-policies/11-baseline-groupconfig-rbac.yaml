@@ -61,11 +61,10 @@
 #   rbac.ocp.io/bound-role       <clusterRole>
 #   rbac.ocp.io/scope            cluster-wide
 #
-# THAT DIVERGENCE IS THE REASON access-level IS GONE. Here its first component was the clusterRole
-# (`cluster-audit` -> `view-cluster-wide`); in 10-baseline- it was the tier word (`ns-audit` ->
-# `audit-non-prod-only`). One key, two meanings, so asking "who holds view?" through it returned 2 of the
-# 15 objects that actually bind view. bound-role now carries the role in EVERY family, and role-type the
-# tier, so neither question needs the other's key.
+# SO role-type AND bound-role ARE BOTH SET, and they differ here: tier `cluster-audit` binds `view`.
+# role-type answers "which tier", bound-role answers "which permission" — and bound-role means the same
+# thing on every policy in this chart, so `-l rbac.ocp.io/bound-role=view` finds every grant of view
+# regardless of scope or family.
 #
 # AND THE TIER NAMES DO NOT MATCH THE CLUSTERROLES: the tier called `cluster-admin` binds ClusterRole
 # `admin`, and `cluster-audit` binds `view`. So clusterRole is an explicit values field — it cannot be
@@ -96,9 +95,8 @@ metadata:
   name: {{ $c.name }}
   labels:
     {{- include "nco.labels" . | nindent 4 }}
-    # ONE value across all four policies. It used to be rbac-automation / cluster-rbac-automation /
-    # custom-rbac-automation, which made the key useless for finding the whole set — and the axes it
-    # was smuggling in (scope, family) each have their own key below.
+    # ONE value across all four policies, so a single query finds the whole set. The axes that might
+    # tempt you to vary it — scope, family — each have their own key below.
     app.kubernetes.io/component: rbac-automation
     rbac.ocp.io/scope: cluster-wide
     rbac.ocp.io/kind: GroupConfig
@@ -155,8 +153,9 @@ spec:
             rbac.ocp.io/group-name: "{{ $group }}"
           annotations:
             rbac.ocp.io/source-groupconfig: {{ $c.name }}
-            # A real wildcard here, unlike the baseline NamespaceConfig policy where the same key held a
-            # concrete name. This is the selector expression the operator matched, so it stays.
+            # A REAL WILDCARD — this is the expression the operator matched groups against. Only the
+            # GroupConfig policies set this; the namespace-keyed ones compute a concrete name instead and
+            # put it in the group-name label.
             rbac.ocp.io/group-pattern: "{{ $c.groupPrefix }}-*{{ $suffix }}"
         subjects:
         - kind: Group

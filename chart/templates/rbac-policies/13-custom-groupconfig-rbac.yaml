@@ -94,9 +94,9 @@ metadata:
     {{- include "nco.labels" . | nindent 4 }}
     app.kubernetes.io/component: rbac-automation
     rbac.ocp.io/kind: GroupConfig
-    # Was MISSING here while the other three policies all set it — so a reader asking "which policies
-    # grant cluster-wide?" got an incomplete answer. Entries may be namespace-scoped individually;
-    # this is the CR-level worst case, which is what the question is about.
+    # THE CR-LEVEL WORST CASE, which is what "which policies can grant cluster-wide?" is asking. An
+    # individual entry may be narrower — scope: namespace renders a RoleBinding — and each object carries
+    # its own rbac.ocp.io/scope reflecting what it actually is.
     rbac.ocp.io/scope: cluster-wide
     # Identities come from the directory: the group family is synced from LDAP by GroupSync, which is
     # also what sets the selector label below. Change who holds this access in the DIRECTORY.
@@ -167,11 +167,10 @@ spec:
             app.kubernetes.io/managed-by: namespace-configuration-operator
             rbac.ocp.io/config-source: {{ $c.configSource }}
             rbac.ocp.io/role-type: {{ $entry.name }}
-            # The role actually bound, on its own key. This replaces both custom-role (which held the
-            # same value) and access-level, whose value here was
-            # "{{ $entry.clusterRole }}-{{ $entry.scope }}-wide" — and for scope: namespace that renders
-            # "<role>-namespace-wide", which reads as cluster-wide-within-a-namespace and is simply
-            # wrong. scope below says where; this says what.
+            # THE ROLE ACTUALLY BOUND, on its own key and meaning the same thing on every policy in this
+            # chart — so `-l rbac.ocp.io/bound-role=<role>` finds every grant of it. `scope` below says
+            # WHERE it applies; this says WHAT it grants. Keep the two separate: a single key trying to
+            # carry both cannot be matched on either half.
             rbac.ocp.io/bound-role: {{ $entry.clusterRole }}
             {{- if eq $entry.scope "namespace" }}
             rbac.ocp.io/scope: namespace-scoped
@@ -181,7 +180,7 @@ spec:
             rbac.ocp.io/group-name: "{{ $group }}"
           annotations:
             rbac.ocp.io/source-groupconfig: {{ $c.name }}
-            # A real wildcard, as on the baseline GroupConfig.
+            # A REAL WILDCARD — the expression the operator matched groups against.
             rbac.ocp.io/group-pattern: "{{ $c.groupPrefix }}-*{{ $entry.suffix }}"
         subjects:
         - kind: Group

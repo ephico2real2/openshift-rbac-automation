@@ -24,17 +24,14 @@ spec:
           name: "{{ .Name }}-crb"
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            app.kubernetes.io/version: 0.1.0
-            rbac.ocp.io/policy-version: 0.1.0
-            rbac.ocp.io/role-type: cluster-developer
-            rbac.ocp.io/group-name: "{{ .Name }}"
-            rbac.ocp.io/access-level: edit-cluster-wide
             rbac.ocp.io/config-source: cluster-rbac
+            rbac.ocp.io/role-type: cluster-developer
+            rbac.ocp.io/bound-role: edit
+            rbac.ocp.io/scope: cluster-wide
+            rbac.ocp.io/group-name: "{{ .Name }}"
           annotations:
-            rbac.ocp.io/created-by: namespace-configuration-operator
             rbac.ocp.io/source-groupconfig: cluster-developer-groupconfig-rbac
             rbac.ocp.io/group-pattern: "app-ocp-rbac-*-cluster-developer"
-            rbac.ocp.io/scope-restriction: "cluster-wide"
         subjects:
         - kind: Group
           name: "{{ .Name }}"
