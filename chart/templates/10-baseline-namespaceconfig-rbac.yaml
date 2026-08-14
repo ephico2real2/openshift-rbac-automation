@@ -109,13 +109,13 @@ metadata:
     # printed a few lines below. A label should carry a fact the spec does not.
     rbac.ocp.io/access-model: ldap-groups
     # THE FAMILY, so the two halves are queryable as one thing:
-    #   oc get namespaceconfig -l rbac.ocp.io/policy-family=baseline
+    #   oc get namespaceconfig -l rbac.ocp.io/policy-family=built-in
     # A label rather than a rename. The CRs keep their environment names because on
     # `oc get namespaceconfig` the tier IS the identifying fact — and renaming a resource in a Helm
     # release deletes the old and creates the new, which for a NamespaceConfig means the controller's
     # finalizer revokes every RoleBinding it made before the replacement rebuilds them. Grouping is
     # not worth an access gap.
-    rbac.ocp.io/policy-family: baseline
+    rbac.ocp.io/policy-family: built-in
   annotations:
     description: {{ $p.description | quote }}
     # After the operator is installed and its CSV is running. A NamespaceConfig applied before the CRD

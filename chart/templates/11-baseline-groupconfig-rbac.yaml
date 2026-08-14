@@ -98,9 +98,15 @@ metadata:
     # who holds this access in the DIRECTORY — an edit to a ClusterRoleBinding is reverted by the next
     # reconcile, and adding a user to the OpenShift Group by hand is undone by the next sync.
     rbac.ocp.io/access-model: ldap-groups
-    # The family, matching 10-baseline-, so both halves of the baseline are queryable as one thing:
-    #   oc get groupconfig,namespaceconfig -l rbac.ocp.io/policy-family=baseline
-    rbac.ocp.io/policy-family: baseline
+    # THE FAMILY, and the value names WHAT IS BOUND rather than the policy's standing: these bind
+    # OpenShift's BUILT-IN aggregated ClusterRoles (admin / edit / view), where the `custom` family
+    # binds roles defined outside the platform. That is the distinction an auditor cares about — a
+    # built-in role's contents are Red Hat's and move with the release; a custom one is ours.
+    #   oc get groupconfig,namespaceconfig -l rbac.ocp.io/policy-family=built-in
+    #   oc get groupconfig,namespaceconfig -l rbac.ocp.io/policy-family=custom
+    # The FILENAMES still say `baseline`, which is the other true thing about them: built-in describes
+    # the roles, baseline describes the fact that every team gets these.
+    rbac.ocp.io/policy-family: built-in
   annotations:
     description: {{ $c.description | quote }}
     # After the operator is installed and its CSV is running. A GroupConfig applied before the CRD
