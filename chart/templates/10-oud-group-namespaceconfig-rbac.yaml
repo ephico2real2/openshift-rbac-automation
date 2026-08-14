@@ -54,13 +54,13 @@ metadata:
   labels:
     {{- include "nco.labels" . | nindent 4 }}
     app.kubernetes.io/component: rbac-automation
-    app.kubernetes.io/part-of: oud-group-poc
+    app.kubernetes.io/part-of: oud-group
     rbac.ocp.io/scope: namespace-scoped
     rbac.ocp.io/kind: NamespaceConfig
     rbac.ocp.io/policy-version: {{ $p.policyVersion | quote }}
     rbac.ocp.io/access-model: oud-group-direct
   annotations:
-    description: "PoC: bind the group named directly by {{ $p.labelKey }}"
+    description: "Namespace RBAC: bind the group named directly by {{ $p.labelKey }}"
     rbac.ocp.io/purpose: "Label carries the full LDAP group name; no prefix is added by the template"
     # After the operator is installed and its CSV is running. A NamespaceConfig applied before the CRD
     # exists fails the release; applied before the controller is up it simply sits there.

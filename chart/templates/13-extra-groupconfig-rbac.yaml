@@ -1,0 +1,147 @@
+{{- if .Values.extraGroupConfig.enabled }}
+{{- $e := .Values.extraGroupConfig }}
+{{- if not $e.syncProviderLabelKey }}
+{{- fail "extraGroupConfig.syncProviderLabelKey is empty. It is the ONLY thing narrowing this policy to synced groups, so empty would select every Group on the cluster. Set it, or disable extraGroupConfig." }}
+{{- end }}
+{{- if not $e.targetNamespace }}
+{{- fail "extraGroupConfig.targetNamespace is empty. Every RoleBinding here is created IN that namespace, and a RoleBinding with no namespace is not a valid object. Set it, or disable extraGroupConfig." }}
+{{- end }}
+{{- if not $e.tiers }}
+{{- fail "extraGroupConfig.tiers is empty, so this would render a GroupConfig that selects every synced group and grants nothing — a silent no-op with the flag switched on. Give it tiers, or disable extraGroupConfig." }}
+{{- end }}
+# =============================================================================
+# GroupConfig — EXTRA access: the user workload monitoring stack
+# =============================================================================
+# Converted from working-sessions/policies/user-workload-monitoring-admin-groupconfig-rbac.yaml,
+# which holds TWO GroupConfigs in one file (admin and developer, separated by ---) and STAYS in the
+# repo as the readable reference.
+#
+# ── WHAT "EXTRA" MEANS, AND WHAT IT DOES NOT ─────────────────────────────────
+# This is ADDITIONAL access on top of the baseline, granted by reusing roles the OpenShift monitoring
+# stack ALREADY SHIPS. It defines no Role and no ClusterRole of its own.
+#
+# `customGroupConfig` is RESERVED and deliberately unused: that name is for the future case where we
+# define our own ClusterRoles and bind those. The distinction is the point — extra = the platform's
+# roles, custom = ours. Do not repurpose either name for the other.
+#
+# ── WHICH ROLES THESE ARE, read from the operator that creates them ──────────
+# openshift/cluster-monitoring-operator, assets/cluster-monitoring-operator/. Read from the manifests
+# rather than the docs prose, because the KIND matters and the docs do not always say it:
+#
+#   user-workload-monitoring-config-edit   Role in openshift-user-workload-monitoring
+#                                          the user-workload-monitoring-config ConfigMap only:
+#                                          get,list,watch + patch,update
+#   monitoring-edit                        ClusterRole  servicemonitors, podmonitors,
+#                                                       prometheusrules  (all *)
+#   monitoring-rules-edit                  ClusterRole  prometheusrules (*)  — narrower than the above
+#   monitoring-rules-view                  ClusterRole  prometheusrules (get,list,watch)
+#   alert-routing-edit                     ClusterRole  alertmanagerconfigs (*)
+#
+# ── WHY roleKind IS AN EXPLICIT VALUES FIELD ─────────────────────────────────
+# Because the mix is genuine — one Role, the rest ClusterRoles — and getting it wrong FAILS SILENTLY.
+# RBAC permits a RoleBinding whose roleRef names something that does not exist: the binding is created,
+# reports healthy, and grants nothing.
+#
+# That is not hypothetical. The source policy binds alert-routing-edit with `kind: Role`, and it is a
+# ClusterRole — measured on this cluster, 7 live RoleBindings reference Role/alert-routing-edit while
+# no such Role exists in the namespace. This template fixes that, and the guard below refuses any
+# roleKind that is not exactly Role or ClusterRole so it cannot come back as a typo.
+#
+# ── THE TWO-ENGINE PROBLEM, same as 12-baseline-groupconfig- ─────────────────
+# Helm evaluates this file at install time; the OPERATOR evaluates each objectTemplate later, once per
+# selected group, where .Name is the GROUP name. The guard below is a whole `if` action that must reach
+# the cluster UNEVALUATED — Helm would otherwise evaluate it with .Name undefined and silently render
+# the binding away, with no error. So the guard, its end, and the group reference are BUILT AS STRINGS
+# and substituted; Helm renders a string and does not recurse into what it produced.
+#
+# A # COMMENT IS NOT A HELM COMMENT. It is a YAML comment, and Helm processes this file as text before
+# YAML sees it, so an action inside one of these comments IS EVALUATED. Hence prose, not quotes.
+# And never `| quote` on the built strings: it escapes the inner double quotes, and the operator
+# renders each objectTemplate as a Go template FIRST and parses YAML SECOND, so a backslash-quote is a
+# backslash inside an action there and the parse fails. printf takes the quotes as ARGUMENTS.
+#
+# ── NO excludedPaths, AND THE OPERATOR ADDS ITS OWN ──────────────────────────
+# Measured on this cluster's NamespaceConfigs: the operator writes [.metadata, .status,
+# .spec.replicas] into the spec on reconcile even when nothing sends them. Not mirrored, because
+# .spec.replicas is meaningless for a RoleBinding. It does mean GOTCHA 9 applies — because .metadata
+# is excluded, editing labels or annotations below changes NOTHING on bindings that already exist:
+#   oc delete rolebinding -n <targetNamespace> -l rbac.ocp.io/source-groupconfig=<name>
+{{- $group := "{{ .Name }}" }}
+{{- $endif := "{{- end }}" }}
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: GroupConfig
+metadata:
+  name: {{ $e.name }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: user-workload-monitoring
+    # NAMESPACE-SCOPED even though the trigger is a GROUP: every object below is a RoleBinding in one
+    # namespace. That is what makes this policy neither the baseline namespace family nor the cluster
+    # one — group-triggered, namespace-scoped in effect.
+    rbac.ocp.io/scope: namespace-scoped
+    rbac.ocp.io/kind: GroupConfig
+    rbac.ocp.io/policy-version: {{ $e.policyVersion | quote }}
+    # Identities come from the directory: the group family is synced from LDAP by GroupSync, which is
+    # also what sets the selector label below. Change who holds this access in the DIRECTORY.
+    rbac.ocp.io/access-model: ldap-groups
+    # EXTRA, not baseline — so the two are one query apart:
+    #   oc get groupconfig -l rbac.ocp.io/policy-family=extra
+    rbac.ocp.io/policy-family: extra
+  annotations:
+    description: {{ $e.description | quote }}
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  labelSelector:
+    matchExpressions:
+      # SYNCED GROUPS ONLY. GroupSync sets this on every Group it manages, so locally-created Groups
+      # cannot collect monitoring access from a directory-driven policy.
+      - key: {{ $e.syncProviderLabelKey }}
+        operator: Exists
+  templates:
+    {{- range $t := $e.tiers }}
+    {{- if not $t.bindings }}
+    {{- fail (printf "extraGroupConfig tier %q has no bindings, so it would match groups and grant them nothing. Give it bindings, or remove the tier." $t.suffix) }}
+    {{- end }}
+    {{- $guard := printf "{{- if hasSuffix %s%s%s .Name }}" "\"" $t.suffix "\"" }}
+    {{- range $b := $t.bindings }}
+    {{- if not $b.role }}
+    {{- fail (printf "extraGroupConfig tier %q binding %q has no role, so its roleRef would name nothing — created, healthy, granting zero. Set it." $t.suffix $b.name) }}
+    {{- end }}
+    {{- if not (has $b.roleKind (list "Role" "ClusterRole")) }}
+    {{- fail (printf "extraGroupConfig tier %q binding %q has roleKind %q. It must be exactly \"Role\" or \"ClusterRole\" — those are the only kinds a roleRef accepts, they are case-sensitive, and a wrong one produces a binding that is created successfully and grants NOTHING. That is the defect this guard exists to prevent: the source policy bound the alert-routing-edit ClusterRole as a Role, and 7 live bindings on the reference cluster grant nothing as a result." $t.suffix $b.name (toString $b.roleKind)) }}
+    {{- end }}
+    # ---------------------------------------------------------------------
+    # {{ $t.suffix }} -> {{ $b.roleKind }}/{{ $b.role }}
+    # ---------------------------------------------------------------------
+    - objectTemplate: |
+        {{ $guard }}
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: "{{ $group }}-{{ $b.name }}"
+          namespace: {{ $e.targetNamespace }}
+          labels:
+            app.kubernetes.io/managed-by: namespace-configuration-operator
+            app.kubernetes.io/version: {{ $e.policyVersion }}
+            rbac.ocp.io/policy-version: {{ $e.policyVersion }}
+            rbac.ocp.io/role-type: {{ $e.targetNamespace }}
+            rbac.ocp.io/target-namespace: {{ $e.targetNamespace }}
+            rbac.ocp.io/group-name: "{{ $group }}"
+            rbac.ocp.io/access-level: {{ $b.name }}
+            rbac.ocp.io/config-source: {{ $e.configSource }}
+          annotations:
+            rbac.ocp.io/created-by: namespace-configuration-operator
+            rbac.ocp.io/source-groupconfig: {{ $e.name }}
+            rbac.ocp.io/scope-restriction: {{ $e.targetNamespace | quote }}
+        subjects:
+        - kind: Group
+          name: "{{ $group }}"
+          apiGroup: rbac.authorization.k8s.io
+        roleRef:
+          kind: {{ $b.roleKind }}
+          name: {{ $b.role }}
+          apiGroup: rbac.authorization.k8s.io
+        {{ $endif }}
+    {{- end }}
+    {{- end }}
+{{- end }}
