@@ -17,7 +17,7 @@ Everything below was executed and the output is real, not illustrative.
 | `verify-kyverno-label-tests.sh` | Asserts Kyverno's verdicts match the declared expectations; exits non-zero on drift |
 | `oud-group-namespaceconfig.yaml` | PoC: label names the group directly, no prefix added by the template |
 | `oud-group-namespace.yaml` | PoC namespaces for the oud-group design |
-| `../../group-sync-chart/setup-local-ldap-testing/ldap-rbac-groups-spar-trno.ldif` | LDAP seed for the `spar` / `trno` mnemonics |
+| `../../group-sync-operator-helm-chart/setup-local-ldap-testing/ldap-rbac-groups-spar-trno.ldif` | LDAP seed for the `spar` / `trno` mnemonics |
 
 ## The headline result
 

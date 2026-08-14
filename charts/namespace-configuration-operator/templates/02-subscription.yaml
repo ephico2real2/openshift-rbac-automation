@@ -35,7 +35,7 @@ spec:
       # See docs/local-testing/LOCAL_TEST_operator_image_override.md §4a.
       #
       # Use operatorImage.enabled instead — it patches the image into the installed CSV,
-      # which is the mechanism that actually works (chart/README.md).
+      # which is the mechanism that actually works (charts/namespace-configuration-operator/README.md).
       #
       # Left commented rather than deleted so this is not re-attempted. Note the block below
       # is plain text: a "#" does NOT disable a Helm action, because templating runs before

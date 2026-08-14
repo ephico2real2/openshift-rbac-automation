@@ -1,0 +1,81 @@
+name: CI
+
+# Deliberately small. This repo had NO checks at all until now, and a breaking chart change
+# merged unvalidated — so the bar here is "the chart lints and every policy actually renders",
+# not comprehensive coverage. Add jobs when a real failure justifies one.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  # So helm.yaml can gate publishing on exactly these checks rather than duplicating them.
+  workflow_call:
+
+env:
+  CHART: charts/namespace-configuration-operator
+
+jobs:
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+
+      - name: helm lint
+        run: helm lint "$CHART"
+
+      # The default install is the operator alone: every policy flag ships false, so a render with
+      # no flags must produce ZERO policy CRs. If this ever fails, a policy has become on-by-default
+      # and someone gets access they were not granted.
+      - name: Policies are off by default
+        run: |
+          n=$(helm template release "$CHART" \
+                | grep -cE '^kind: (NamespaceConfig|GroupConfig)' || true)
+          echo "policy CRs with no flags: $n"
+          [ "$n" -eq 0 ] || { echo "::error::expected 0 policy CRs by default, got $n"; exit 1; }
+
+      # And with everything switched on, all five must render. This is the check that would have
+      # caught a template silently rendering away — the failure mode that matters here, because
+      # Helm evaluating an operator-bound expression produces NO error, just a missing object.
+      - name: All five policies render when enabled
+        run: |
+          n=$(helm template release "$CHART" \
+                --set namespaceConfigPolicy.enabled=true \
+                --set namespaceConfigPolicy.baseline.enabled=true \
+                --set namespaceConfigPolicy.oudGroup.enabled=true \
+                --set clusterRbac.enabled=true \
+                --set customGroupConfig.enabled=true \
+              | grep -cE '^kind: (NamespaceConfig|GroupConfig)' || true)
+          echo "policy CRs with all flags: $n"
+          [ "$n" -eq 5 ] || { echo "::error::expected 5 policy CRs, got $n"; exit 1; }
+
+      # The operator's own template expressions must reach the cluster UNEVALUATED. If Helm ever
+      # evaluates one, the guard disappears from the objectTemplate and the binding is created for
+      # every group instead of the intended suffix — silently. Assert the literal survives.
+      - name: Operator expressions survive Helm unevaluated
+        run: |
+          out=$(helm template release "$CHART" \
+                  --set clusterRbac.enabled=true \
+                  --set namespaceConfigPolicy.enabled=true \
+                  --set namespaceConfigPolicy.oudGroup.enabled=true)
+          echo "$out" | grep -q 'if hasSuffix "-cluster-admin" .Name' \
+            || { echo "::error::the hasSuffix guard did not survive Helm"; exit 1; }
+          echo "$out" | grep -q 'index .Labels "company.net/oud-group"' \
+            || { echo "::error::the index .Labels expression did not survive Helm"; exit 1; }
+          echo "operator expressions intact"
+
+      # Chart.yaml's version must move when the chart does, or chart-releaser silently publishes
+      # nothing (skip_existing) and the repo's index quietly stops matching the source.
+      - name: Chart version bumped
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch -q origin "${{ github.base_ref }}"
+          if git diff --quiet "origin/${{ github.base_ref }}" -- "$CHART"; then
+            echo "chart unchanged — no bump needed"; exit 0
+          fi
+          old=$(git show "origin/${{ github.base_ref }}:$CHART/Chart.yaml" 2>/dev/null \
+                  | awk '/^version:/{print $2}')
+          new=$(awk '/^version:/{print $2}' "$CHART/Chart.yaml")
+          echo "chart changed: $old -> $new"
+          [ "$old" != "$new" ] \
+            || { echo "::error::$CHART changed but version is still $new"; exit 1; }

@@ -1,0 +1,60 @@
+name: Release Charts
+
+# Publishes the chart to the gh-pages branch as a Helm repository, the same way
+# group-sync-operator-helm-chart and group-sync-dashboard do — same action, same two options.
+on:
+  push:
+    branches:
+      - main
+    # Only when the chart itself changes. A docs edit does not warrant a release run.
+    #
+    # chart-releaser skips a version it has already published (skip_existing), so this is about not
+    # running at all rather than about correctness — it keeps the Actions history readable and means
+    # a green run genuinely corresponds to a chart change.
+    #
+    # Anything NOT matched here is still validated: ci.yaml has its own push-to-main trigger with no
+    # path filter.
+    paths:
+      - 'charts/**'
+
+  # So a release can be forced without an empty commit — e.g. after bumping only Chart.yaml's
+  # version, or to retry a run that failed on something transient.
+  workflow_dispatch:
+
+jobs:
+  # The same checks that run on every PR, called rather than duplicated. Without this, a direct push
+  # to main — or a merge landing while branch protection is off, which is this repo's current state —
+  # would publish an unvalidated chart.
+  validate:
+    uses: ./.github/workflows/ci.yaml
+
+  release:
+    needs: validate
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # chart-releaser needs full history to work out which versions already exist.
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      # charts_dir defaults to `charts`, and the action packages each SUBDIRECTORY of it — which is
+      # why the chart had to move from chart/ to charts/namespace-configuration-operator/. Left at
+      # the repo root it would find nothing to package and publish nothing, with a green run.
+      - name: Run chart-releaser
+        uses: helm/chart-releaser-action@v1.6.0
+        with:
+          skip_existing: true
+          packages_with_index: true
+        env:
+          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"

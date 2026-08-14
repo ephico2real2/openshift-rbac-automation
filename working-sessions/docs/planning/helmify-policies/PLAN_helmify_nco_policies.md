@@ -1,13 +1,13 @@
 # Planning: Helmify the NCO CR policies (capturing the `bda` use case)
 
 **Status: COMPLETE AND SUPERSEDED.** Implemented — the policies ship in the chart as
-`chart/templates/rbac-policies/10-` … `13-`, and the labels they set were realigned in chart 0.8.0.
+`charts/namespace-configuration-operator/templates/rbac-policies/10-` … `13-`, and the labels they set were realigned in chart 0.8.0.
 This document is kept as the decision record for *why* the design is what it is; it is **not** a
 description of the current state. For that, read:
 
 - `working-sessions/docs/labels-and-annotations.md` — the label/annotation contract
 - `working-sessions/docs/templating-guide.md` — how the templates work
-- `chart/templates/rbac-policies/_README.txt` — what each policy grants
+- `charts/namespace-configuration-operator/templates/rbac-policies/_README.txt` — what each policy grants
 
 The `exported/` directory this document referenced held a point-in-time dump of the live CRs as they
 were **before** helmification. It has been removed: those CRs no longer exist in that form, and the
@@ -16,7 +16,7 @@ remain in git history if the original state is ever needed.
 **Branch:** `plan/helmify-policies-bda`
 **Scope:** Whether/how to package the Namespace Configuration Operator (NCO) custom
 resources (`GroupConfig` / `NamespaceConfig`) as a Helm chart, and how to extend them to
-cover the `bda-rbac-*` group family. Operator *install* is a separate chart (`chart/`);
+cover the `bda-rbac-*` group family. Operator *install* is a separate chart (`charts/namespace-configuration-operator/`);
 this is about the *policies*.
 
 ---
