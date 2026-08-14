@@ -168,10 +168,15 @@ oc get clusterrolebindings -l app.kubernetes.io/managed-by=namespace-configurati
 # List all managed RoleBindings
 oc get rolebindings -A -l app.kubernetes.io/managed-by=namespace-configuration-operator
 
-# Check environment-specific access levels
-oc get rolebindings -A -l rbac.ocp.io/access-level=admin-non-prod-only
-oc get rolebindings -A -l rbac.ocp.io/access-level=developer-non-prod-only
-oc get rolebindings -A -l rbac.ocp.io/access-level=audit-all-environments
+# Check environment-specific access. Two axes, two labels: config-source says WHICH POLICY granted it
+# (and nonprod-rbac already implies the environments), role-type says WHICH TIER.
+oc get rolebindings -A -l rbac.ocp.io/config-source=nonprod-rbac,rbac.ocp.io/role-type=ns-admin
+oc get rolebindings -A -l rbac.ocp.io/config-source=nonprod-rbac,rbac.ocp.io/role-type=ns-developer
+oc get rolebindings -A -l rbac.ocp.io/config-source=nonprod-rbac,rbac.ocp.io/role-type=ns-audit
+
+# Or by the role ACTUALLY BOUND, which spans tiers and scopes — see
+# working-sessions/docs/labels-and-annotations.md §5 for the full cookbook.
+oc get rolebinding,clusterrolebinding -A -l rbac.ocp.io/bound-role=view
 
 # Verify no admin/edit in production
 oc get rolebindings -A -l rbac.ocp.io/environment=prod,rbac.ocp.io/role-type=ns-admin

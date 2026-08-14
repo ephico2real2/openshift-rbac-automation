@@ -26,17 +26,13 @@ spec:
           namespace: openshift-user-workload-monitoring
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            app.kubernetes.io/version: 0.1.0
-            rbac.ocp.io/policy-version: 0.1.0
-            rbac.ocp.io/role-type: openshift-user-workload-monitoring
-            rbac.ocp.io/target-namespace: openshift-user-workload-monitoring
-            rbac.ocp.io/group-name: "{{ .Name }}"
-            rbac.ocp.io/access-level: monitoring-config-edit
             rbac.ocp.io/config-source: user-workload-monitoring
+            rbac.ocp.io/role-type: openshift-user-workload-monitoring
+            rbac.ocp.io/bound-role: user-workload-monitoring-config-edit
+            rbac.ocp.io/scope: namespace-scoped
+            rbac.ocp.io/group-name: "{{ .Name }}"
           annotations:
-            rbac.ocp.io/created-by: namespace-configuration-operator
             rbac.ocp.io/source-groupconfig: user-workload-monitoring-admin-groupconfig-rbac
-            rbac.ocp.io/scope-restriction: "openshift-user-workload-monitoring"
         subjects:
         - kind: Group
           name: "{{ .Name }}"
@@ -57,17 +53,13 @@ spec:
           namespace: openshift-user-workload-monitoring
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            app.kubernetes.io/version: 0.1.0
-            rbac.ocp.io/policy-version: 0.1.0
-            rbac.ocp.io/role-type: openshift-user-workload-monitoring
-            rbac.ocp.io/target-namespace: openshift-user-workload-monitoring
-            rbac.ocp.io/group-name: "{{ .Name }}"
-            rbac.ocp.io/access-level: prometheus-rules-admin
             rbac.ocp.io/config-source: user-workload-monitoring
+            rbac.ocp.io/role-type: openshift-user-workload-monitoring
+            rbac.ocp.io/bound-role: monitoring-rules-edit
+            rbac.ocp.io/scope: namespace-scoped
+            rbac.ocp.io/group-name: "{{ .Name }}"
           annotations:
-            rbac.ocp.io/created-by: namespace-configuration-operator
             rbac.ocp.io/source-groupconfig: user-workload-monitoring-admin-groupconfig-rbac
-            rbac.ocp.io/scope-restriction: "openshift-user-workload-monitoring"
         subjects:
         - kind: Group
           name: "{{ .Name }}"
@@ -88,17 +80,13 @@ spec:
           namespace: openshift-user-workload-monitoring
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            app.kubernetes.io/version: 0.1.0
-            rbac.ocp.io/policy-version: 0.1.0
-            rbac.ocp.io/role-type: openshift-user-workload-monitoring
-            rbac.ocp.io/target-namespace: openshift-user-workload-monitoring
-            rbac.ocp.io/group-name: "{{ .Name }}"
-            rbac.ocp.io/access-level: alert-routing-admin
             rbac.ocp.io/config-source: user-workload-monitoring
+            rbac.ocp.io/role-type: openshift-user-workload-monitoring
+            rbac.ocp.io/bound-role: alert-routing-edit
+            rbac.ocp.io/scope: namespace-scoped
+            rbac.ocp.io/group-name: "{{ .Name }}"
           annotations:
-            rbac.ocp.io/created-by: namespace-configuration-operator
             rbac.ocp.io/source-groupconfig: user-workload-monitoring-admin-groupconfig-rbac
-            rbac.ocp.io/scope-restriction: "openshift-user-workload-monitoring"
         subjects:
         - kind: Group
           name: "{{ .Name }}"
@@ -138,17 +126,13 @@ spec:
           namespace: openshift-user-workload-monitoring
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            app.kubernetes.io/version: 0.1.0
-            rbac.ocp.io/policy-version: 0.1.0
-            rbac.ocp.io/role-type: openshift-user-workload-monitoring
-            rbac.ocp.io/target-namespace: openshift-user-workload-monitoring
-            rbac.ocp.io/group-name: "{{ .Name }}"
-            rbac.ocp.io/access-level: monitoring-config-edit
             rbac.ocp.io/config-source: user-workload-monitoring
+            rbac.ocp.io/role-type: openshift-user-workload-monitoring
+            rbac.ocp.io/bound-role: user-workload-monitoring-config-edit
+            rbac.ocp.io/scope: namespace-scoped
+            rbac.ocp.io/group-name: "{{ .Name }}"
           annotations:
-            rbac.ocp.io/created-by: namespace-configuration-operator
             rbac.ocp.io/source-groupconfig: user-workload-monitoring-developer-groupconfig-rbac
-            rbac.ocp.io/scope-restriction: "openshift-user-workload-monitoring"
         subjects:
         - kind: Group
           name: "{{ .Name }}"

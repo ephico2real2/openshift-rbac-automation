@@ -7,7 +7,67 @@ description: >-
   namespaceConfigPolicy, one policy per flag and every one off by default; the raw
   manifests under ../policies stay the readable reference for those.
 type: application
-version: 0.2.0
+# 0.4.0, MINOR: a new template and a new TOP-LEVEL values stanza. `clusterRbac` renders one
+# GroupConfig carrying the three cluster-wide tiers (admin/view/edit ClusterRoles bound to the
+# -cluster-* groups). Its own key rather than a child of namespaceConfigPolicy, because it is a
+# different CRD emitting ClusterRoleBindings — see values.yaml. Ships disabled, so nothing changes for
+# an existing release.
+#
+# 0.3.0, MINOR: a new template and a new values stanza. `namespaceConfigPolicy.baseline` renders the
+# nonprod and prod NamespaceConfigs — the standard access tiers every team receives. Nothing changes
+# for an existing release: like every policy here, both ship disabled.
+# 0.6.0, MINOR: WITHDRAWS the `extraGroupConfig` stanza and its template, which 0.5.0 added. The user
+# workload monitoring access it granted is not needed, so the chart no longer carries it. Setting
+# `extraGroupConfig.*` now has no effect — it renders nothing rather than failing, which is the quiet
+# direction, hence this note. The template and the values stanza it needs are parked together at
+# working-sessions/policies/extra-groupconfig-rbac.helm-template.yaml with the reasoning intact.
+#
+# MINOR rather than MAJOR: no release of this chart ever shipped the stanza enabled, and the flag
+# defaulted off, so no deployment loses access by upgrading. A cluster that DID enable it loses those
+# RoleBindings on upgrade — the operator revokes what its CR created — which is the behaviour to know
+# about and the reason this is not a patch.
+#
+# 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
+# gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
+# binding that reports healthy and grants nothing. See the parked file.
+# 0.8.0, MINOR but BREAKING FOR ANY QUERY THAT SELECTS ON THE OLD LABELS. Aligns labels and annotations
+# across all four policies so one key carries one fact and the same key means the same thing everywhere.
+# Full contract and evidence: working-sessions/docs/labels-and-annotations.md §5.
+#
+# MINOR rather than MAJOR because this chart is pre-1.0, where a MINOR bump is the conventional place for
+# a breaking change. Calling it a patch would be dishonest; calling it 1.0.0 would claim a stability
+# guarantee the chart is not ready to make.
+#
+# REMOVED from generated objects: access-level, custom-role, rbac-type, policy-version, access-model,
+# oud-group, and the annotations created-by, source-namespace, environment-restriction,
+# scope-restriction. Each was measured to be either a duplicate of another key on the same object or
+# actively misleading — access-level named the bound ClusterRole in two families and the tier word in the
+# other two, so "who holds view?" answered through it returned 2 of the 15 objects that bind view.
+#
+# ADDED to generated objects: rbac.ocp.io/bound-role (the role actually bound — makes that query return
+# all 15), rbac.ocp.io/scope, and rbac.ocp.io/config-source + role-type + group-name on the policies that
+# lacked them. Six keys are now on every object; the only remaining variation is structural.
+#
+# CR-LEVEL: access-model becomes identity-source + group-naming (it was comparing two different axes),
+# app.kubernetes.io/component collapses from three values to one, custom-gc gains the scope label it was
+# missing, and policy-version and part-of are gone.
+#
+# VALUES REMOVED: policyVersion (all four stanzas), accessLevelSuffix (nonprod and prod),
+# oudGroup.accessLevel -> oudGroup.roleType. oudGroup.configSource is NEW and required. An old values
+# file still renders — Helm ignores keys the templates no longer read — so the failure mode is a silently
+# missing label, not an error. Check anything that greps these labels before upgrading.
+#
+# UPGRADING DOES NOT RELABEL EXISTING OBJECTS. The operator injects excludedPaths [.metadata, ...], so an
+# objectTemplate metadata change reaches nothing that already exists (GOTCHA 9). Delete the CRs and let
+# the operator rebuild — measured at 51 objects revoked in 4s and restored within 50s, which is a real
+# revocation window on a shared cluster.
+#
+# 0.7.0, MINOR: a new template and a new top-level `customGroupConfig` stanza — binding ClusterRoles the
+# platform does NOT ship, to any group-name suffix chosen in values. The counterpart to clusterRbac,
+# which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
+# privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
+# database-admin as an inert worked example.
+version: 0.8.0
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:

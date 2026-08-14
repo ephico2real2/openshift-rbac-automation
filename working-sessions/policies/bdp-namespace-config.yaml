@@ -14,14 +14,13 @@ metadata:
   labels:
     app.kubernetes.io/name: namespace-configuration-operator
     app.kubernetes.io/component: rbac-automation
-    app.kubernetes.io/part-of: bdp-spark-platform
     rbac.ocp.io/scope: namespace-scoped
     rbac.ocp.io/kind: NamespaceConfig
-    rbac.ocp.io/policy-version: "1.0.0"
-    rbac.ocp.io/access-model: spark-job-submitter
+    rbac.ocp.io/policy-family: custom
+    rbac.ocp.io/identity-source: ldap-groups
+    rbac.ocp.io/group-naming: pattern
   annotations:
     description: "Automated Spark Job Submitter RBAC for Spark team namespaces"
-    rbac.ocp.io/purpose: "Creates Spark Job Submitter roles and rolebindings based on namespace metadata"
 spec:
   labelSelector:
     matchExpressions:
@@ -49,22 +48,14 @@ spec:
           namespace: "{{ .Name }}"
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            app.kubernetes.io/component: spark-rbac
-            app.kubernetes.io/version: "1.0.0"
-            rbac.ocp.io/policy-version: "1.0.0"
-            rbac.ocp.io/access-model: spark-job-submitter
-            rbac.ocp.io/rbac-type: custom-role
-            rbac.ocp.io/source-namespaceconfig: spark-job-submitter-namespaceconfig-rbac
+            rbac.ocp.io/config-source: bdp-spark-rbac
+            rbac.ocp.io/role-type: submitter
+            rbac.ocp.io/scope: namespace-scoped
             rbac.ocp.io/mnemonic: "{{ index .Labels "company.net/mnemonic" }}"
             rbac.ocp.io/environment: "{{ index .Labels "company.net/app-environment" }}"
             rbac.ocp.io/bdp-spark-team: "{{ index .Labels "company.net/bdp-spark-team" }}"
-            rbac.ocp.io/group-name: "app-ocp-rbac-bdp-spark-{{ index .Labels "company.net/bdp-spark-team" }}"
           annotations:
-            rbac.ocp.io/created-by: namespace-configuration-operator
-            rbac.ocp.io/source-namespace: "{{ .Name }}"
             rbac.ocp.io/source-namespaceconfig: spark-job-submitter-namespaceconfig-rbac
-            rbac.ocp.io/group-name: "app-ocp-rbac-bdp-spark-{{ index .Labels "company.net/bdp-spark-team" }}"
-            rbac.ocp.io/purpose: "Allows Spark workload submission and management within namespace scope"
         rules:
           - apiGroups: [""]
             resources:
@@ -105,23 +96,16 @@ spec:
           namespace: "{{ .Name }}"
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            app.kubernetes.io/component: spark-rbac
-            app.kubernetes.io/version: "1.0.0"
-            rbac.ocp.io/policy-version: "1.0.0"
-            rbac.ocp.io/access-model: spark-job-submitter
-            rbac.ocp.io/access-level: submitter
-            rbac.ocp.io/role-type: custom-role
-            rbac.ocp.io/source-namespaceconfig: spark-job-submitter-namespaceconfig-rbac
+            rbac.ocp.io/config-source: bdp-spark-rbac
+            rbac.ocp.io/role-type: submitter
+            rbac.ocp.io/bound-role: spark-job-submitter-role
+            rbac.ocp.io/scope: namespace-scoped
+            rbac.ocp.io/group-name: "app-ocp-rbac-bdp-spark-{{ index .Labels "company.net/bdp-spark-team" }}"
             rbac.ocp.io/mnemonic: "{{ index .Labels "company.net/mnemonic" }}"
             rbac.ocp.io/environment: "{{ index .Labels "company.net/app-environment" }}"
             rbac.ocp.io/bdp-spark-team: "{{ index .Labels "company.net/bdp-spark-team" }}"
-            rbac.ocp.io/group-name: "app-ocp-rbac-bdp-spark-{{ index .Labels "company.net/bdp-spark-team" }}"
           annotations:
-            rbac.ocp.io/created-by: namespace-configuration-operator
-            rbac.ocp.io/source-namespace: "{{ .Name }}"
             rbac.ocp.io/source-namespaceconfig: spark-job-submitter-namespaceconfig-rbac
-            rbac.ocp.io/group-name: "app-ocp-rbac-bdp-spark-{{ index .Labels "company.net/bdp-spark-team" }}"
-            rbac.ocp.io/purpose: "Namespace-scoped Spark Job Submitter access"
         subjects:
           - kind: Group
             name: "app-ocp-rbac-bdp-spark-{{ index .Labels "company.net/bdp-spark-team" }}"

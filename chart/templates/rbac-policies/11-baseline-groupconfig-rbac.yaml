@@ -1,0 +1,170 @@
+{{- if .Values.clusterRbac.enabled }}
+{{- $c := .Values.clusterRbac }}
+{{- if not $c.syncProviderLabelKey }}
+{{- fail "clusterRbac.syncProviderLabelKey is empty. It is the ONLY thing narrowing this policy to synced groups, so empty would select every Group on the cluster — including local ones nobody intended to grant cluster-wide access to. Set it, or disable clusterRbac." }}
+{{- end }}
+{{- if not $c.groupPrefix }}
+{{- fail "clusterRbac.groupPrefix is empty. It documents which group family this policy is for, on the rbac.ocp.io/group-pattern annotation. Set it, or disable clusterRbac." }}
+{{- end }}
+{{- if not $c.roles }}
+{{- fail "clusterRbac.roles is empty, so this would render a GroupConfig that selects every synced group and grants nothing — a silent no-op with the flag switched on. Give it roles, or disable clusterRbac." }}
+{{- end }}
+# =============================================================================
+# GroupConfig — the BASELINE cluster-wide RBAC
+# =============================================================================
+# Converted from working-sessions/policies/cluster-{admin,audit,developer}-groupconfig-rbac.yaml,
+# which STAY in the repo as the readable reference. This file is the deployable form.
+#
+# ── A DIFFERENT CRD AND A DIFFERENT SCOPE FROM 10-baseline- ───────────────────
+# That file is NamespaceConfig, keyed on a NAMESPACE, emitting RoleBindings. This is GroupConfig,
+# keyed on a GROUP, emitting ClusterRoleBindings. Inside an objectTemplate here `.Name` is the GROUP
+# name, not a namespace. Do not carry assumptions between the two.
+#
+# ── THREE SOURCE FILES, ONE CR ────────────────────────────────────────────────
+# The three sources share an IDENTICAL labelSelector and differ only in the suffix each guards on,
+# the ClusterRole it binds, and the labels derived from those. spec.templates is an ARRAY, so one CR
+# carries all three and the per-template guard does the narrowing — the same construction
+# 10-baseline- uses for its per-role templates, which is why the filenames are parallel.
+#
+# A TEMPLATE THAT DOES NOT MATCH RENDERS EMPTY, and the operator is fine with that. Measured before
+# this file existed: 63 synced groups against the three original CRs is 189 template evaluations
+# producing 12 ClusterRoleBindings, so 177 already rendered empty with no ill effect. Consolidating
+# changed the count, not the mechanism.
+#
+# ── THE HARD PART: AN OPERATOR-EVALUATED CONDITIONAL ─────────────────────────
+# There are TWO template engines here and they share delimiters. Helm evaluates this file at install
+# time; the OPERATOR evaluates each objectTemplate later, once per selected group.
+#
+# The guard below is not a value substitution — it is a whole `if` action that must reach the cluster
+# UNEVALUATED. Helm would happily evaluate it: `hasSuffix` is a sprig function Helm has, and `.Name`
+# at chart top level is undefined, so Helm would test a nil argument and silently render the binding
+# away. Nothing would error. So the guard, its `end`, and the group reference are all BUILT AS
+# STRINGS below and substituted in; Helm renders a string and does not recurse into what it produced.
+#
+# NOTE THAT A # COMMENT IS NOT A HELM COMMENT. It is a YAML comment, and Helm processes this file as
+# text before YAML sees it — so an action written inside one of these comments IS EVALUATED. That is
+# why these paragraphs describe the operator's expressions in words rather than quoting them; the
+# literal syntax lives in the source policies and in the variables below.
+#
+# WHY NOT `| quote` on the built strings: it escapes the inner double quotes, and the operator renders
+# each objectTemplate as a Go template FIRST and parses YAML SECOND — so a backslash-quote is not an
+# escape there, it is a backslash inside an action, and the parse fails. The quotes are passed to
+# printf as ARGUMENTS instead, which is also why they appear as bare "\"" below.
+#
+# ── WHAT EACH ROLE ENTRY EXPANDS TO ──────────────────────────────────────────
+# Only `name` and `clusterRole` are irreducible:
+#
+#   guard suffix                 -cluster-<name>
+#   rbac.ocp.io/role-type        cluster-<name>
+#   group-pattern annotation     <groupPrefix>-*-cluster-<name>
+#   roleRef.name                 <clusterRole>
+#   rbac.ocp.io/bound-role       <clusterRole>
+#   rbac.ocp.io/scope            cluster-wide
+#
+# SO role-type AND bound-role ARE BOTH SET, and they differ here: tier `cluster-audit` binds `view`.
+# role-type answers "which tier", bound-role answers "which permission" — and bound-role means the same
+# thing on every policy in this chart, so `-l rbac.ocp.io/bound-role=view` finds every grant of view
+# regardless of scope or family.
+#
+# AND THE TIER NAMES DO NOT MATCH THE CLUSTERROLES: the tier called `cluster-admin` binds ClusterRole
+# `admin`, and `cluster-audit` binds `view`. So clusterRole is an explicit values field — it cannot be
+# derived from the tier name, and it is the field an auditor reads.
+#
+# ── BUILT-IN CLUSTERROLES, REUSED ────────────────────────────────────────────
+# These bind OpenShift's existing admin / edit / view ClusterRoles cluster-wide. Nothing here defines
+# a Role or ClusterRole and nothing should: they are the platform's aggregated tiers, and local copies
+# drift as OpenShift adds APIs to the aggregation.
+#
+# ── NO excludedPaths DECLARED, AND THE OPERATOR ADDS ITS OWN ─────────────────
+# Measured on this cluster's NamespaceConfigs: the operator writes [.metadata, .status,
+# .spec.replicas] into the spec on reconcile even when nothing sends them — no CRD default, no
+# mutating webhook. Not mirrored here, because .spec.replicas is meaningless for a
+# ClusterRoleBinding. It does mean GOTCHA 9 applies: because .metadata is excluded, editing labels or
+# annotations in an objectTemplate below changes NOTHING on bindings that already exist. To roll
+# metadata forward, delete them and let the operator rebuild. SELECT ON config-source, NOT on
+# source-groupconfig — the latter is an ANNOTATION below, and `oc -l` matches only labels, so it selects
+# NOTHING and the delete reads as a clean no-op. Verified against the live objects:
+# -l rbac.ocp.io/source-groupconfig=baseline-groupconfig-rbac returns 0 of 12, while
+# -l rbac.ocp.io/config-source=cluster-rbac returns all 12.
+#   oc delete clusterrolebinding -l rbac.ocp.io/config-source=cluster-rbac
+{{- $group := "{{ .Name }}" }}
+{{- $endif := "{{- end }}" }}
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: GroupConfig
+metadata:
+  name: {{ $c.name }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    # ONE value across all four policies, so a single query finds the whole set. The axes that might
+    # tempt you to vary it — scope, family — each have their own key below.
+    app.kubernetes.io/component: rbac-automation
+    rbac.ocp.io/scope: cluster-wide
+    rbac.ocp.io/kind: GroupConfig
+    # Identities come from the directory, which the spec cannot tell you: a subject here is a Group
+    # name, and nothing in the manifest says it is externally managed. The group family is synced from
+    # LDAP by GroupSync, which is also what puts the selector label below on each Group. So you change
+    # who holds this access in the DIRECTORY — an edit to a ClusterRoleBinding is reverted by the next
+    # reconcile, and adding a user to the OpenShift Group by hand is undone by the next sync.
+    rbac.ocp.io/identity-source: ldap-groups
+    rbac.ocp.io/group-naming: pattern
+    # THE FAMILY, and the value names WHAT IS BOUND rather than the policy's standing: these bind
+    # OpenShift's BUILT-IN aggregated ClusterRoles (admin / edit / view), where the `custom` family
+    # binds roles defined outside the platform. That is the distinction an auditor cares about — a
+    # built-in role's contents are Red Hat's and move with the release; a custom one is ours.
+    #   oc get groupconfig,namespaceconfig -l rbac.ocp.io/policy-family=built-in
+    #   oc get groupconfig,namespaceconfig -l rbac.ocp.io/policy-family=custom
+    # The FILENAMES still say `baseline`, which is the other true thing about them: built-in describes
+    # the roles, baseline describes the fact that every team gets these.
+    rbac.ocp.io/policy-family: built-in
+  annotations:
+    description: {{ $c.description | quote }}
+    # After the operator is installed and its CSV is running. A GroupConfig applied before the CRD
+    # exists fails the release; applied before the controller is up it simply sits there.
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  labelSelector:
+    matchExpressions:
+      # SYNCED GROUPS ONLY. GroupSync puts this label on every Group it manages, so this excludes
+      # locally-created Groups — which must not collect cluster-wide access from a directory policy.
+      - key: {{ $c.syncProviderLabelKey }}
+        operator: Exists
+  templates:
+    {{- range $r := $c.roles }}
+    {{- if not $r.clusterRole }}
+    {{- fail (printf "clusterRbac.roles entry %q has no clusterRole, so it would render a ClusterRoleBinding whose roleRef names nothing — it grants no access while looking configured. Give it one, or remove the entry." $r.name) }}
+    {{- end }}
+    {{- $suffix := printf "-cluster-%s" $r.name }}
+    {{- $guard := printf "{{- if hasSuffix %s%s%s .Name }}" "\"" $suffix "\"" }}
+    # ---------------------------------------------------------------------
+    # {{ $r.name }} — groups ending {{ $suffix }} get ClusterRole/{{ $r.clusterRole }}, cluster-wide
+    # ---------------------------------------------------------------------
+    - objectTemplate: |
+        {{ $guard }}
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: "{{ $group }}-crb"
+          labels:
+            app.kubernetes.io/managed-by: namespace-configuration-operator
+            rbac.ocp.io/config-source: cluster-rbac
+            rbac.ocp.io/role-type: cluster-{{ $r.name }}
+            rbac.ocp.io/bound-role: {{ $r.clusterRole }}
+            rbac.ocp.io/scope: cluster-wide
+            rbac.ocp.io/group-name: "{{ $group }}"
+          annotations:
+            rbac.ocp.io/source-groupconfig: {{ $c.name }}
+            # A REAL WILDCARD — this is the expression the operator matched groups against. Only the
+            # GroupConfig policies set this; the namespace-keyed ones compute a concrete name instead and
+            # put it in the group-name label.
+            rbac.ocp.io/group-pattern: "{{ $c.groupPrefix }}-*{{ $suffix }}"
+        subjects:
+        - kind: Group
+          name: "{{ $group }}"
+          apiGroup: rbac.authorization.k8s.io
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: {{ $r.clusterRole }}
+        {{ $endif }}
+    {{- end }}
+{{- end }}
