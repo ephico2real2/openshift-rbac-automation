@@ -51,6 +51,23 @@ jobs:
       # charts_dir defaults to `charts`, and the action packages each SUBDIRECTORY of it — which is
       # why the chart had to move from chart/ to charts/namespace-configuration-operator/. Left at
       # the repo root it would find nothing to package and publish nothing, with a green run.
+      #
+      # THE gh-pages BRANCH MUST ALREADY EXIST. With packages_with_index, chart-releaser builds a git
+      # worktree from origin/gh-pages and does NOT create the branch — the first run here failed with
+      #   fatal: invalid reference: origin/gh-pages
+      # Bootstrap it once, empty, before the first run:
+      #   git worktree add --detach /tmp/gh && cd /tmp/gh
+      #   git checkout --orphan gh-pages && git rm -rf --cached . && rm -rf ./*
+      #   echo "# Helm chart repository" > README.md
+      #   git add README.md && git commit -m "chore: bootstrap gh-pages" && git push -u origin gh-pages
+      # GitHub then enables Pages on that branch automatically; nothing to click.
+      #
+      # AND IF A RUN EVER FAILS *AFTER* CREATING THE GITHUB RELEASE, the retry will not fix itself:
+      # skip_existing sees the release and skips the whole upload, including copying the .tgz onto
+      # gh-pages. index.yaml then lists a package that is not there and `helm install` 404s. Delete the
+      # release and its tag, then re-run:
+      #   gh release delete <chart>-<version> --yes --cleanup-tag
+      # Both of these were hit setting this up; neither is obvious from the action's own docs.
       - name: Run chart-releaser
         uses: helm/chart-releaser-action@v1.6.0
         with:
