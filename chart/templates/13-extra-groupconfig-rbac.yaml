@@ -37,6 +37,27 @@
 #   monitoring-rules-view                  ClusterRole  prometheusrules (get,list,watch)
 #   alert-routing-edit                     ClusterRole  alertmanagerconfigs (*)
 #
+# ── THE SCOPE OF THESE BINDINGS, so nobody expects more from them ────────────
+# Every RoleBinding here lands in targetNamespace, and a RoleBinding grants its role IN THAT NAMESPACE
+# ONLY. That is exactly right for the UWM config ConfigMap, which lives there and nowhere else.
+#
+# It also means the monitoring rule grants here apply to PrometheusRules IN THAT NAMESPACE — not to a
+# team's own project. Per OpenShift's thanos-querier Service, the project-scoped endpoints are gated on
+# roles bound IN THE PROJECT:
+#
+#   port 9092  /api/v1/query, query_range, labels, series   <- needs `view` in the project
+#   port 9093  /api/v1/alerts, /api/v1/rules                <- needs monitoring-rules-view (or -edit,
+#                                                              or monitoring-edit) IN THE PROJECT
+#
+# A GroupConfig cannot do that: it fires per GROUP and has no namespace context, so it can only bind
+# into a fixed namespace. Per-project monitoring rights would have to come from a NamespaceConfig — the
+# 11-baseline- family, which is keyed on the namespace. Worth knowing that
+# namespaceConfigPolicy.baseline already binds `view` per namespace, so port 9092 is covered for every
+# tier it grants; port 9093 is not granted by anything today.
+#
+# THIS POLICY IS DELIBERATELY NOT THAT. It is captured separately and as-is, matching the source, and
+# the note above exists so the limit is documented rather than rediscovered.
+#
 # ── WHY roleKind IS AN EXPLICIT VALUES FIELD ─────────────────────────────────
 # Because the mix is genuine — one Role, the rest ClusterRoles — and getting it wrong FAILS SILENTLY.
 # RBAC permits a RoleBinding whose roleRef names something that does not exist: the binding is created,
