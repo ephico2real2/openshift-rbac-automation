@@ -288,3 +288,116 @@ namespaceConfigPolicy:
         verbs:
           - get
           - list
+
+  # -------- the BASELINE: mnemonic + environment --------
+  # THIS IS WHAT EVERY TEAM GETS. A namespace that declares a mnemonic and an environment receives the
+  # standard access tiers for that environment, with no per-namespace configuration. oudGroup above is
+  # a PoC beside it; this is the documented flow the README's install steps run.
+  #
+  # ONE TEMPLATE SERVES BOTH nonprod AND prod because they differ only in data — which environments,
+  # which roles, which access-level suffix. See the header of
+  # chart/templates/11-baseline-namespaceconfig-rbac.yaml for when a future policy earns its own file
+  # instead of an entry here.
+  #
+  # THESE BIND OPENSHIFT'S BUILT-IN CLUSTERROLES (admin / edit / view) through RoleBindings, which
+  # grants them in one namespace only. They are aggregated roles maintained by the platform; defining
+  # local copies would drift as OpenShift adds APIs. ClusterRoleBindings are a different thing and
+  # live in the GroupConfig policies, not here.
+  baseline:
+    # OFF is CHART SAFETY, not a statement about this policy's standing. These are the baseline, but a
+    # chart must never create RBAC because somebody upgraded the operator. Turn it on deliberately.
+    #
+    # TURNING IT BACK OFF IS A REVOCATION, NOT A NO-OP. The CR carries the finalizer
+    # redhatcop.redhat.io/namespaceconfig-controller, so removing it makes the operator delete every
+    # RoleBinding it created. Measured on CRC: 36 RoleBindings gone in 2 seconds, and
+    # `oc auth can-i delete pods` for a bound group went from yes to no. Re-enabling restored all of
+    # them 44 seconds after the delete — so a flag flip on a shared cluster is a 44-second window with
+    # no namespace access for anyone this grants. Same applies to renaming a policy's `name`: Helm
+    # deletes the old resource and creates the new one.
+    enabled: false
+
+    # The group family. Combined with the mnemonic and the role, this produces
+    # app-ocp-rbac-<mnemonic>-ns-<role> — the convention
+    # working-sessions/policies/kyverno-group-naming-app-ocp-rbac.yaml already validates, and the
+    # family GroupSync syncs from LDAP. Changing it here does not change what Kyverno enforces.
+    groupPrefix: app-ocp-rbac
+
+    # THE TWO SELECTOR LABELS, and both do double duty:
+    #   mnemonicLabelKey     selects namespaces that have it, AND its value names the bound groups
+    #   environmentLabelKey  selects on its value, AND that value is recorded on every RoleBinding
+    # The template refuses to render when either is empty rather than matching every namespace, or
+    # letting a prod namespace collect the nonprod grants.
+    mnemonicLabelKey: company.net/mnemonic
+    environmentLabelKey: company.net/app-environment
+
+    # Stamped on the CR and on every generated RoleBinding, so `--show-labels` says which revision of
+    # the policy a cluster is running independently of the chart version.
+    policyVersion: "0.1.0"
+
+    policies:
+      # ---- non-production: rnd / eng / qa / uat ----
+      nonprod:
+        enabled: true
+        name: nonprod-namespaceconfig-rbac
+        description: "Nonprod RBAC: admin/developer/audit access for rnd/eng/qa/uat environments only"
+
+        # AN EXPLICIT ALLOW-LIST, not "everything that is not prod". An environment nobody has ruled on
+        # gets nothing, rather than silently inheriting non-production access — which is why
+        # `production` (a real label value on this cluster, distinct from `prod`) matches neither
+        # policy and receives no bindings at all.
+        environments:
+          - rnd
+          - eng
+          - qa
+          - uat
+
+        # Redundant against the allow-list above, and kept on purpose: if somebody adds prod to
+        # `environments`, this still refuses it. A second lock on the same door, visible here rather
+        # than assumed. Rendered as a NotIn expression only when non-empty.
+        excludeEnvironments:
+          - prod
+
+        # Appended to each role name for the rbac.ocp.io/access-level label: admin-non-prod-only, and
+        # so on. Descriptive only — the label grants nothing.
+        accessLevelSuffix: non-prod-only
+
+        # `name` names the group and the binding; `clusterRole` IS the grant. Everything else — the
+        # RoleBinding name, role-type, access-level, group name — derives from `name`; see the
+        # template header for the four derivations. clusterRole is explicit because it is not
+        # derivable and because it is the field an auditor reads.
+        roles:
+          - name: admin
+            clusterRole: admin
+          - name: developer
+            clusterRole: edit
+          - name: audit
+            clusterRole: view
+
+      # ---- production ----
+      # ON, because the baseline means BOTH halves. A cluster running the baseline with only the
+      # nonprod half would give prod namespaces no managed access at all, which is not a safer state —
+      # it is an unmanaged one, and somebody would fill the gap with hand-made bindings.
+      #
+      # THIS DOES NOT MEAN PROD RBAC SHIPS BY DEFAULT. The two switches above it —
+      # namespaceConfigPolicy.enabled and baseline.enabled — are both false, so a plain `helm install`
+      # still creates nothing. This flag decides what the baseline CONTAINS once somebody turns it on,
+      # and the answer is: the full baseline. Turn this off only to deploy the nonprod half alone.
+      prod:
+        enabled: true
+        name: prod-namespaceconfig-rbac
+        description: "Prod RBAC: developer/audit access for prod environments only (no admin)"
+        environments:
+          - prod
+        # Nothing to exclude: the allow-list is already a single value.
+        excludeEnvironments: []
+        accessLevelSuffix: prod-only
+
+        # NO admin, DELIBERATELY, and this is the whole reason prod is a separate policy rather than
+        # another environment in the nonprod list. Namespace-admin in production is granted by a
+        # reviewed exception, never by a namespace label. Adding an admin entry here would hand it to
+        # every prod namespace at once.
+        roles:
+          - name: developer
+            clusterRole: edit
+          - name: audit
+            clusterRole: view

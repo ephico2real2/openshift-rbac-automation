@@ -1,0 +1,197 @@
+{{- if and .Values.namespaceConfigPolicy.enabled .Values.namespaceConfigPolicy.baseline.enabled }}
+{{- $b := .Values.namespaceConfigPolicy.baseline }}
+{{- if not $b.mnemonicLabelKey }}
+{{- fail "namespaceConfigPolicy.baseline.mnemonicLabelKey is empty. It selects the namespaces AND supplies the mnemonic that names the bound group, so empty would match EVERY namespace and bind groups named from nothing. Set it, or disable the baseline." }}
+{{- end }}
+{{- if not $b.environmentLabelKey }}
+{{- fail "namespaceConfigPolicy.baseline.environmentLabelKey is empty. It is what partitions nonprod from prod, so empty would let a prod namespace receive the nonprod grants — including ns-admin, which prod deliberately withholds. Set it, or disable the baseline." }}
+{{- end }}
+# =============================================================================
+# NamespaceConfig — the BASELINE namespace RBAC every team receives
+# =============================================================================
+# Converted from working-sessions/policies/{nonprod,prod}-namespaceconfig-rbac.yaml, which STAY in the
+# repo as the readable reference. This file is the deployable form; those are the explanation.
+#
+# ── WHY THIS FILE HOLDS TWO POLICIES AND 10-oud-group- HOLDS ONE ──────────────
+# SAME SHAPE -> ONE TEMPLATE. DIFFERENT SHAPE -> ITS OWN FILE.
+#
+# `nonprod` and `prod` differ only in DATA: which environments they select, which roles they grant,
+# and the access-level suffix. prod withholding ns-admin is a SHORTER LIST, not a different structure.
+# So they share this template and are distinguished entirely in values.
+#
+# `oud-group` keeps its own file because it differs STRUCTURALLY — it creates a namespace-scoped Role
+# instead of binding existing ClusterRoles, its selector is one expression, and its group name is the
+# label value verbatim rather than a pattern. Merging it here would need conditionals, and conditionals
+# are the complication this rule exists to prevent.
+#
+# WHEN THE NEXT POLICY ARRIVES: if it is the same shape, add it to values. If it needs an extra
+# selector expression, a different subject kind, or its own Role, it gets its OWN numbered file — the
+# way oud-group did. It does not get an `if` in here.
+#
+# ── WHY THESE BIND CLUSTERROLES RATHER THAN DEFINING ROLES ────────────────────
+# admin / edit / view are OpenShift's built-in AGGREGATED ClusterRoles. A RoleBinding that references
+# a ClusterRole grants those verbs in THAT NAMESPACE ONLY — which is the namespace-scoped grant.
+# Re-implementing them as per-namespace Roles would create copies that drift silently as OpenShift
+# adds APIs to the aggregation. oud-group defines its own Role only because a workload submitter is a
+# bespoke permission set no built-in tier expresses. Standard tier -> bind a ClusterRole; bespoke set
+# -> define a Role. ClusterRoleBindings are a different thing entirely and live in the GroupConfig
+# policies, not here.
+#
+# ── THE ONE THING THAT MAKES THIS TEMPLATE UNUSUAL ───────────────────────────
+# There are TWO template engines in play and they use the same delimiters.
+#
+#   Helm          evaluates this file at `helm template` / `helm upgrade` time.
+#   The OPERATOR  evaluates each objectTemplate body LATER, once per matching namespace, where
+#                 .Name is the namespace and .Labels are its labels.
+#
+# An expression meant for the operator must SURVIVE Helm and reach the cluster unevaluated. Helm has
+# no leave-this-alone block, so the operator's expressions are BUILT AS STRINGS below and substituted
+# in. Helm renders a string; it does not recurse into what it produced.
+#
+# NOTE THAT A # COMMENT IS NOT A HELM COMMENT. It is a YAML comment, and Helm processes this file as
+# text before YAML ever sees it — so an action written inside one of these comments IS EVALUATED. That
+# is why these paragraphs describe the operator's expressions in words instead of quoting them; the
+# literal syntax lives in the source policies and in the variables below.
+#
+# WHY NOT PIPE THROUGH `quote`. It escapes the inner double quotes of the index expression, and that
+# breaks the operator: it renders each objectTemplate as a Go template FIRST and parses the result as
+# YAML SECOND, so at render time a backslash-quote is not an escape — it is a backslash inside an
+# action, and the parse fails. The quotes are therefore LITERAL TEXT here, outside the substitution.
+#
+# WHICH IS ALSO WHY AN objectTemplate IS NOT VALID YAML UNTIL IT IS RENDERED. Verify a change by
+# rendering the expressions out and THEN parsing, never by parsing the objectTemplate directly.
+#
+# ── WHAT EACH ROLE ENTRY IN VALUES EXPANDS TO ────────────────────────────────
+# Only `name` and `clusterRole` are irreducible. Everything else is derived, and identically in both
+# policies — measured against both source files before this template was written:
+#
+#   RoleBinding name          <mnemonic>-<name>-rb
+#   rbac.ocp.io/role-type     ns-<name>
+#   subject group             <groupPrefix>-<mnemonic>-ns-<name>
+#   rbac.ocp.io/access-level  <name>-<accessLevelSuffix>
+#
+# `clusterRole` stays explicit because it IS the grant — admin versus view is what an auditor reads,
+# and it is not derivable from the role name (developer -> edit, audit -> view).
+#
+# The group pattern is not invented here. working-sessions/policies/kyverno-group-naming-app-ocp-rbac.yaml
+# already validates app-ocp-rbac-{mnemonic}-(ns|cluster)-(admin|developer|audit); groupPrefix plus the
+# derived ns-<name> is that existing convention expressed in values.
+{{- $ns := "{{ .Name }}" }}
+{{- $mn := printf "{{ index .Labels %s%s%s }}" "\"" $b.mnemonicLabelKey "\"" }}
+{{- $env := printf "{{ index .Labels %s%s%s }}" "\"" $b.environmentLabelKey "\"" }}
+{{- range $key, $p := $b.policies }}
+{{- if $p.enabled }}
+{{- if not $p.roles }}
+{{- fail (printf "namespaceConfigPolicy.baseline.policies.%s has no roles, so it would render a NamespaceConfig that selects namespaces and grants nothing — a silent no-op with the flag switched on. Give it roles, or disable it." $key) }}
+{{- end }}
+---
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: NamespaceConfig
+metadata:
+  name: {{ $p.name }}
+  labels:
+    {{- include "nco.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: rbac-automation
+    rbac.ocp.io/scope: namespace-scoped
+    rbac.ocp.io/kind: NamespaceConfig
+    rbac.ocp.io/policy-version: {{ $b.policyVersion | quote }}
+    # WHERE THE IDENTITIES COME FROM, which the spec cannot tell you. A subject here is a Group name;
+    # nothing in the manifest says that group is externally managed. It is: the app-ocp-rbac-* family is
+    # synced from LDAP by GroupSync/ldap-groupsync, filter (&(objectClass=groupOfNames)(cn=app-ocp-rbac-*)).
+    # Measured on this cluster — app-ocp-rbac-demo-ns-admin carries
+    # openshift.io/ldap.uid: cn=app-ocp-rbac-demo-ns-admin,ou=Groups,dc=ephico2real,dc=com.
+    #
+    # WHICH MATTERS OPERATIONALLY: you change who holds this access in the DIRECTORY, not by editing a
+    # RoleBinding. An edit here would be reverted by the next sync, and adding a user to the OpenShift
+    # Group by hand is undone the same way.
+    #
+    # An earlier draft set this to "mnemonic-environment", which was filler — it restated the selector
+    # printed a few lines below. A label should carry a fact the spec does not.
+    rbac.ocp.io/access-model: ldap-groups
+    # THE FAMILY, so the two halves are queryable as one thing:
+    #   oc get namespaceconfig -l rbac.ocp.io/policy-family=baseline
+    # A label rather than a rename. The CRs keep their environment names because on
+    # `oc get namespaceconfig` the tier IS the identifying fact — and renaming a resource in a Helm
+    # release deletes the old and creates the new, which for a NamespaceConfig means the controller's
+    # finalizer revokes every RoleBinding it made before the replacement rebuilds them. Grouping is
+    # not worth an access gap.
+    rbac.ocp.io/policy-family: baseline
+  annotations:
+    description: {{ $p.description | quote }}
+    # After the operator is installed and its CSV is running. A NamespaceConfig applied before the CRD
+    # exists fails the release; applied before the controller is up it simply sits there.
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  labelSelector:
+    matchExpressions:
+      # Any namespace that declares a mnemonic. The mnemonic also names the groups bound below.
+      - key: {{ $b.mnemonicLabelKey }}
+        operator: Exists
+      # The partition. EXPLICIT allow-list, so an environment nobody has ruled on gets nothing rather
+      # than falling into whichever policy happens to match.
+      - key: {{ $b.environmentLabelKey }}
+        operator: In
+        values:
+          {{- toYaml $p.environments | nindent 10 }}
+      {{- if $p.excludeEnvironments }}
+      # Redundant against the allow-list above, and kept deliberately: if somebody adds an excluded
+      # environment to `environments` by mistake, this still refuses it. A second lock on the same
+      # door, visible in values rather than assumed.
+      - key: {{ $b.environmentLabelKey }}
+        operator: NotIn
+        values:
+          {{- toYaml $p.excludeEnvironments | nindent 10 }}
+      {{- end }}
+  # NO excludedPaths DECLARED, AND THE OPERATOR ADDS ITS OWN ANYWAY. Measured on this cluster: the
+  # live CR carries [.metadata, .status, .spec.replicas] on every template even though neither this
+  # chart nor the source policy sends any, the CRD schema defines no default, and there is no mutating
+  # webhook — the operator writes them into the spec on reconcile (CR generation goes 1 -> 2).
+  #
+  # Not mirrored here on purpose: .spec.replicas is meaningless for a RoleBinding, so writing it into
+  # this policy would imply a field these objects do not have. The operator's default is its business.
+  #
+  # WHAT IT MEANS FOR YOU, and it is the same trap oud-group documents as GOTCHA 9: because .metadata
+  # is excluded, editing labels or annotations in an objectTemplate below changes NOTHING on
+  # RoleBindings that already exist. The operator reports success and the old metadata stays, so a
+  # cluster ends up with two generations of it. Spec-level edits (subjects, roleRef) DO propagate.
+  # To roll metadata forward, delete the objects and let the operator rebuild them:
+  #   oc delete rolebinding -A -l rbac.ocp.io/source-namespaceconfig=<name>
+  templates:
+    {{- range $r := $p.roles }}
+    {{- $group := printf "%s-%s-ns-%s" $b.groupPrefix $mn $r.name }}
+    # ---------------------------------------------------------------------
+    # {{ $r.name }} — binds ClusterRole/{{ $r.clusterRole }} in the namespace
+    # ---------------------------------------------------------------------
+    - objectTemplate: |
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: "{{ $mn }}-{{ $r.name }}-rb"
+          namespace: "{{ $ns }}"
+          labels:
+            app.kubernetes.io/managed-by: namespace-configuration-operator
+            app.kubernetes.io/version: {{ $b.policyVersion }}
+            rbac.ocp.io/policy-version: {{ $b.policyVersion }}
+            rbac.ocp.io/role-type: ns-{{ $r.name }}
+            rbac.ocp.io/mnemonic: "{{ $mn }}"
+            rbac.ocp.io/environment: "{{ $env }}"
+            rbac.ocp.io/access-level: {{ $r.name }}-{{ $p.accessLevelSuffix }}
+            rbac.ocp.io/config-source: {{ $key }}-rbac
+          annotations:
+            rbac.ocp.io/created-by: namespace-configuration-operator
+            rbac.ocp.io/source-namespace: "{{ $ns }}"
+            rbac.ocp.io/source-namespaceconfig: {{ $p.name }}
+            rbac.ocp.io/group-pattern: "{{ $group }}"
+            rbac.ocp.io/environment-restriction: "{{ $key }}-only"
+        subjects:
+        - kind: Group
+          name: "{{ $group }}"
+          apiGroup: rbac.authorization.k8s.io
+        roleRef:
+          kind: ClusterRole
+          name: {{ $r.clusterRole }}
+          apiGroup: rbac.authorization.k8s.io
+    {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
