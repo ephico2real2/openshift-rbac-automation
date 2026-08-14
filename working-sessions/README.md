@@ -426,14 +426,33 @@ metadata change  adding an annotation to the template
 > objects created **after** the label was added to the template:
 >
 > ```bash
-> oc get rolebinding -A -l rbac.ocp.io/source-namespaceconfig=<config>
+> oc get rolebinding -A -l rbac.ocp.io/config-source=<short name>       # nonprod-rbac, prod-rbac, …
 > ```
 >
 > To roll metadata forward, delete and let NCO rebuild:
 >
 > ```bash
-> oc delete rolebinding -A -l rbac.ocp.io/source-namespaceconfig=<config>
+> oc delete rolebinding -A -l rbac.ocp.io/config-source=<short name>
 > ```
+>
+> **Select on `config-source`, not on `source-namespaceconfig` — corrected 2026-08-14.** These two
+> commands originally used `source-namespaceconfig`, which was right when oud-group was the only
+> policy here: it sets that key as a **label**. Every policy the chart added since sets it as an
+> **annotation** instead, and `oc -l` matches labels only — so on those the selector matches zero
+> objects and a delete reads as a clean no-op. Measured per family:
+>
+> ```
+> -l rbac.ocp.io/source-namespaceconfig=nonprod-namespaceconfig-rbac    0  (of 30)
+> -l rbac.ocp.io/config-source=nonprod-rbac                           30
+> -l rbac.ocp.io/source-groupconfig=baseline-groupconfig-rbac           0  (of 12)
+> -l rbac.ocp.io/config-source=cluster-rbac                           12
+> -l rbac.ocp.io/source-namespaceconfig=oud-group-namespaceconfig-rbac  3  (of 3 — the exception)
+> ```
+>
+> So `config-source` for everything the chart renders; `source-namespaceconfig` only for oud-group,
+> which carries no `config-source` at all. The annotation placement is itself deliberate — provenance
+> is not meant to be a selector — which is precisely why a selector built on it fails, and fails
+> *quietly*. See `docs/labels-and-annotations.md` §3.2 for the underlying key inconsistency.
 >
 > This is arguably the right default — it stops NCO fighting other controllers that annotate
 > resources — but it is silent, and it is the *only* drift case NCO does not self-heal.

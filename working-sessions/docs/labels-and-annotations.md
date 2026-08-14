@@ -102,10 +102,27 @@ $ oc get rolebinding,clusterrolebinding -A -l app.kubernetes.io/version=0.1.0 --
 48
 ```
 
-Making it retroactive means `oc delete` by `rbac.ocp.io/source-*config` and letting the operator
-rebuild — a real revocation window (measured elsewhere in this repo: 2s to revoke, ~40s to restore).
-Whether a cosmetic label correction is worth that window is a judgement call, not a cleanup step, so
-it is deliberately not done here.
+Making it retroactive means deleting the objects and letting the operator rebuild — a real revocation
+window (measured elsewhere in this repo: 2s to revoke, ~40s to restore). Whether a cosmetic label
+correction is worth that window is a judgement call, not a cleanup step, so it is deliberately not
+done here.
+
+**And if you do it, select on `config-source`.** `oc -l` matches labels only, and the baseline and
+cluster policies carry `rbac.ocp.io/source-namespaceconfig` / `source-groupconfig` as an
+**annotation** — so a delete selecting on those keys matches nothing and reads as a clean no-op.
+Measured per family:
+
+```
+-l rbac.ocp.io/source-namespaceconfig=nonprod-namespaceconfig-rbac    0  (of 30)
+-l rbac.ocp.io/config-source=nonprod-rbac                           30
+-l rbac.ocp.io/source-groupconfig=baseline-groupconfig-rbac           0  (of 12)
+-l rbac.ocp.io/config-source=cluster-rbac                           12
+-l rbac.ocp.io/source-namespaceconfig=oud-group-namespaceconfig-rbac  3  (of 3 — the exception)
+```
+
+This is §3.2's inconsistency biting: oud-group sets the key as a label and has no `config-source` at
+all, so the ONE working selector differs by family. Four remediation commands in this repo were
+written against the annotation and would have silently done nothing; corrected in the same change.
 
 ### 3.2 The same fact carried under different keys, and different kinds
 

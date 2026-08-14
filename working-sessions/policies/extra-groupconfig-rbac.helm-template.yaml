@@ -118,8 +118,11 @@
 # Measured on this cluster's NamespaceConfigs: the operator writes [.metadata, .status,
 # .spec.replicas] into the spec on reconcile even when nothing sends them. Not mirrored, because
 # .spec.replicas is meaningless for a RoleBinding. It does mean GOTCHA 9 applies — because .metadata
-# is excluded, editing labels or annotations below changes NOTHING on bindings that already exist:
-#   oc delete rolebinding -n <targetNamespace> -l rbac.ocp.io/source-groupconfig=<name>
+# is excluded, editing labels or annotations below changes NOTHING on bindings that already exist.
+# SELECT ON config-source, NOT on source-groupconfig — the latter is an ANNOTATION below, and `oc -l`
+# matches only labels, so it selects NOTHING and the delete reads as a clean no-op. (Corrected
+# 2026-08-14, after measuring it on the sibling families: -l on source-groupconfig returned 0 of 12.)
+#   oc delete rolebinding -n <targetNamespace> -l rbac.ocp.io/config-source=<configSource value>
 {{- $group := "{{ .Name }}" }}
 {{- $endif := "{{- end }}" }}
 apiVersion: redhatcop.redhat.io/v1alpha1

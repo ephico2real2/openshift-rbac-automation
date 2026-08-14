@@ -76,8 +76,13 @@
 # Measured on this cluster: the operator writes [.metadata, .status, .spec.replicas] into the spec on
 # reconcile even when nothing sends them. Not mirrored, because .spec.replicas is meaningless for a
 # binding. It does mean GOTCHA 9 applies — editing labels or annotations below changes NOTHING on
-# bindings that already exist:
-#   oc delete clusterrolebinding -l rbac.ocp.io/source-groupconfig={{ $c.name }}
+# bindings that already exist. SELECT ON config-source, NOT on source-groupconfig — the latter is an
+# ANNOTATION below, and `oc -l` matches only labels, so it selects NOTHING and the delete reads as a
+# clean no-op. Confirmed on the sibling families, where -l on source-groupconfig / source-namespaceconfig
+# returned 0 of 12 and 0 of 30 while -l on config-source returned all of both.
+#   oc delete clusterrolebinding -l rbac.ocp.io/config-source={{ $c.configSource }}
+# For a scope: namespace entry the objects are RoleBindings, so:
+#   oc delete rolebinding -n <targetNamespace> -l rbac.ocp.io/config-source={{ $c.configSource }}
 {{- $group := "{{ .Name }}" }}
 {{- $endif := "{{- end }}" }}
 {{- $seen := dict }}
