@@ -309,49 +309,139 @@ worse than absent, because someone will trust it.
 
 ---
 
-## 5. A proposed aligned scheme
+## 5. The aligned scheme — THE CONTRACT
 
-Same keys on every policy and every object, each carrying exactly one fact.
+Two rules decide everything below.
+
+1. **One key, one fact.** No key encodes two axes, and no fact appears under two keys. A compound
+   value is a value no selector can match on half of.
+2. **Labels are for selecting; annotations are for reading.** If a reviewer would ever `-l` on it, it
+   is a label. If it only explains, it is an annotation. Never both — that split is what made the
+   remediation commands in §3.1 quietly select nothing.
+
+A key is only worth adding if it answers a question someone actually asks. The four here are: *who is
+this granting to*, *what does it grant*, *where does it apply*, and *which policy made it*.
+
+### On generated objects — LABELS (selectable)
+
+| key | values | on | change |
+|---|---|---|---|
+| `app.kubernetes.io/managed-by` | namespace-configuration-operator | all | unchanged |
+| `rbac.ocp.io/config-source` | nonprod-rbac \| prod-rbac \| cluster-rbac \| custom-rbac \| oud-group-rbac | all | **add to oud-group** |
+| `rbac.ocp.io/role-type` | ns-admin \| ns-developer \| ns-audit \| cluster-admin \| cluster-developer \| cluster-audit \| database-admin \| submitter | all | **add to oud-group**, retires `rbac-type` |
+| `rbac.ocp.io/bound-role` | admin \| edit \| view \| database-admin \| oud-group-submitter-role | bindings | **NEW** — see below |
+| `rbac.ocp.io/scope` | namespace-scoped \| cluster-wide | all | replaces both `*-restriction` annotations |
+| `rbac.ocp.io/group-name` | the bound group | bindings | **add to nonprod/prod**, retires `oud-group` |
+| `rbac.ocp.io/mnemonic`, `rbac.ocp.io/environment` | e.g. beta / rnd | namespace-keyed only | unchanged |
+
+### On generated objects — ANNOTATIONS (explanatory)
+
+| key | value | on | change |
+|---|---|---|---|
+| `rbac.ocp.io/source-namespaceconfig` \| `source-groupconfig` | the CR name | all | **annotation only** — drop oud-group's label copy |
+| `rbac.ocp.io/group-pattern` | e.g. `app-ocp-rbac-*-cluster-admin` | pattern-derived families | unchanged; correctly absent on oud-group, whose group comes from a namespace label, not a pattern |
+
+### Dropped from objects, with the reason each earns removal
+
+| key | why it goes |
+|---|---|
+| `access-level` | §2.1 — means the roleRef in two families and the tier word in two others; answers "who has view" with 2 of 15. `role-type` + `bound-role` + `scope` replace it, each on one axis |
+| `custom-role` | == `role-type` on the only family that sets it; `bound-role` now carries the role for every family |
+| `rbac-type` | four characters from `role-type` and a different axis. The object's own `kind` already says Role vs RoleBinding |
+| `policy-version` | §4 — never bumped, nothing enforces it, `helm.sh/chart` answers the question |
+| `access-model` | 6 of 54 objects. Belongs on the CR (as `identity-source`), not repeated per object |
+| `oud-group` | duplicate of `group-name`, which is now on everything |
+| **A** `created-by` | byte-identical to `managed-by` on all 54 objects |
+| **A** `source-namespace` | == `.metadata.namespace` on 30 of 30 checked |
+| **A** `environment-restriction` | derivable from `config-source` — `nonprod-rbac` already says nonprod |
+| **A** `scope-restriction` | == the new `scope` label, or `.metadata.namespace` for the namespaced case |
+| **L** `source-namespaceconfig` | keeps its annotation form; the label copy existed only on oud-group and is what made `-l` behave differently per family |
+
+**`bound-role` is an addition beyond what §5 originally proposed, and it is here to close the one
+measured wrong answer.** Dropping `access-level` would otherwise remove the only place the actual
+bound role was recorded, leaving `roleRef` reachable by `-o json` but not by `-l`. With it, the query
+that returned 2 of 15 returns all 15:
+
+```
+oc get rolebinding,clusterrolebinding -A -l rbac.ocp.io/bound-role=view
+```
+
+`role-type` and `bound-role` are deliberately both kept even though the mapping is 1:1 today: the tier
+is the *promise* (`ns-audit`) and the role is the *implementation* (`view`). A future tier that binds a
+different role breaks the mapping, and then the two keys are the only way to see it.
 
 ### On the CR
 
-| key | value | why |
+| key | value | change |
 |---|---|---|
-| Helm's five (`nco.labels`) | unchanged | ownership and chart provenance, already consistent |
-| `rbac.ocp.io/kind` | NamespaceConfig \| GroupConfig | what triggers it |
-| `rbac.ocp.io/scope` | namespace-scoped \| cluster-wide | **add to custom-gc, which is missing it** |
-| `rbac.ocp.io/policy-family` | built-in \| custom | where the bound roles come from |
+| Helm's five (`nco.labels`) | unchanged | already the only consistent block |
+| `rbac.ocp.io/kind` | NamespaceConfig \| GroupConfig | unchanged |
+| `rbac.ocp.io/scope` | namespace-scoped \| cluster-wide | **add to custom-gc**, which lacks it |
+| `rbac.ocp.io/policy-family` | built-in \| custom | unchanged |
 | `rbac.ocp.io/identity-source` | ldap-groups | renamed from `access-model`; one axis, true of all four |
-| `rbac.ocp.io/group-naming` | pattern \| label-value | the axis `oud-group-direct` was really on |
-| `app.kubernetes.io/component` | `rbac-automation` | **one value, not three** |
-| ~~`rbac.ocp.io/policy-version`~~ | drop | §4 |
-| ~~`app.kubernetes.io/part-of`~~ | drop, or set on all four | currently oud-group only |
+| `rbac.ocp.io/group-naming` | pattern \| namespace-label | **NEW** — the axis `oud-group-direct` was really on |
+| `app.kubernetes.io/component` | rbac-automation | **one value, not three** |
+| ~~`policy-version`~~ | drop | §4 |
+| ~~`app.kubernetes.io/part-of`~~ | drop | oud-group only; `policy-family` already groups the policies |
+| ~~**A** `purpose`~~ | drop | oud-group only; folded into `description` |
 
-### On generated objects
+§3.4 is what `identity-source` + `group-naming` fix: `access-model` was comparing where identities come
+from (all four: LDAP) against how a group name is derived (pattern vs namespace label). Two axes, two
+keys, and now `-l rbac.ocp.io/identity-source=ldap-groups` no longer under-reports.
 
-| key | value | why |
-|---|---|---|
-| `app.kubernetes.io/managed-by` | namespace-configuration-operator | who created it |
-| `rbac.ocp.io/config-source` | the policy's short name | **add to oud-group's objects** |
-| `rbac.ocp.io/group-name` | the bound group | **one key for this, everywhere** — retires `oud-group` |
-| `rbac.ocp.io/role-type` | ns-admin \| cluster-audit \| submitter … | the tier, alone |
-| `rbac.ocp.io/scope` | namespace-scoped \| cluster-wide | replaces the two `*-restriction` annotations |
-| `rbac.ocp.io/mnemonic`, `environment` | as now | namespace-keyed policies only, which is correct |
-| ~~`access-level`~~ | drop | compound; `role-type` + `scope` carry it selectably |
-| ~~`app.kubernetes.io/version`~~ | **DROPPED — done** | §3.1 — it is the wrong key for a policy version |
-| **A** `source-namespaceconfig` / `source-groupconfig` | as now | annotation, not label — it is provenance, not a selector |
+### Migration cost
 
-**Migration cost is not zero, and this is the part to weigh.** Because every policy excludes
-`.metadata`, changing labels on an `objectTemplate` does **not** reach objects that already exist
-(GOTCHA 9). Realigning means deleting the generated objects so the operator rebuilds them:
+Because every policy excludes `.metadata`, changing labels on an `objectTemplate` reaches **nothing**
+that already exists (GOTCHA 9). Realigning means deleting the objects so the operator rebuilds them —
+and select on `config-source`, not on `source-*config`, per §3.1:
 
 ```sh
 oc delete rolebinding -A -l rbac.ocp.io/config-source=nonprod-rbac
 ```
 
-Measured on this cluster: a full delete-and-rebuild of one policy's objects is 2s to revoke and ~40s
-to restore. That is a **real revocation window** on 54 objects — free on CRC, an outage on a shared
-cluster. So this is a maintenance-window change, not a drive-by.
+Measured across a whole-cluster rebuild: **51 objects revoked in 4s, all 51 restored within 50s.** Free
+on CRC, a ~50s outage on a shared cluster. The cost is set by the rebuild, not by how many keys change,
+so everything in this section should land in ONE window.
+
+### 5.1 APPLIED — chart 0.8.0, verified on the cluster
+
+Shipped in one window as argued above, and confirmed against the 55 live objects after the rebuild
+(55 rather than 54 because the `-database-admin` group now exists, so `custom-groupconfig` produces its
+first binding):
+
+```
+keys required on EVERY object
+  app.kubernetes.io/managed-by      55/55      rbac.ocp.io/role-type    55/55
+  rbac.ocp.io/config-source         55/55      rbac.ocp.io/scope        55/55
+keys required on every BINDING (52 = 55 - the 3 Roles)
+  rbac.ocp.io/bound-role            52/52      rbac.ocp.io/group-name   52/52
+
+keys that had to be gone — all 0
+  L access-level, custom-role, rbac-type, policy-version, access-model, oud-group
+  A created-by, source-namespace, environment-restriction, scope-restriction
+
+THE QUERY THAT USED TO RETURN 2 OF 15
+  objects binding ClusterRole/view          15
+  labelled rbac.ocp.io/bound-role=view      15
+```
+
+The object set is unchanged, which is the point — this was a metadata change, not a grant change:
+12 cluster CRB + 1 custom CRB + 30 nonprod RB + 6 prod RB + 3 oud-group RB + 3 oud-group Role.
+
+**One finding surfaced while implementing it, not present in the inventory above.**
+`rbac.ocp.io/group-pattern` on the baseline NamespaceConfig objects was not a pattern at all — it held
+a concrete group name, measured byte-identical to `subjects[0].name`:
+
+```
+group-pattern    : app-ocp-rbac-beta-ns-admin
+subjects[0].name : app-ocp-rbac-beta-ns-admin      <- same value, so it was a NAME under a pattern key
+```
+
+On the GroupConfig policies the same key does hold a real wildcard
+(`app-ocp-rbac-*-cluster-admin`). So the key meant two different things — the same failure mode as
+`access-level`, found in a key nobody had flagged. It is now dropped from the namespace policies, where
+the value it carried is the `group-name` label instead, and kept on the two GroupConfig policies where
+it is genuinely a pattern.
 
 ---
 
@@ -364,22 +454,32 @@ cluster. So this is a maintenance-window change, not a drive-by.
    a version constant is worth carrying at all. Separating them let the defect ship on its own, with
    `rbac.ocp.io/policy-version` left untouched so nothing became unqueryable. See §3.1 for the
    verification and for why the 48 existing objects still read `0.1.0`.
-2. **Drop `policyVersion`** (§4). Removes a constant and four values keys. Still open, and now purely
-   a question of whether the constant earns its keep — no longer entangled with (1).
-3. **Add the three missing keys**: `rbac.ocp.io/scope` on custom-gc's CR, and `config-source` +
-   `role-type` on oud-group's objects. Additive, no removals.
-4. **Unify `group-name`** — retire `rbac.ocp.io/oud-group`. One key for "which group is bound".
-5. **Collapse the `*-restriction` annotations into `rbac.ocp.io/scope`** and simplify `access-level`.
-   The largest change and the one that most needs a window.
-6. **Rename `access-model`** to split its two axes, or leave it and document that it means two things.
+2. ~~**Drop `policyVersion`**~~ (§4) — **DONE**. Gone from all four values stanzas and both label sites.
+3. ~~**Add the three missing keys**~~ — **DONE**. `scope` on custom-gc's CR, `config-source` +
+   `role-type` on oud-group's objects.
+4. ~~**Unify `group-name`**~~ — **DONE**. `rbac.ocp.io/oud-group` retired; `group-name` is on all 52
+   bindings, and was also added to nonprod/prod, which never had it.
+5. ~~**Collapse the `*-restriction` annotations, simplify `access-level`**~~ — **DONE**, and it went
+   further than "simplify": `access-level` is removed outright, because §2.1 showed it answers a real
+   question wrongly rather than just awkwardly. `role-type` + `bound-role` + `scope` replace it.
+6. ~~**Rename `access-model`**~~ — **DONE**. Split into `identity-source` (all four: ldap-groups) and
+   `group-naming` (pattern vs namespace-label), which is what §3.4 said it was conflating.
 
-2–3 can ship together with no object churn. 4–6 need the maintenance window.
+**ALL SIX ARE APPLIED, in chart 0.8.0, and live on the cluster** — items 2–6 shipped together in one
+rebuild window exactly as the cost analysis argued, since the window is priced by the rebuild rather
+than by the number of keys. §5.1 has the verification against all 55 objects.
 
-**Applied so far: (1) only, and it IS live on the cluster** — the rev-18 rebuild (delete every CR, let
-the operator recreate from the chart) carried it onto all 51 existing objects. §3.1 has the before and
-after. The rest of this document is the inventory and the argument; those changes remain separate
-decisions.
+§§1–4 are left as written: they are the evidence that motivated the change, and rewriting them into
+the past tense would delete the reasoning while keeping only the conclusion. §5 is the contract as it
+now stands; §5.1 is proof the cluster matches it.
 
-**The rebuild also re-priced items 2–6.** Their cost is dominated by the revocation window, not by the
-number of keys touched — 51 objects revoked in 4s and restored within 50s, regardless of what changed.
-So batching 2–6 into one window costs about what any single one of them costs alone.
+**Two things this did NOT do**, and both are deliberate rather than forgotten:
+
+- **The source policies under `working-sessions/policies/` are untouched.** They remain the readable
+  reference for what was originally hand-applied, and they still carry the old keys. They now diverge
+  from the chart on labels as well as on structure — which is the same call §3.1 made for
+  `app.kubernetes.io/version`: the source is the record, not the target.
+- **`rbac.ocp.io/policy-family` is still CR-only, not on objects.** It would be a seventh key on all 55
+  and it is derivable from `config-source` (`cluster-rbac` and `nonprod-rbac` are built-in;
+  `custom-rbac` and `oud-group-rbac` are not). Rule 1 of the contract says one key per fact, and this
+  fact already has one.

@@ -16,7 +16,7 @@
 # SAME SHAPE -> ONE TEMPLATE. DIFFERENT SHAPE -> ITS OWN FILE.
 #
 # `nonprod` and `prod` differ only in DATA: which environments they select, which roles they grant,
-# and the access-level suffix. prod withholding ns-admin is a SHORTER LIST, not a different structure.
+# and which roles they grant. prod withholding ns-admin is a SHORTER LIST, not a different structure.
 # So they share this template and are distinguished entirely in values.
 #
 # `oud-group` keeps its own file because it differs STRUCTURALLY — it creates a namespace-scoped Role
@@ -76,7 +76,13 @@
 #   RoleBinding name          <mnemonic>-<name>-rb
 #   rbac.ocp.io/role-type     ns-<name>
 #   subject group             <groupPrefix>-<mnemonic>-ns-<name>
-#   rbac.ocp.io/access-level  <name>-<accessLevelSuffix>
+#   rbac.ocp.io/bound-role    <clusterRole>
+#   rbac.ocp.io/scope         namespace-scoped
+#
+# THERE IS NO access-level. It used to be <name>-<accessLevelSuffix>, e.g. audit-non-prod-only, which
+# fused the tier and the restriction into one string no selector could match half of — and named the
+# TIER where the sibling GroupConfig policy named the ROLE under the same key, so `-l access-level=view-*`
+# found 2 of the 15 objects binding view. role-type, bound-role and scope each carry one axis instead.
 #
 # `clusterRole` stays explicit because it IS the grant — admin versus view is what an auditor reads,
 # and it is not derivable from the role name (developer -> edit, audit -> view).
@@ -102,7 +108,6 @@ metadata:
     app.kubernetes.io/component: rbac-automation
     rbac.ocp.io/scope: namespace-scoped
     rbac.ocp.io/kind: NamespaceConfig
-    rbac.ocp.io/policy-version: {{ $b.policyVersion | quote }}
     # WHERE THE IDENTITIES COME FROM, which the spec cannot tell you. A subject here is a Group name;
     # nothing in the manifest says that group is externally managed. It is: the app-ocp-rbac-* family is
     # synced from LDAP by GroupSync/ldap-groupsync, filter (&(objectClass=groupOfNames)(cn=app-ocp-rbac-*)).
@@ -115,7 +120,11 @@ metadata:
     #
     # An earlier draft set this to "mnemonic-environment", which was filler — it restated the selector
     # printed a few lines below. A label should carry a fact the spec does not.
-    rbac.ocp.io/access-model: ldap-groups
+    rbac.ocp.io/identity-source: ldap-groups
+    # How the GROUP NAME is derived — a separate axis from where the identities come from. Splitting
+    # the old access-model into these two is what fixes its under-reporting: every policy here is
+    # LDAP-backed, but they do not all derive the group name the same way.
+    rbac.ocp.io/group-naming: pattern
     # THE FAMILY, so the two halves are queryable as one thing:
     #   oc get namespaceconfig -l rbac.ocp.io/policy-family=built-in
     # A label rather than a rename. The CRs keep their environment names because on
@@ -183,18 +192,20 @@ spec:
           namespace: "{{ $ns }}"
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            rbac.ocp.io/policy-version: {{ $b.policyVersion }}
+            rbac.ocp.io/config-source: {{ $key }}-rbac
             rbac.ocp.io/role-type: ns-{{ $r.name }}
+            rbac.ocp.io/bound-role: {{ $r.clusterRole }}
+            rbac.ocp.io/scope: namespace-scoped
+            rbac.ocp.io/group-name: "{{ $group }}"
             rbac.ocp.io/mnemonic: "{{ $mn }}"
             rbac.ocp.io/environment: "{{ $env }}"
-            rbac.ocp.io/access-level: {{ $r.name }}-{{ $p.accessLevelSuffix }}
-            rbac.ocp.io/config-source: {{ $key }}-rbac
           annotations:
-            rbac.ocp.io/created-by: namespace-configuration-operator
-            rbac.ocp.io/source-namespace: "{{ $ns }}"
+            # No group-pattern here. It used to carry "{{ $group }}", which for this policy renders a
+            # CONCRETE group name, not a pattern — measured identical to subjects[0].name on a live
+            # object. The name is now the rbac.ocp.io/group-name LABEL above, where it is selectable.
+            # group-pattern survives only on the two GroupConfig policies, where the value really is a
+            # wildcard the operator matched against.
             rbac.ocp.io/source-namespaceconfig: {{ $p.name }}
-            rbac.ocp.io/group-pattern: "{{ $group }}"
-            rbac.ocp.io/environment-restriction: "{{ $key }}-only"
         subjects:
         - kind: Group
           name: "{{ $group }}"

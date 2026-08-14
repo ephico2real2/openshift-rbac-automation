@@ -54,11 +54,15 @@ metadata:
   labels:
     {{- include "nco.labels" . | nindent 4 }}
     app.kubernetes.io/component: rbac-automation
-    app.kubernetes.io/part-of: oud-group
     rbac.ocp.io/scope: namespace-scoped
     rbac.ocp.io/kind: NamespaceConfig
-    rbac.ocp.io/policy-version: {{ $p.policyVersion | quote }}
-    rbac.ocp.io/access-model: oud-group-direct
+    # LDAP-backed like every other policy here — the old access-model: oud-group-direct compared a
+    # different axis (name derivation) against the others' ldap-groups, so filtering on it
+    # under-reported this policy as though it were not LDAP at all.
+    rbac.ocp.io/identity-source: ldap-groups
+    # THIS is what oud-group-direct was really saying: the group name comes from a namespace label
+    # verbatim, not from a computed pattern.
+    rbac.ocp.io/group-naming: namespace-label
     # CUSTOM, because this policy DEFINES its own namespace-scoped Role from a permission set in
     # values — a workload submitter no built-in tier expresses. The baseline policies bind
     # OpenShift's admin/edit/view instead, and are labelled `baseline`. So the two kinds are one
@@ -92,14 +96,15 @@ spec:
           name: {{ $p.roleName }}
           namespace: "{{ $ns }}"
           labels:
+            # This is the Role, not a binding — so no group-name and no bound-role. A Role has no
+            # subject to name, and it IS the role rather than referencing one. It is also one per
+            # NAMESPACE, not one per group (fixed name {{ $p.roleName }}), so tying it to a single
+            # group name would be wrong rather than merely redundant.
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            rbac.ocp.io/access-model: oud-group-direct
-            rbac.ocp.io/rbac-type: custom-role
-            rbac.ocp.io/source-namespaceconfig: {{ $p.name }}
-            rbac.ocp.io/oud-group: "{{ $group }}"
+            rbac.ocp.io/config-source: {{ $p.configSource }}
+            rbac.ocp.io/role-type: {{ $p.roleType }}
+            rbac.ocp.io/scope: namespace-scoped
           annotations:
-            rbac.ocp.io/created-by: namespace-configuration-operator
-            rbac.ocp.io/source-namespace: "{{ $ns }}"
             rbac.ocp.io/source-namespaceconfig: {{ $p.name }}
         rules:
           {{- toYaml $p.rules | nindent 10 }}
@@ -117,15 +122,18 @@ spec:
           namespace: "{{ $ns }}"
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            rbac.ocp.io/access-model: oud-group-direct
-            rbac.ocp.io/access-level: {{ $p.accessLevel }}
-            rbac.ocp.io/source-namespaceconfig: {{ $p.name }}
-            rbac.ocp.io/oud-group: "{{ $group }}"
-          annotations:
-            rbac.ocp.io/created-by: namespace-configuration-operator
-            rbac.ocp.io/source-namespace: "{{ $ns }}"
-            rbac.ocp.io/source-namespaceconfig: {{ $p.name }}
+            rbac.ocp.io/config-source: {{ $p.configSource }}
+            rbac.ocp.io/role-type: {{ $p.roleType }}
+            rbac.ocp.io/bound-role: {{ $p.roleName }}
+            rbac.ocp.io/scope: namespace-scoped
+            # ONE key for the bound group, everywhere. This used to be rbac.ocp.io/oud-group as a label
+            # AND rbac.ocp.io/group-name as an annotation — the same value twice, under two keys, in two
+            # kinds, so neither `-l group-name=X` nor `-l oud-group=X` found everything bound to a group.
             rbac.ocp.io/group-name: "{{ $group }}"
+          annotations:
+            # No group-pattern: this policy's group comes from a NAMESPACE LABEL, not from a name
+            # pattern, so there is no wildcard to record. That absence is correct, not a gap.
+            rbac.ocp.io/source-namespaceconfig: {{ $p.name }}
         subjects:
           - kind: Group
             name: "{{ $group }}"

@@ -92,12 +92,16 @@ metadata:
   name: {{ $c.name }}
   labels:
     {{- include "nco.labels" . | nindent 4 }}
-    app.kubernetes.io/component: custom-rbac-automation
+    app.kubernetes.io/component: rbac-automation
     rbac.ocp.io/kind: GroupConfig
-    rbac.ocp.io/policy-version: {{ $c.policyVersion | quote }}
+    # Was MISSING here while the other three policies all set it — so a reader asking "which policies
+    # grant cluster-wide?" got an incomplete answer. Entries may be namespace-scoped individually;
+    # this is the CR-level worst case, which is what the question is about.
+    rbac.ocp.io/scope: cluster-wide
     # Identities come from the directory: the group family is synced from LDAP by GroupSync, which is
     # also what sets the selector label below. Change who holds this access in the DIRECTORY.
-    rbac.ocp.io/access-model: ldap-groups
+    rbac.ocp.io/identity-source: ldap-groups
+    rbac.ocp.io/group-naming: pattern
     # CUSTOM, distinguishing it from the baseline families in one query:
     #   oc get groupconfig -l rbac.ocp.io/policy-family=custom
     rbac.ocp.io/policy-family: custom
@@ -161,21 +165,24 @@ spec:
           {{- end }}
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            rbac.ocp.io/policy-version: {{ $c.policyVersion }}
-            rbac.ocp.io/role-type: {{ $entry.name }}
-            rbac.ocp.io/group-name: "{{ $group }}"
-            rbac.ocp.io/access-level: {{ $entry.clusterRole }}-{{ $entry.scope }}-wide
             rbac.ocp.io/config-source: {{ $c.configSource }}
-            rbac.ocp.io/custom-role: {{ $entry.clusterRole }}
-          annotations:
-            rbac.ocp.io/created-by: namespace-configuration-operator
-            rbac.ocp.io/source-groupconfig: {{ $c.name }}
-            rbac.ocp.io/group-pattern: "{{ $c.groupPrefix }}-*{{ $entry.suffix }}"
+            rbac.ocp.io/role-type: {{ $entry.name }}
+            # The role actually bound, on its own key. This replaces both custom-role (which held the
+            # same value) and access-level, whose value here was
+            # "{{ $entry.clusterRole }}-{{ $entry.scope }}-wide" — and for scope: namespace that renders
+            # "<role>-namespace-wide", which reads as cluster-wide-within-a-namespace and is simply
+            # wrong. scope below says where; this says what.
+            rbac.ocp.io/bound-role: {{ $entry.clusterRole }}
             {{- if eq $entry.scope "namespace" }}
-            rbac.ocp.io/scope-restriction: {{ $entry.targetNamespace | quote }}
+            rbac.ocp.io/scope: namespace-scoped
             {{- else }}
-            rbac.ocp.io/scope-restriction: "cluster-wide"
+            rbac.ocp.io/scope: cluster-wide
             {{- end }}
+            rbac.ocp.io/group-name: "{{ $group }}"
+          annotations:
+            rbac.ocp.io/source-groupconfig: {{ $c.name }}
+            # A real wildcard, as on the baseline GroupConfig.
+            rbac.ocp.io/group-pattern: "{{ $c.groupPrefix }}-*{{ $entry.suffix }}"
         subjects:
         - kind: Group
           name: "{{ $group }}"

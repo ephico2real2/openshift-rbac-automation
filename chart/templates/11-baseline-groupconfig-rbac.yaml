@@ -58,10 +58,14 @@
 #   rbac.ocp.io/role-type        cluster-<name>
 #   group-pattern annotation     <groupPrefix>-*-cluster-<name>
 #   roleRef.name                 <clusterRole>
-#   rbac.ocp.io/access-level     <clusterRole>-cluster-wide
+#   rbac.ocp.io/bound-role       <clusterRole>
+#   rbac.ocp.io/scope            cluster-wide
 #
-# ACCESS-LEVEL DERIVES FROM clusterRole, NOT FROM name — `audit` yields `view-cluster-wide`. That is
-# the opposite of 10-baseline-, where it derives from the role name. Do not copy that across.
+# THAT DIVERGENCE IS THE REASON access-level IS GONE. Here its first component was the clusterRole
+# (`cluster-audit` -> `view-cluster-wide`); in 10-baseline- it was the tier word (`ns-audit` ->
+# `audit-non-prod-only`). One key, two meanings, so asking "who holds view?" through it returned 2 of the
+# 15 objects that actually bind view. bound-role now carries the role in EVERY family, and role-type the
+# tier, so neither question needs the other's key.
 #
 # AND THE TIER NAMES DO NOT MATCH THE CLUSTERROLES: the tier called `cluster-admin` binds ClusterRole
 # `admin`, and `cluster-audit` binds `view`. So clusterRole is an explicit values field — it cannot be
@@ -92,16 +96,19 @@ metadata:
   name: {{ $c.name }}
   labels:
     {{- include "nco.labels" . | nindent 4 }}
-    app.kubernetes.io/component: cluster-rbac-automation
+    # ONE value across all four policies. It used to be rbac-automation / cluster-rbac-automation /
+    # custom-rbac-automation, which made the key useless for finding the whole set — and the axes it
+    # was smuggling in (scope, family) each have their own key below.
+    app.kubernetes.io/component: rbac-automation
     rbac.ocp.io/scope: cluster-wide
     rbac.ocp.io/kind: GroupConfig
-    rbac.ocp.io/policy-version: {{ $c.policyVersion | quote }}
     # Identities come from the directory, which the spec cannot tell you: a subject here is a Group
     # name, and nothing in the manifest says it is externally managed. The group family is synced from
     # LDAP by GroupSync, which is also what puts the selector label below on each Group. So you change
     # who holds this access in the DIRECTORY — an edit to a ClusterRoleBinding is reverted by the next
     # reconcile, and adding a user to the OpenShift Group by hand is undone by the next sync.
-    rbac.ocp.io/access-model: ldap-groups
+    rbac.ocp.io/identity-source: ldap-groups
+    rbac.ocp.io/group-naming: pattern
     # THE FAMILY, and the value names WHAT IS BOUND rather than the policy's standing: these bind
     # OpenShift's BUILT-IN aggregated ClusterRoles (admin / edit / view), where the `custom` family
     # binds roles defined outside the platform. That is the distinction an auditor cares about — a
@@ -141,16 +148,16 @@ spec:
           name: "{{ $group }}-crb"
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            rbac.ocp.io/policy-version: {{ $c.policyVersion }}
-            rbac.ocp.io/role-type: cluster-{{ $r.name }}
-            rbac.ocp.io/group-name: "{{ $group }}"
-            rbac.ocp.io/access-level: {{ $r.clusterRole }}-cluster-wide
             rbac.ocp.io/config-source: cluster-rbac
+            rbac.ocp.io/role-type: cluster-{{ $r.name }}
+            rbac.ocp.io/bound-role: {{ $r.clusterRole }}
+            rbac.ocp.io/scope: cluster-wide
+            rbac.ocp.io/group-name: "{{ $group }}"
           annotations:
-            rbac.ocp.io/created-by: namespace-configuration-operator
             rbac.ocp.io/source-groupconfig: {{ $c.name }}
+            # A real wildcard here, unlike the baseline NamespaceConfig policy where the same key held a
+            # concrete name. This is the selector expression the operator matched, so it stays.
             rbac.ocp.io/group-pattern: "{{ $c.groupPrefix }}-*{{ $suffix }}"
-            rbac.ocp.io/scope-restriction: "cluster-wide"
         subjects:
         - kind: Group
           name: "{{ $group }}"
