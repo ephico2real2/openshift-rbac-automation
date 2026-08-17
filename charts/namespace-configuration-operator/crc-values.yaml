@@ -1,0 +1,49 @@
+# CRC / local test cluster — every policy on.
+#
+# A per-cluster values file, replacing the five --set flags this release was previously installed with.
+# The flags are recorded here instead so the enabled set is reviewable in git rather than living in
+# someone's shell history, and so an upgrade cannot silently drop one.
+#
+# WHY THAT MATTERS MORE THAN IT SOUNDS: `helm upgrade` resets to chart defaults the moment either -f or
+# --set is given. A flag omitted from a later command is a policy switched OFF, and switching a policy
+# off is a REVOCATION — the CR carries a controller finalizer, so the operator deletes every object it
+# created. With the set written down, that cannot happen by omission.
+#
+# Install or upgrade with:
+#
+#   helm upgrade --install nco charts/namespace-configuration-operator \
+#     -n namespace-configuration-operator \
+#     -f charts/namespace-configuration-operator/crc-values.yaml
+#
+# Everything else CRC needs is already the chart default and deliberately not repeated here:
+# createNamespace: false (the namespace predates the chart), the operator resources sized for a
+# single-node cluster, and operatorImage pointing at the quay build.
+
+namespaceConfigPolicy:
+  # The master switch. Already true in the chart defaults as of 0.9.0, but stated explicitly because
+  # this file is the record of what this cluster runs — a reader should not have to open values.yaml to
+  # know whether policies are on.
+  enabled: true
+
+  # Namespace RBAC keyed on company.net/oud-group. Renamed in 0.9.0 to
+  # abc-oud-group-namespaceconfig-rbac; the rename deleted and rebuilt its 6 objects.
+  oudGroup:
+    enabled: true
+
+  # The baseline every team receives. As of 0.9.0 nonprod grants developer + audit (admin removed) and
+  # prod grants audit only (developer removed).
+  baseline:
+    enabled: true
+
+# The cluster-wide tiers.
+clusterRbac:
+  enabled: true
+
+# THE ONE GENUINE OVERRIDE. customGroupConfig is the only policy still defaulting to false in
+# values.yaml, so without this line an upgrade with -f would switch it off and revoke the
+# app-ocp-rbac-alpha-database-admin-crb binding. It stays on here because the LDAP group and the
+# ClusterRole both exist on this cluster:
+#   working-sessions/policies/database-admin-clusterrole.yaml
+#   group-sync-operator-helm-chart/setup-local-ldap-testing/ldap-rbac-groups-database-admin.ldif
+customGroupConfig:
+  enabled: true

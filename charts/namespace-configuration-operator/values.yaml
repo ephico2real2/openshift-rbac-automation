@@ -382,6 +382,12 @@ namespaceConfigPolicy:
         # working-sessions/docs/templating-guide.md §3 for the full derivation table. clusterRole is
         # explicit because it is NOT derivable from the tier (developer -> edit, audit -> view) and
         # because it is the field an auditor reads.
+        #
+        # ns-admin WAS REMOVED FROM THIS LIST, and removing it did NOT fully revoke it. Of its 10
+        # RoleBindings, 4 disappeared and 6 SURVIVED still granting ClusterRole/admin — see the warning on
+        # clusterRbac.roles for the mechanism. They had to be deleted by hand:
+        #   oc delete rolebinding -A -l rbac.ocp.io/config-source=nonprod-rbac,rbac.ocp.io/role-type=ns-admin
+        # Do the same for any tier taken out of this list, and verify the count reaches zero.
         roles:
           - name: developer
             clusterRole: edit
@@ -467,8 +473,21 @@ clusterRbac:
   # template header for the five derivations.
   #
   # A TIER IS PRESENT OR IT IS NOT IN THIS LIST. There is no per-role enabled flag, deliberately —
-  # one way to express one thing. Removing an entry removes its template, and the operator prunes that
-  # tier's ClusterRoleBindings on the next reconcile, which is a revocation.
+  # one way to express one thing.
+  #
+  # REMOVING AN ENTRY DOES NOT RELIABLY REVOKE WHAT IT CREATED. Measured on this cluster when ns-admin
+  # was dropped from the baseline policy: of its 10 RoleBindings, 4 went and 6 SURVIVED — recreated by an
+  # in-flight reconcile a second before the operator shut down their per-object controllers ("Shutdown
+  # signal received" in the manager log). Those 6 still granted ClusterRole/admin, carried no
+  # ownerReferences so Kubernetes GC would never collect them, and nothing would ever reconcile them
+  # again. An earlier version of this comment claimed the operator prunes the tier on the next reconcile;
+  # it does not, and believing it leaves live grants behind.
+  #
+  # SO AFTER REMOVING A TIER, DELETE ITS OBJECTS EXPLICITLY and check the count reaches zero:
+  #   oc delete clusterrolebinding -l rbac.ocp.io/config-source=cluster-rbac,rbac.ocp.io/role-type=cluster-admin
+  #   oc get clusterrolebinding -l rbac.ocp.io/config-source=cluster-rbac,rbac.ocp.io/role-type=cluster-admin
+  # The provenance labels survive on the orphans, which is exactly what makes them selectable — one more
+  # reason config-source and role-type are on every object.
   roles:
     - name: admin
       clusterRole: admin
