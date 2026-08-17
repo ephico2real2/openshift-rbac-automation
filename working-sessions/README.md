@@ -446,7 +446,7 @@ metadata change  adding an annotation to the template
 > -l rbac.ocp.io/config-source=nonprod-rbac                           30
 > -l rbac.ocp.io/source-groupconfig=baseline-groupconfig-rbac           0  (of 12)
 > -l rbac.ocp.io/config-source=cluster-rbac                           12
-> -l rbac.ocp.io/source-namespaceconfig=oud-group-namespaceconfig-rbac  3  (of 3 — the exception)
+> -l rbac.ocp.io/source-namespaceconfig=abc-oud-group-namespaceconfig-rbac  3  (of 3 — the exception)
 > ```
 >
 > So `config-source` for everything the chart renders; `source-namespaceconfig` only for oud-group,

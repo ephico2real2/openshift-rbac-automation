@@ -211,7 +211,7 @@ podSecurity:
 namespaceConfigPolicy:
   # Master switch for every policy below. With this false, no policy renders whatever its own flag
   # says — one place to stop the chart writing RBAC at all.
-  enabled: false
+  enabled: true
 
   # -------- company.net/oud-group --------
   # The label holds the WHOLE group name and the template uses it verbatim:
@@ -228,13 +228,20 @@ namespaceConfigPolicy:
   # somewhere else, so it lives in Kyverno — working-sessions/policies/kyverno-namespace-oud-group.yaml
   # — where it is visible and auditable rather than buried in an objectTemplate.
   oudGroup:
-    enabled: false
+    enabled: true
 
     # The CR's name, and the value written into every generated object's
-    # rbac.ocp.io/source-namespaceconfig label — so a generated Role can be traced back to what made
-    # it. Changing it ORPHANS objects created under the old name: the operator no longer recognises
-    # them and will not clean them up.
-    name: oud-group-namespaceconfig-rbac
+    # rbac.ocp.io/source-namespaceconfig ANNOTATION — so a generated Role can be traced back to what
+    # made it. Annotation, not a label: `oc -l` will not match it, so use
+    # rbac.ocp.io/config-source below to select this policy's objects.
+    #
+    # CHANGING THIS IS A REVOCATION, not an orphaning. Helm treats a renamed resource as a delete plus
+    # a create: the old CR is deleted, its namespaceconfig-controller finalizer revokes every object it
+    # made, and the new CR then rebuilds them under the new name. Measured on this cluster: 6 objects
+    # (3 Roles + 3 RoleBindings) gone in ~4s and back within ~50s. Nothing is left behind — an earlier
+    # version of this comment claimed objects would be orphaned, which is the opposite of what happens
+    # and would have led someone to hunt for stale objects instead of planning a window.
+    name: abc-oud-group-namespaceconfig-rbac
 
     # THE LABEL, and it does two jobs: the CR selects namespaces that HAVE it, and the template binds
     # whatever its VALUE says. Both, from one key — which is why the template refuses to render when
@@ -253,7 +260,7 @@ namespaceConfigPolicy:
     # The TIER, written to rbac.ocp.io/role-type on both the Role and the RoleBinding — the same key
     # every policy uses, so one query finds every tier across all of them. Descriptive only: it grants
     # nothing, `rules` below is the grant.
-    roleType: submitter
+    roleType: spark-job-submitter
 
     # Paths the operator IGNORES when comparing what it would create against what exists, so a
     # cluster-assigned field does not read as drift and cause a rewrite every reconcile.
@@ -286,6 +293,18 @@ namespaceConfigPolicy:
           - watch
           - delete
           - deletecollection
+          - patch
+          - update
+      - apiGroups: [""]
+        resources:
+          - secrets
+        verbs:
+          - create
+          - get
+          - watch
+          - delete
+          - update
+          - patch
       - apiGroups: [""]
         resources:
           - pods/log
@@ -318,7 +337,7 @@ namespaceConfigPolicy:
     # them 44 seconds after the delete — so a flag flip on a shared cluster is a 44-second window with
     # no namespace access for anyone this grants. Same applies to renaming a policy's `name`: Helm
     # deletes the old resource and creates the new one.
-    enabled: false
+    enabled: true
 
     # The group family. Combined with the mnemonic and the role, this produces
     # app-ocp-rbac-<mnemonic>-ns-<role> — the convention
@@ -358,15 +377,12 @@ namespaceConfigPolicy:
         excludeEnvironments:
           - prod
 
-
         # `name` names the group and the binding; `clusterRole` IS the grant. Everything else — the
         # RoleBinding name, role-type, bound-role, group name — derives from these two; see
         # working-sessions/docs/templating-guide.md §3 for the full derivation table. clusterRole is
         # explicit because it is NOT derivable from the tier (developer -> edit, audit -> view) and
         # because it is the field an auditor reads.
         roles:
-          - name: admin
-            clusterRole: admin
           - name: developer
             clusterRole: edit
           - name: audit
@@ -384,7 +400,7 @@ namespaceConfigPolicy:
       prod:
         enabled: true
         name: prod-namespaceconfig-rbac
-        description: "Prod RBAC: developer/audit access for prod environments only (no admin)"
+        description: "Prod RBAC: developer/audit access for prod environments only (no admin or edit)"
         environments:
           - prod
         # Nothing to exclude: the allow-list is already a single value.
@@ -395,8 +411,6 @@ namespaceConfigPolicy:
         # reviewed exception, never by a namespace label. Adding an admin entry here would hand it to
         # every prod namespace at once.
         roles:
-          - name: developer
-            clusterRole: edit
           - name: audit
             clusterRole: view
 
@@ -423,7 +437,7 @@ clusterRbac:
   # ClusterRoleBinding it created. Measured on the namespace equivalent: 39 objects gone in 2 seconds,
   # restored 44 seconds later. On a shared cluster that is a window with no cluster-wide access for
   # anyone this grants.
-  enabled: false
+  enabled: true
 
   # ONE CR for all three tiers. The three source policies under working-sessions/policies/ are three
   # separate CRs; this is deliberately one, because they share an identical selector and differ only
@@ -489,6 +503,7 @@ clusterRbac:
 # apimachinery resolves to labels.Everything(), i.e. EVERY group. The template hardcodes the
 # combination proven to narrow (sync-provider Exists, plus a per-entry hasSuffix guard) and lets you
 # vary only the axes where variation is safe.
+
 customGroupConfig:
   # OFF is chart safety. Turning it back off is a REVOCATION: the CR carries the
   # groupconfig-controller finalizer, so the operator deletes every binding it made.
