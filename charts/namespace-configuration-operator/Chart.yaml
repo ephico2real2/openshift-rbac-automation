@@ -30,6 +30,29 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.9.0, MINOR and BEHAVIOUR-CHANGING IN BOTH DIRECTIONS — read before upgrading.
+#
+# THE POLICIES NOW SHIP ENABLED. namespaceConfigPolicy, its baseline and oudGroup children, and
+# clusterRbac all default to true; only customGroupConfig is still off. A `helm install` with no flags
+# used to deploy the operator alone and now deploys four policies, which WRITE RBAC on any namespace or
+# group matching their selectors. If you install this chart expecting the operator only, set
+# namespaceConfigPolicy.enabled=false and clusterRbac.enabled=false explicitly.
+#
+# TWO ACCESS TIERS WERE REMOVED, and on an existing release upgrading REVOKES them:
+#   nonprod  ns-admin      gone — the tier no longer renders
+#   prod     ns-developer  gone — prod is audit-only now
+# Measured on this cluster before the change: 10 nonprod ns-admin and 3 prod ns-developer
+# RoleBindings. Those 13 are deleted by the upgrade and do not come back. This is the whole point of
+# the change, but it is an access revocation, not a refresh.
+#
+# THE oud-group POLICY WAS RENAMED to abc-oud-group-namespaceconfig-rbac. Helm treats a renamed
+# resource as delete-plus-create, so the old CR's finalizer revokes its objects and the new CR rebuilds
+# them — 6 objects, ~4s to revoke and ~50s to restore. No orphans.
+#
+# oud-group's Role also gained secrets (create,get,watch,delete,update,patch) and patch/update on the
+# core resources. Namespace-scoped, so it is secrets in the matched namespaces only — but note that
+# reading secrets in a namespace includes the ServiceAccount tokens in it.
+#
 # 0.8.0, MINOR but BREAKING FOR ANY QUERY THAT SELECTS ON THE OLD LABELS. Aligns labels and annotations
 # across all four policies so one key carries one fact and the same key means the same thing everywhere.
 # Full contract and evidence: working-sessions/docs/labels-and-annotations.md §5.
@@ -67,7 +90,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.8.0
+version: 0.9.0
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:
