@@ -30,6 +30,22 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.18.1, PATCH: the oudGroup Role is renamed oud-group-submitter-role -> spark-job-submitter-role, and
+# the hazard that comes with it is documented at the key.
+#
+# CHANGING roleName NEEDS THE CR DELETED. roleRef is IMMUTABLE, so the operator cannot repoint an existing
+# RoleBinding at a renamed Role — it creates the new Role, fails the patch with "cannot change roleRef",
+# and error-loops while the CR keeps logging "resources processed successfully". The binding stays on the
+# old Role, which the template no longer maintains.
+#
+# Note this is a THIRD distinct case, alongside the two in 0.18.0:
+#   rename the CR        `helm upgrade` handles it — Helm deletes and recreates, the finalizer revokes
+#   relabel a CR         needs a CR delete — .metadata is excluded, so labels never reach existing objects
+#   rename a Role        needs a CR delete — roleRef is immutable, so the binding cannot be repointed
+#
+# Verified: deleted the CR, upgraded, all three RoleBindings came back on spark-job-submitter-role with
+# zero "cannot change roleRef" errors, no stale Roles, 42 objects, grants confirmed.
+#
 # 0.18.0, MINOR: the shipped oudGroup policy is renamed abc -> bdp, and turned OFF in values.yaml.
 #
 # values.yaml now grants NOTHING from oudGroup by itself — the policy ships disabled and crc-values.yaml
@@ -349,7 +365,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.18.0
+version: 0.18.1
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:

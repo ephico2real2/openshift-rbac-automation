@@ -354,6 +354,16 @@ namespaceConfigPolicy:
         # §6. Keep it short and distinct from every other policy's.
 
         # The Role the RoleBinding points at. One Role per namespace, created by the first template.
+        # The Role this policy creates, and what its RoleBinding points at.
+        #
+        # CHANGING THIS NEEDS THE CR DELETED, unlike most values edits. roleRef is IMMUTABLE in
+        # Kubernetes, so the operator cannot repoint an existing RoleBinding at a renamed Role: it creates
+        # the new Role, fails the patch with "cannot change roleRef", and error-loops while the CR still
+        # logs "resources processed successfully". The binding keeps pointing at the old Role, which the
+        # template no longer maintains. Delete the CR and let Helm recreate it:
+        #   oc delete namespaceconfig <this policy's CR>
+        # Verified on the cluster when this changed from oud-group-submitter-role: after the delete all
+        # three RoleBindings came back on spark-job-submitter-role with zero roleRef errors.
         roleName: spark-job-submitter-role
 
         # The TIER, written to rbac.ocp.io/role-type on both the Role and the RoleBinding — the same key

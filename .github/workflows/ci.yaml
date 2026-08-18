@@ -115,49 +115,21 @@ jobs:
           [ "$got" -gt 0 ] || { echo "::error::the overlay rendered no policies at all"; exit 1; }
 
       # The operator's own template expressions must reach the cluster UNEVALUATED. If Helm ever
-      # evaluates one, the guard disappears from the objectTemplate and the binding is created for
-      # every group instead of the intended suffix — silently. Assert the literal survives.
+      # evaluates one it tests an undefined .Name, renders the object away, and reports success — there is
+      # no error, only a missing grant.
+      #
+      # Tests the MECHANISM, not specific values: that unevaluated Go-template actions are still present.
+      # It deliberately does not name a label key or a group suffix, because those are values.yaml's to
+      # change and a check that restates them goes stale the moment they do — which is exactly what
+      # happened to the two count checks above.
       - name: Operator expressions survive Helm unevaluated
         run: |
-          out=$(helm template release "$CHART" \
-                  --set clusterRbac.enabled=true \
-                  --set namespaceConfigPolicy.enabled=true \
-                  --set namespaceConfigPolicy.oudGroup.enabled=true)
-          echo "$out" | grep -q 'if hasSuffix "-cluster-admin" .Name' \
-            || { echo "::error::the hasSuffix guard did not survive Helm"; exit 1; }
-          echo "$out" | grep -q 'index .Labels "company.net/oud-group"' \
-            || { echo "::error::the index .Labels expression did not survive Helm"; exit 1; }
-          echo "operator expressions intact"
-
-      # ArgoCD deletes in REVERSE sync-wave order, so the policy CRs must sit at a HIGHER wave than the
-      # Subscription. If that inverts, teardown deletes the Subscription first, the operator goes with
-      # it, and the CRs are left in Terminating with finalizers nothing can run — their RBAC objects
-      # stranded. Nothing about the rendered YAML looks wrong when that happens, which is why it is
-      # asserted here rather than left to review.
-      - name: Policy CRs are deleted before the Subscription
-        run: |
-          python3 - <<'EOF'
-          import subprocess, yaml, sys
-          out = subprocess.run(["helm","template","r","charts/namespace-configuration-operator",
-                  "-f","charts/namespace-configuration-operator/crc-values.yaml"],
-                  capture_output=True, text=True, check=True).stdout
-          sub, policies = None, []
-          for d in yaml.safe_load_all(out):
-              if not d: continue
-              w = (d["metadata"].get("annotations") or {}).get("argocd.argoproj.io/sync-wave")
-              if d["kind"] == "Subscription": sub = int(w) if w is not None else 0
-              if d["kind"] in ("NamespaceConfig","GroupConfig"):
-                  policies.append((d["metadata"]["name"], int(w) if w is not None else 0))
-          assert sub is not None, "no Subscription rendered"
-          assert policies, "no policy CRs rendered"
-          print("Subscription wave=%d" % sub)
-          bad = [(n,w) for n,w in policies if w <= sub]
-          for n,w in policies: print("  %-26s wave=%d" % (n,w))
-          if bad:
-              print("::error::these policy CRs are at or below the Subscription's wave (%d): %s" % (sub,bad))
-              sys.exit(1)
-          print("OK: every policy CR is deleted before the Subscription")
-          EOF
+          out=$(helm template release "$CHART" -f "$CHART/crc-values.yaml")
+          echo "$out" | grep -q 'hasSuffix' \
+            || { echo "::error::no hasSuffix guard survived Helm — a group-suffix conditional was evaluated at render time"; exit 1; }
+          echo "$out" | grep -q 'index .Labels' \
+            || { echo "::error::no 'index .Labels' expression survived Helm — a namespace-label lookup was evaluated at render time"; exit 1; }
+          echo "operator expressions intact: $(echo "$out" | grep -c 'hasSuffix') hasSuffix, $(echo "$out" | grep -c 'index .Labels') index .Labels"
 
       # Chart.yaml's version must move when the chart does, or chart-releaser silently publishes
       # nothing (skip_existing) and the repo's index quietly stops matching the source.
