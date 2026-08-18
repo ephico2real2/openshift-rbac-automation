@@ -24,10 +24,13 @@ updating every time the thing it validates changes is a validator that silently 
   1. DERIVE, NEVER LIST. Policy CRs are selected by API GROUP (redhatcop.redhat.io), so a new
      redhat-cop kind is covered the day it is added. Charts and values overlays are DISCOVERED by
      glob, so a new cluster overlay is checked without touching this file or CI.
-  2. REQUIRE THE ANNOTATION, NEVER ASSUME A DEFAULT. Every rendered resource must carry an explicit
-     sync-wave. ArgoCD treats a missing one as wave 0 — which is the Subscription's wave — so an
-     omission is not a cosmetic gap, it is an ordering bug that reads as fine. Requiring it means a
-     new template CANNOT be forgotten: it fails here on the first render.
+  2. REQUIRE THE ANNOTATION, NEVER ASSUME A DEFAULT. Every document must carry an explicit sync-wave.
+     ArgoCD treats a missing one as wave 0 — which is the Subscription's wave — so an omission is not
+     a cosmetic gap, it is an ordering bug that reads as fine. This is checked in the template SOURCE
+     as well as in the render, because a render only ever sees the templates the current values switch
+     on: `00-namespace.yaml` is gated behind `createNamespace` and no combination here reaches it.
+     Reading the files needs no values, so a new template cannot be forgotten and a gated one cannot
+     hide.
   3. EVERY SELECTOR MUST MATCH SOMETHING. A check whose selector quietly matches nothing passes
      forever while testing nothing, which is worse than having no check at all. Each lookup below
      asserts it found what it was looking for, so renaming a component fails loudly.
@@ -40,6 +43,7 @@ Usage:
 import argparse
 import glob
 import os
+import re
 import subprocess
 import sys
 
@@ -62,6 +66,43 @@ POLICY_GROUP = "redhatcop.redhat.io"
 # The component label of the sweep that must run after the policy CRs have settled. Matched on the
 # LABEL rather than the resource name, which is release-name dependent.
 SWEEPER = "orphan-sweeper"
+
+
+def check_template_sources(chart, verbose=True):
+    """Every document in every template file must declare a wave, WHATEVER the values say.
+
+    This is deliberately a SOURCE check and not a render check, because rendering can only ever see
+    the templates the current values switch on. `00-namespace.yaml` is the live example: it is gated
+    behind `createNamespace`, which is false in both values.yaml and the crc overlay, so no rendered
+    combination reaches it. It does declare a wave — but nothing would have told us if it stopped.
+    Reading the files needs no values at all, so a gated template is covered exactly like any other.
+    """
+    errors, docs_seen = [], 0
+    root = os.path.join(chart, "templates")
+    for path in sorted(glob.glob(os.path.join(root, "**", "*.y*ml"), recursive=True)):
+        # A leading underscore is a partial, not a manifest — Helm never emits it.
+        if os.path.basename(path).startswith("_"):
+            continue
+        text = open(path).read()
+        # Split textually on the YAML document separator. These files contain Go actions and are NOT
+        # parseable as YAML until the operator has rendered them, so a parser is not an option here.
+        for i, chunk in enumerate(re.split(r"(?m)^---\s*$", text)):
+            if not re.search(r"(?m)^kind:\s*\S", chunk):
+                continue
+            docs_seen += 1
+            if WAVE not in chunk:
+                kind = re.search(r"(?m)^kind:\s*(\S+)", chunk).group(1)
+                errors.append("%s (document %d, kind %s) declares no %s. ArgoCD would read it as "
+                              "wave 0 — the Subscription's wave — so it could be deleted after the "
+                              "operator it depends on."
+                              % (os.path.relpath(path, REPO), i + 1, kind, WAVE))
+    if not docs_seen:
+        errors.append("no manifest documents found under %s — this check has stopped covering "
+                      "anything" % os.path.relpath(root, REPO))
+    elif verbose:
+        print("    template sources: %d document(s) across %d file(s), every one declaring a wave"
+              % (docs_seen, len(set(glob.glob(os.path.join(root, "**", "*.y*ml"), recursive=True)))))
+    return errors
 
 
 def render(chart, values):
@@ -207,6 +248,10 @@ def main():
 
     errors, sweeper_seen_anywhere = [], False
     for chart in charts:
+        if not args.quiet:
+            print("\n=== %s — template sources" % os.path.basename(chart))
+        # Source first: it covers templates that no values combination switches on.
+        errors += check_template_sources(chart, verbose=not args.quiet)
         # values.yaml is applied by Helm on its own; every OTHER values file is an overlay to check
         # on top of it, which is exactly how it is used at install time.
         overlays = [p for p in sorted(glob.glob(os.path.join(chart, "*values*.y*ml")))
@@ -229,8 +274,8 @@ def main():
             print("::error::%s" % e)
         print("\nFAILED: %d ordering problem(s)" % len(errors))
         return 1
-    print("OK: policy CRs are deleted before the Subscription, the sweep runs after them, every "
-          "resource declares a wave, and no two hooks share a weight.")
+    print("OK: every template document declares a wave, policy CRs are deleted before the "
+          "Subscription, the sweep runs after them, and no two hooks share a weight.")
     return 0
 
 
