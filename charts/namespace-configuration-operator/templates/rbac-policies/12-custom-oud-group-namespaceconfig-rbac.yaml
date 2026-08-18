@@ -60,7 +60,6 @@
 # The operator's own expressions, as strings. printf takes the quote characters as ARGUMENTS, because
 # a literal escaped quote written inside a Helm action would be escaped again into the output.
 {{- $ns := "{{ .Name }}" }}
-{{- $seenLabel := dict }}
 {{- range $key, $p := $og.policies }}
 {{- if not $p.enabled }}
 {{- else }}
@@ -74,15 +73,34 @@
 {{- fail (printf "namespaceConfigPolicy.oudGroup.policies.%s has no rules, so it would create an empty Role that grants nothing while looking configured." $key) }}
 {{- end }}
 {{- /*
-  TWO POLICIES ON THE SAME labelKey WOULD FIGHT. Each renders its own NamespaceConfig selecting
-  `labelKey Exists`, so both would match the same namespaces and both would create a RoleBinding named
-  <group>-rb there — same name, different Role. The operator would rewrite one over the other on every
-  reconcile, and which one wins is a race. Refused here rather than left to be debugged on a cluster.
+  ONE LABEL PER FAMILY — a convention, NOT a render-time guard, and it cannot be one.
+
+  There used to be a check here refusing two policies that shared a labelKey. It has been removed because
+  it was on the wrong axis in both directions:
+
+    NOT NECESSARY  two policies CAN share a labelKey harmlessly if their objects end up with different
+                   names. The Roles already do — each policy names its own — so only the RoleBinding is
+                   at risk.
+    NOT SUFFICIENT two policies with DIFFERENT labelKeys still collide if a namespace carries both labels
+                   with the SAME VALUE, because the RoleBinding is named "<label value>-rb". The check
+                   compared labelKeys, so it allowed exactly that.
+
+  And no render-time check can be correct: the RoleBinding name comes from the label's VALUE, which is
+  read from a namespace at reconcile time. Helm cannot see it. Uniqueness of a RoleBinding is
+  (namespace, name), so whether two policies collide is a fact about the cluster, not about values.
+
+  WHAT A COLLISION ACTUALLY LOOKS LIKE, measured by applying two same-labelKey CRs on purpose — worth
+  knowing because it does not announce itself:
+    - both Roles are created and coexist. Only the RoleBinding is contested.
+    - the second policy creates ZERO RoleBindings, because roleRef is IMMUTABLE in Kubernetes:
+        RoleBinding "…-rb" is invalid: roleRef: Invalid value: …: cannot change roleRef
+    - the operator error-loops on that patch forever, while the CR still logs
+      "resources processed successfully" at INFO. So the CR looks healthy and the grant is simply absent.
+
+  So: give each policy its own labelKey. That is the family boundary, and different label -> different
+  namespaces -> different RoleBinding names -> nothing to contest. If a grant from one of these policies
+  is missing, check the manager log for "cannot change roleRef" before suspecting anything else.
 */ -}}
-{{- if hasKey $seenLabel $p.labelKey }}
-{{- fail (printf "namespaceConfigPolicy.oudGroup.policies.%s reuses labelKey %q, already used by %q. Both CRs would select the same namespaces and create the same RoleBinding name with different roles, and the operator would rewrite one over the other every reconcile. Give each policy its own label." $key $p.labelKey (index $seenLabel $p.labelKey)) }}
-{{- end }}
-{{- $seenLabel = set $seenLabel $p.labelKey $key }}
 {{- /*
   NAME AND configSource ARE DERIVED FROM THE MAP KEY, so the key is the single place a policy's identity
   is written. values.yaml ships both as '' and this fills them in: key `abc` gives the CR name

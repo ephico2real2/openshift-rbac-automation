@@ -30,6 +30,31 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.17.0, MINOR: removes the duplicate-labelKey guard from the oudGroup template. Behaviour for any
+# valid configuration is unchanged — this only stops refusing a configuration it should never have judged.
+#
+# The guard was on the wrong axis in BOTH directions:
+#   NOT NECESSARY   two policies can share a labelKey harmlessly if their objects end up named
+#                   differently. The Roles already are — each policy names its own.
+#   NOT SUFFICIENT  two policies with DIFFERENT labelKeys still collide if a namespace carries both
+#                   labels with the SAME VALUE, since the RoleBinding is named "<label value>-rb". The
+#                   guard compared labelKeys, so it permitted exactly that.
+#
+# AND NO RENDER-TIME GUARD CAN BE CORRECT. The RoleBinding name comes from the label's VALUE, read from a
+# namespace at reconcile time — Helm cannot see it. RoleBinding uniqueness is (namespace, name), so
+# whether two policies collide is a fact about the cluster, not about values.yaml.
+#
+# Replaced with the measured failure mode, because it does not announce itself. Applying two
+# same-labelKey CRs on purpose showed:
+#   - both Roles are created and coexist; only the RoleBinding is contested
+#   - the second policy creates ZERO RoleBindings — roleRef is IMMUTABLE:
+#       RoleBinding "…-rb" is invalid: roleRef: Invalid value: …: cannot change roleRef
+#   - the operator error-loops on that patch forever while the CR still logs
+#     "resources processed successfully" at INFO, so the CR looks healthy and the grant is just absent
+#
+# One labelKey per family is the convention, and it is the family boundary anyway: different label ->
+# different namespaces -> different RoleBinding names -> nothing to contest.
+#
 # 0.16.0, MINOR and A MIGRATION, NOT JUST AN UPGRADE — read the procedure below before syncing.
 #
 # rbac.ocp.io/config-source NOW HOLDS THE NAME OF THE CR that created the object, on every object, so it
@@ -293,7 +318,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.16.0
+version: 0.17.0
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:
