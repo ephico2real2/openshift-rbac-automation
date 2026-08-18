@@ -131,6 +131,24 @@ data:
     # resolution can never produce. Same script, same ConfigMap, same ServiceAccount — one code path,
     # so the two callers cannot drift.
     if [ "${MODE:-full}" = "reclaim-only" ]; then
+      # If this run actually reclaimed something the operator is now DOWN, because deleting the CSV
+      # removes its Deployment. Wait for OLM to put it back before letting the release continue: the
+      # later hooks and, under ArgoCD, any pruning in the next sync all assume a live controller. A CR
+      # deleted while the operator is absent is the case that leaves RBAC behind with no owning policy.
+      if [ -n "${RECLAIMED:-}" ]; then
+        log "waiting for OLM to reinstall the operator after the reclaim"
+        odeadline=$(( $(date +%s) + ${RECLAIM_WAIT_SECONDS:-90} ))
+        while [ "$(date +%s)" -lt "$odeadline" ]; do
+          NEWCSV="$(oc get subscription "$SUBSCRIPTION" -n "$NAMESPACE" \
+                      -o jsonpath='{.status.installedCSV}' 2>/dev/null || true)"
+          if [ -n "$NEWCSV" ]; then
+            log "operator CSV reinstalled: ${NEWCSV}"
+            break
+          fi
+          sleep 5
+        done
+        [ -n "${NEWCSV:-}" ] || log "WARNING: operator CSV not reinstalled within ${RECLAIM_WAIT_SECONDS:-90}s; later hooks may find no controller"
+      fi
       log "reclaim-only mode: done"
       exit 0
     fi

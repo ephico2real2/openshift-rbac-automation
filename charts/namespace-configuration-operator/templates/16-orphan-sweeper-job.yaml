@@ -1,0 +1,79 @@
+{{- if .Values.orphanSweeper.enabled }}
+# Runs the orphan sweep LAST, after the policy CRs have been applied and after ArgoCD has pruned
+# anything no longer declared.
+#
+# hook-weight 20 puts it behind csv-reclaim (0), the InstallPlan approver (5) and image-override (10).
+# sync-wave 4 puts it behind the policy CRs (3). Both are needed: the weight orders it among the hooks,
+# the wave orders it among the resources under ArgoCD.
+#
+# WHY POST AND NOT PRE: the orphans this exists for are created BY the sync — a pruned policy CR whose
+# objects outlived it. Sweeping before the sync would inspect the previous state and miss them; sweeping
+# after cleans them within the same sync, which is what makes the sync self-healing rather than leaving
+# a dangling grant until someone notices.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "nco.orphanSweeper.name" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: orphan-sweeper
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "20"
+    helm.sh/hook-delete-policy: before-hook-creation
+    argocd.argoproj.io/sync-wave: "4"
+spec:
+  backoffLimit: {{ .Values.orphanSweeper.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.orphanSweeper.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ .Values.orphanSweeper.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "nco.labels" . | nindent 8 }}
+        app.kubernetes.io/component: orphan-sweeper
+    spec:
+      serviceAccountName: {{ include "nco.orphanSweeper.name" . }}
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: sweep-orphans
+          image: {{ .Values.operatorImage.job.image | quote }}
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "/scripts/sweep-orphans.sh"]
+          env:
+            # The label every object this chart's policies create carries. Objects without it are never
+            # considered, whatever their annotations say.
+            - name: MANAGED_BY
+              value: "namespace-configuration-operator"
+            - name: DRY_RUN
+              value: {{ .Values.orphanSweeper.dryRun | quote }}
+            # 0 disables the cap. Any positive number aborts a run that would delete more than this,
+            # which is the guard against a failed CR lookup cascading into revoking everything.
+            - name: ORPHAN_LIMIT
+              value: {{ .Values.orphanSweeper.limit | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.orphanSweeper.resources | nindent 12 }}
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            # oc writes a cache under $HOME and the root filesystem is read-only.
+            - name: home
+              mountPath: /.kube
+      volumes:
+        - name: scripts
+          configMap:
+            name: {{ include "nco.orphanSweeper.name" . }}
+            defaultMode: 0555
+        - name: home
+          emptyDir: {}
+{{- end }}

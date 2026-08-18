@@ -138,6 +138,11 @@ metadata:
     description: {{ $p.description | quote }}
     # After the operator is installed and its CSV is running. A NamespaceConfig applied before the CRD
     # exists fails the release; applied before the controller is up it simply sits there.
+    # WAVE 3, AND IT MUST STAY ABOVE THE SUBSCRIPTION'S WAVE (0). ArgoCD deletes in REVERSE wave order,
+    # so a higher wave here means the policy CRs are removed FIRST on teardown — while the operator is
+    # still running and can execute their finalizers. Drop this below the Subscription and teardown
+    # deadlocks: the CRs sit in Terminating with a finalizer no controller is left to run, and their
+    # objects are stranded. ci.yaml asserts the ordering so this cannot regress unnoticed.
     argocd.argoproj.io/sync-wave: "3"
 spec:
   labelSelector:

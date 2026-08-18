@@ -102,6 +102,36 @@ jobs:
             || { echo "::error::the index .Labels expression did not survive Helm"; exit 1; }
           echo "operator expressions intact"
 
+      # ArgoCD deletes in REVERSE sync-wave order, so the policy CRs must sit at a HIGHER wave than the
+      # Subscription. If that inverts, teardown deletes the Subscription first, the operator goes with
+      # it, and the CRs are left in Terminating with finalizers nothing can run — their RBAC objects
+      # stranded. Nothing about the rendered YAML looks wrong when that happens, which is why it is
+      # asserted here rather than left to review.
+      - name: Policy CRs are deleted before the Subscription
+        run: |
+          python3 - <<'EOF'
+          import subprocess, yaml, sys
+          out = subprocess.run(["helm","template","r","charts/namespace-configuration-operator",
+                  "-f","charts/namespace-configuration-operator/crc-values.yaml"],
+                  capture_output=True, text=True, check=True).stdout
+          sub, policies = None, []
+          for d in yaml.safe_load_all(out):
+              if not d: continue
+              w = (d["metadata"].get("annotations") or {}).get("argocd.argoproj.io/sync-wave")
+              if d["kind"] == "Subscription": sub = int(w) if w is not None else 0
+              if d["kind"] in ("NamespaceConfig","GroupConfig"):
+                  policies.append((d["metadata"]["name"], int(w) if w is not None else 0))
+          assert sub is not None, "no Subscription rendered"
+          assert policies, "no policy CRs rendered"
+          print("Subscription wave=%d" % sub)
+          bad = [(n,w) for n,w in policies if w <= sub]
+          for n,w in policies: print("  %-26s wave=%d" % (n,w))
+          if bad:
+              print("::error::these policy CRs are at or below the Subscription's wave (%d): %s" % (sub,bad))
+              sys.exit(1)
+          print("OK: every policy CR is deleted before the Subscription")
+          EOF
+
       # Chart.yaml's version must move when the chart does, or chart-releaser silently publishes
       # nothing (skip_existing) and the repo's index quietly stops matching the source.
       - name: Chart version bumped

@@ -24,6 +24,14 @@ Name shared by the InstallPlan approver's SA, Role, RoleBinding, ConfigMap and J
 {{- end }}
 
 {{/*
+Name shared by the orphan sweeper's SA, ClusterRole, ClusterRoleBinding, ConfigMap and Job. Same
+pattern as the two above so the whole unit is greppable and deletable together.
+*/}}
+{{- define "nco.orphanSweeper.name" -}}
+{{- printf "%s-orphan-sweeper" .Values.subscription.packageName | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
 Fully-qualified operator image the CSV should be patched to.
 */}}
 {{- define "nco.imageOverride.image" -}}

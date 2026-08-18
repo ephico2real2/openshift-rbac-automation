@@ -109,6 +109,54 @@ subscription:
       cpu: 500m
       memory: 512Mi
 
+# -------------------- Orphan sweeper (one-shot self-healing) --------------------
+# Deletes RBAC objects whose owning policy CR no longer exists.
+#
+# ON BY DEFAULT, because the chart is meant to be one shot under ArgoCD. A declarative sync has nobody
+# to notice a dangling grant, and the failure it cleans up is silent: the objects look healthy, carry
+# valid-looking provenance, and point at a policy that is not there.
+#
+# MEASURED, not hypothetical. Three CRs deleted while the operator was restarting left 20 RoleBindings
+# alive and still granting, with no owning policy. They had no ownerReferences, so Kubernetes GC would
+# never have collected them, and no future reconcile would ever touch them again. They had to be found
+# and deleted by hand — this stanza is that clean-up made automatic.
+#
+# IT HOLDS A BROAD PERMISSION. The sweeper runs with a ClusterRole granting delete on rolebindings,
+# clusterrolebindings and roles cluster-wide, because RoleBindings live in every namespace and
+# ClusterRoleBindings are cluster-scoped. What narrows it is the script, not the RBAC: an object is only
+# ever deleted if it carries app.kubernetes.io/managed-by=namespace-configuration-operator AND names a
+# policy CR in rbac.ocp.io/source-{namespace,group}config that does not exist. Objects without that
+# annotation are counted and left alone.
+orphanSweeper:
+  # OFF removes the Job, the ConfigMap and the ClusterRole entirely — nothing is left holding the
+  # permission. The trade-off is that an orphaned grant then survives until somebody runs the query in
+  # working-sessions/docs/labels-and-annotations.md §5 and notices.
+  enabled: true
+
+  # Report without deleting. Useful for one sync to see what it WOULD remove before letting it act.
+  # Leave false for the one-shot behaviour: with dryRun true the sweeper logs orphans and exits 0, so
+  # ArgoCD reports a healthy sync while the dangling grants remain.
+  dryRun: false
+
+  # Abort a run that would delete more than this many objects in one go. 0 disables the cap.
+  #
+  # THIS IS A BLAST-RADIUS GUARD, not a tuning knob. An empty policy-CR list is legitimate (every flag
+  # off) but is also what a FAILED API lookup looks like — and in that case every object this chart
+  # manages appears orphaned. 25 is above the largest legitimate sweep seen here (20) and well below the
+  # full object count (42), so a lookup failure aborts loudly instead of revoking the cluster.
+  limit: 25
+
+  backoffLimit: 2
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 3600
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
 # -------------------- Operator image override (CSV patch) --------------------
 # Runs our own build of the operator instead of the catalog's image.
 #
