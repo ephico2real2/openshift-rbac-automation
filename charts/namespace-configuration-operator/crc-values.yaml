@@ -39,6 +39,15 @@ namespaceConfigPolicy:
       bdp:
         enabled: true
 
+        # THE LABEL THIS POLICY KEYS ON, stated explicitly for the same reason the baseline's two keys
+        # are below: this file is the record of what the cluster grants, and a reader should not have to
+        # open values.yaml to learn which label decides it.
+        #
+        # It is deliberately NOT the baseline's mnemonic label. This policy selects on its own key and
+        # reads the GROUP NAME from that label's value, so one namespace can be in the baseline's world
+        # and this one at the same time without the two grants colliding.
+        labelKey: company.net/oud-group
+
   # The baseline every team receives. As of 0.9.0 nonprod grants developer + audit (admin removed) and
   # prod grants audit only (developer removed).
   baseline:

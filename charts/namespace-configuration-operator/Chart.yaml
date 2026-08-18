@@ -30,6 +30,33 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.19.1, PATCH: the dangling-Role sweep was deleting HEALTHY RoleBindings. It asked whether a
+# roleRef's target existed with `! oc get role ... >/dev/null 2>&1`, which is true for "not found" AND
+# for "Forbidden" — and the sweeper's ClusterRole granted list+delete on roles but NOT `get`. So the
+# lookup was refused, every managed RoleBinding looked dangling, and every sync deleted all of them.
+#
+# It hid because the outcome looked correct. Measured on a no-op 0.18.1 -> 0.19.0 upgrade:
+#   06:10:36-40  sweeper deleted 3 rolebindings, reporting "Role/spark-job-submitter-role does not exist"
+#   06:10:37-42  the operator rebuilt all 3
+#   before 26/13/3 = 42 objects, after 26/13/3 = 42, inventory diff IDENTICAL
+# Counts matched, grants worked, and `oc get` showed nothing — while access was actually revoked for a
+# second or two in three namespaces on every single sync. The 0.19.0 verification confirmed the EFFECT
+# (the roleRef repointed) and never checked the MECHANISM, which is how it shipped.
+#
+# TWO FIXES, because either alone leaves the trap:
+#   1. `get` added to the roles rule. The question needs it; list cannot answer it.
+#   2. The script now distinguishes absent from unreadable, using --ignore-not-found (verified on this
+#      cluster: absent rc=0/empty, exists rc=0/name, forbidden rc=1). It deletes ONLY on a definite
+#      absence and ABORTS on any error, naming the missing verb as the likely cause.
+#
+# THE SAME DEFECT CLASS WAS FIXED IN BOTH SWEEPS. Every `2>/dev/null || true` is gone: the policy-CR
+# lookups now abort instead of yielding an empty list that would make every object look orphaned
+# (ORPHAN_LIMIT would have caught that mass deletion, but a limit is a backstop, not a diagnosis), and
+# the per-kind object lookups abort instead of reporting a clean run they never performed.
+#
+# ALSO: crc-values.yaml states the bdp policy's labelKey (company.net/oud-group) explicitly, so the
+# per-cluster file records which label decides the grant rather than inheriting it silently.
+
 # 0.19.0, MINOR: a roleName change is now SELF-HEALING, and the policy comments are deduplicated.
 #
 # THE SWEEPER GAINED A SECOND SWEEP: any RoleBinding whose roleRef names a Role that does not exist is
@@ -395,7 +422,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.19.0
+version: 0.19.1
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:
