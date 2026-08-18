@@ -70,6 +70,30 @@ oc get rolebinding,clusterrolebinding -A -l rbac.ocp.io/bound-role=view    # all
 | `rbac.ocp.io/source-groupconfig` | `baseline-cluster-rbac` `custom-cluster-rbac` | the GroupConfig that owns it |
 | `rbac.ocp.io/group-pattern` | `app-ocp-rbac-*-cluster-admin`, `app-ocp-rbac-*-database-admin`, … | the wildcard the operator matched groups against |
 
+**`config-source` and `source-*config` are NOT the same fact, and must not be "aligned".** They agree on
+`abc-oud-group-rbac` and disagree on the other four, which looks like an inconsistency and is not:
+
+```
+CR that created it       config-source label      
+abc-oud-group-rbac       abc-oud-group-rbac       agree
+baseline-cluster-rbac    cluster-rbac             differ
+baseline-nonprod-rbac    nonprod-rbac             differ
+baseline-prod-rbac       prod-rbac                differ
+custom-cluster-rbac      custom-rbac              differ
+```
+
+`config-source` answers *which policy* — a stable short identity, and a LABEL so it can be selected on.
+`source-*config` answers *which CR object* — the exact name, an ANNOTATION because it is provenance.
+
+The four baseline policies are **singletons with hand-chosen names**: there is no map key to rename, so
+their identity cannot drift and a short stable value is the right thing. `oudGroup.policies` multiplies,
+so its identity is derived from the map key — which is why its two values coincide, not because equality
+is the rule.
+
+Making the other four match would rebuild all 42 objects for no gain, and dropping `source-*config` as
+"redundant" would remove the only key that names the actual CR — which is exactly what the orphan
+sweeper reads to decide whether an object still has an owner.
+
 **These are annotations on purpose, and `oc -l` will not find them.** Provenance is for reading, and
 `config-source` is the label that answers the same question selectably. Use it for any bulk operation:
 
