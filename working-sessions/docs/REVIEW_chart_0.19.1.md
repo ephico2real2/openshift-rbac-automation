@@ -724,3 +724,141 @@ against the live CRC cluster (5 CRs, 42 managed objects, verified). Nothing was 
 | sweeper harness (stub oc), current script | scenarios 1-12: S1a, S1b, S5, S2, forbidden-abort, counter/IFS results as quoted |
 | sweeper harness, S1 replacement script | all corrected behaviours + no regressions, quoted above |
 | live CRC (read-only + `--as=`) | CR names, 42-object label inventory, can-i matrix, three-way probe table, probe timing, stale-selector 0-match proofs |
+
+---
+
+## Claude — adjudication (pass 1)
+
+Every claim below was re-measured here before being accepted. Three are amended rather than taken as
+given, and two are rejected. What I re-ran myself: a plain `helm template` (3 policy CRs), the four stale
+selectors against the live cluster (0 vs 20, 0 vs 12), the full label-value inventory across all 42
+managed objects, the `configSource` grep, the orphaned values.yaml block, the K1 mutation (sweeper at
+weight 4 → the current checker still prints OK), stderr-vs-rc on the sweeper's four exact commands, and
+the `ORPHAN_LIMIT` cap under `25 / 0 / abc / ''`.
+
+| claim | verdict | outcome |
+|---|---|---|
+| S1 stdout-only + limit guard | **ACCEPT**, evidence amended | apply, see A1 |
+| S2 second sweep uncapped | **ACCEPT the refutation** | no change |
+| S3 per-binding probe cost | **ACCEPT the refutation** | no change |
+| S4 split the RBAC rules | **ACCEPT** | apply as written |
+| S5 dry-run wording | **ACCEPT** | ships inside S1's block |
+| P1 operator expressions | **ACCEPT the refutation** | no change |
+| P2 empty label value | **ACCEPT**, comment only | apply as written |
+| P3 shared roleName | **ACCEPT the content, REWRITE the form** | see A2 |
+| K1 hook-weight direction | **ACCEPT the invariant, SIMPLIFY the code** | see A3 |
+| K2 anchored wave regex | **ACCEPT** | apply as written |
+| D1-a/b/c comment condensing | **ACCEPT** (file 12 only for D1-a) | apply |
+| D1-a twin in file 10 | **REJECT** | it is that file's only full statement |
+| D1-d two-engines block ×4 | **REJECT** | see A4 |
+| D2-1 off-by-default is false | **ACCEPT** | apply, highest value |
+| D2-2 annotation → label | **ACCEPT** | apply |
+| D2-3 cap rationale | **ACCEPT** | apply |
+| D2-4 phantom `configSource` | **ACCEPT the content, REWRITE the form** | see A2 |
+| D2-5 orphaned comment block | **ACCEPT** | apply, merged with D1-b |
+| D2-6 stale label values | **ACCEPT**, extended | apply, plus A5 |
+| N1 crc-values "ONE override" | **ACCEPT** | in scope for us |
+| N2 `_README.txt` says `abc` | **ACCEPT** | in scope for us |
+
+### A1 — S1: the finding is right, its evidence is not, and the halves differ in urgency
+
+**The stderr half is LATENT, not active, and Fable's proof does not show what it claims.** The cited
+example — `oc auth can-i get clusterrolebindings` printing `Warning: resource 'clusterrolebindings' is not
+namespace scoped` — returns **rc=1**, not rc=0, so it does not demonstrate a warning arriving on a
+successful call. Measured here on the sweeper's four exact commands, with a **4.13.6 client against a
+4.18.2 server** (a five-minor skew, which is where a version warning would come from if anywhere):
+
+```
+rc=0  stderr=0 bytes  stdout=55    existing Role probe
+rc=0  stderr=0 bytes  stdout=0     absent Role probe
+rc=0  stderr=0 bytes  stdout=59    namespaceconfig list
+rc=0  stderr=0 bytes  stdout=1449  rolebinding list -A
+```
+
+So no live sweep is silently keeping a dangling binding today. **Accepted anyway**, because the reasoning
+holds independently of whether it currently fires: a delete decision must not be made from a stream that
+can carry non-data, and the fix costs nothing — the API's message still reaches the pod log through
+stderr, which is where a human reads it. Fix the shape, don't wait for the symptom.
+
+**The `ORPHAN_LIMIT` half IS active, and the reachable trigger is better than the one given.** Fable
+reached it through a runbook `oc exec`; the ordinary path is a **typo in values.yaml**, which Helm renders
+straight into the Job's env with no validation. Measured:
+
+```
+ORPHAN_LIMIT=25   -> CAP FIRES (refuses)
+ORPHAN_LIMIT=0    -> cap does not fire   (documented: 0 disables)
+ORPHAN_LIMIT=abc  -> cap does not fire, 30 deletions proceed   ([: abc: integer expression expected)
+ORPHAN_LIMIT=''   -> cap does not fire, 30 deletions proceed
+```
+
+`limit: abc` in a values file therefore silently removes the blast-radius guard that values.yaml
+promises, and the run reports success. That is the half worth shipping quickly.
+
+### A2 — P3 and D2-4: right content, wrong comment form
+
+Both replacements are written as `{{- /* … */ -}}`. **This repo's convention is `#`.** File 12 is the only
+one of the four policy templates that uses Helm comment blocks — two of them, the exact two these
+findings touch; files 10, 11 and 13 contain **zero**. Applying them as written would preserve an
+inconsistency; converting them to `#` removes it, so both are applied as `#` comment blocks with the
+wording otherwise intact.
+
+One consequence to keep in mind while converting, since it is the reason the distinction exists: a `#`
+comment is YAML, so it survives into the rendered manifest, while `{{- /* */ -}}` is stripped at render.
+That is why the render hash in `BASELINE_0.19.1.md` will move for these edits.
+
+### A3 — K1: the invariant is real, the implementation is heavier than it needs to be
+
+Confirmed by my own mutation: the sweeper Job at `hook-weight: "4"` — unique, waves untouched — still
+produces `OK: … and no two hooks share a weight` from the current checker, for a chart whose plain-Helm
+install cannot succeed. The gap is exactly as described.
+
+The proposed code walks `hook_weights` in a nested loop and intersects hook-event sets per pair. The
+invariant is simpler than that: **the sweeper's weight must be strictly greater than every other hook
+sharing at least one of its events.** Implement it that way — one pass to collect the sweeper's weight and
+events, one comparison loop — and keep the explanatory comment, which is the part that earns its place.
+
+### A4 — D1-d rejected: that duplication is deliberate
+
+The two-engines block in all four policy files was kept per-file **on purpose** in 0.19.0. It is the trap
+warning for the failure mode with no error message — Helm evaluating an operator expression, rendering the
+grant away and reporting success. A pointer to `templating-guide.md` is not equivalent to the warning
+sitting in front of someone editing that file. Fable itself calls this a judgment call rather than an
+error; the judgment is to keep it. Sixteen lines is a cheap price for the one trap that fails silently.
+
+### A5 — D2-6 extended: two more stale numbers I measured
+
+Accepted as written, plus these, which the finding did not reach:
+
+- `labels-and-annotations.md:152` — "Four keys are on all **55** objects; `bound-role` and `group-name`
+  are on all **52** bindings." Live: **42** objects and **39** bindings (26 RoleBindings + 13
+  ClusterRoleBindings). The Role correctly has neither, and the doc already says so at line 155.
+- `labels-and-annotations.md:48` — the `role-type` → `bound-role` mapping lists `ns-admin → admin` as a
+  live pairing. That tier was removed in 0.9.0 and **0 of 42** objects carry it. Keep the row only if it
+  is marked as retired; otherwise drop it, since the table reads as the current contract.
+
+Confirmed against the live inventory, which also validates every value list D2-6 proposes:
+
+```
+config-source  baseline-cluster-rbac(12), baseline-nonprod-rbac(20), baseline-prod-rbac(3),
+               bdp-oud-group-rbac(6), custom-cluster-rbac(1)
+role-type      cluster-admin(6), cluster-audit(2), cluster-developer(4), database-admin(1),
+               ns-audit(13), ns-developer(10), spark-job-submitter(6)        <- no ns-admin, no submitter
+bound-role     admin(6), database-admin(1), edit(14), spark-job-submitter-role(3), view(15)
+               [absent on the 3 Roles, correctly]
+group-naming   absent on all 42 — it is a CR-level label only
+```
+
+### Order of application
+
+Safety first, then truth, then tidying — so a partial application still leaves the chart better:
+
+1. **S1** (limit guard + stdout-only) and **S4** (split rules) — the two that change behaviour.
+2. **K1**, **K2** — the checker, so the ordering guarantees are real before further edits.
+3. **D2-1** — the comment that misstates whether a plain install grants access.
+4. **D2-6 + A5**, **D2-2**, **D2-3**, **D2-4**, **D2-5**, **N1**, **N2** — corrections to what is written.
+5. **D1-a (file 12), D1-b, D1-c**, **P2**, **P3** — condensing and the two trap comments.
+
+Chart version: **0.19.2**, PATCH. Behaviour changes are a guard becoming strict and a permission being
+narrowed; everything else is comment and doc truth. `BASELINE_0.19.1.md` is the before-picture, and its
+own rule 4 applies — the render hash WILL move because comments live in the manifests, so the proof for
+those steps is a YAML diff showing only comments moved, not an unchanged hash.
