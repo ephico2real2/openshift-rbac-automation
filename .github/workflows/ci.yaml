@@ -131,6 +131,17 @@ jobs:
             || { echo "::error::no 'index .Labels' expression survived Helm — a namespace-label lookup was evaluated at render time"; exit 1; }
           echo "operator expressions intact: $(echo "$out" | grep -c 'hasSuffix') hasSuffix, $(echo "$out" | grep -c 'index .Labels') index .Labels"
 
+      # Install and uninstall ordering: policy CRs deleted BEFORE the Subscription, the sweep applied
+      # AFTER the CRs, every resource declaring an explicit wave, no two hooks sharing a weight.
+      #
+      # THE LOGIC LIVES IN THE REPO, NOT HERE, and that is the point. Inline it was lost once in an
+      # editing accident and nobody could run it before pushing. As a script it is reviewable, it runs
+      # locally, and it DISCOVERS what to check — charts by glob, overlays by glob, policy CRs by API
+      # group — so adding a template or a cluster overlay needs no edit to this workflow and none to
+      # the script. Its own header documents the three rules that keep it from going stale.
+      - name: Ordering is declared, not accidental
+        run: working-sessions/scripts/check-ordering.py
+
       # Chart.yaml's version must move when the chart does, or chart-releaser silently publishes
       # nothing (skip_existing) and the repo's index quietly stops matching the source.
       - name: Chart version bumped
