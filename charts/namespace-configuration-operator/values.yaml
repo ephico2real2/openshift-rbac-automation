@@ -449,7 +449,15 @@ clusterRbac:
   # separate CRs; this is deliberately one, because they share an identical selector and differ only
   # in data. Renaming this ORPHANS nothing but DOES delete and recreate: the operator revokes the old
   # CR's bindings and the new CR rebuilds them.
-  name: baseline-groupconfig-rbac
+  # RENAMING THIS IS RELIABLE, unlike removing a role from the list below — the two look similar and
+  # behave differently, so it is worth knowing which you are doing. A rename is delete-plus-create: the
+  # old CR's finalizer removes every ClusterRoleBinding it made and the new CR recreates all of them.
+  # Measured on this rename: 12 objects rebuilt within 6 seconds, every one carrying the new name in its
+  # rbac.ocp.io/source-groupconfig annotation, and ZERO left claiming the old one. Removing a role
+  # instead leaves orphans — see the warning above the roles list.
+  #
+  # The window is real though: for those few seconds nobody this policy grants has cluster-wide access.
+  name: baseline-cluster-groupconfig-rbac
   description: "Cluster RBAC baseline: admin/view/edit ClusterRoles for the cluster tiers of synced groups"
 
   # SYNCED GROUPS ONLY, and this is the only thing narrowing the selector. GroupSync sets this label

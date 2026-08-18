@@ -30,6 +30,19 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.10.0, MINOR: renames the cluster-wide GroupConfig from baseline-groupconfig-rbac to
+# baseline-cluster-groupconfig-rbac, so its name says which SCOPE it covers — the sibling NamespaceConfig
+# policies already carry nonprod/prod in theirs, and "baseline" alone did not distinguish the two.
+#
+# A rename is a REVOCATION AND REBUILD, not a relabel. Helm treats it as delete-plus-create: the old CR's
+# groupconfig-controller finalizer deletes all 12 ClusterRoleBindings, then the new CR recreates them.
+# Measured on the equivalent oud-group rename in 0.9.0: objects gone in ~4s, back within ~50s. On a shared
+# cluster that is a window with no cluster-wide access for anyone this policy grants.
+#
+# The rbac.ocp.io/source-groupconfig ANNOTATION on every generated object changes with it. Anything reading
+# that value needs updating; rbac.ocp.io/config-source is unchanged (still cluster-rbac) and remains the
+# label to select on.
+#
 # 0.9.0, MINOR and BEHAVIOUR-CHANGING IN BOTH DIRECTIONS — read before upgrading.
 #
 # THE POLICIES NOW SHIP ENABLED. namespaceConfigPolicy, its baseline and oudGroup children, and
@@ -90,7 +103,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.9.0
+version: 0.10.0
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:

@@ -67,7 +67,7 @@ oc get rolebinding,clusterrolebinding -A -l rbac.ocp.io/bound-role=view    # all
 | key | values | meaning |
 |---|---|---|
 | `rbac.ocp.io/source-namespaceconfig` | `nonprod-namespaceconfig-rbac` `prod-namespaceconfig-rbac` `abc-oud-group-namespaceconfig-rbac` | the NamespaceConfig that owns it |
-| `rbac.ocp.io/source-groupconfig` | `baseline-groupconfig-rbac` `custom-groupconfig-rbac` | the GroupConfig that owns it |
+| `rbac.ocp.io/source-groupconfig` | `baseline-cluster-groupconfig-rbac` `custom-groupconfig-rbac` | the GroupConfig that owns it |
 | `rbac.ocp.io/group-pattern` | `app-ocp-rbac-*-cluster-admin`, `app-ocp-rbac-*-database-admin`, … | the wildcard the operator matched groups against |
 
 **These are annotations on purpose, and `oc -l` will not find them.** Provenance is for reading, and
