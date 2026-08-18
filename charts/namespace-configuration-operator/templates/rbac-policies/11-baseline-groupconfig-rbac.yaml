@@ -84,7 +84,7 @@
 # metadata forward, delete them and let the operator rebuild. SELECT ON config-source, NOT on
 # source-groupconfig — the latter is an ANNOTATION below, and `oc -l` matches only labels, so it selects
 # NOTHING and the delete reads as a clean no-op. Verified against the live objects:
-# -l rbac.ocp.io/source-groupconfig=baseline-groupconfig-rbac returns 0 of 12, while
+# -l rbac.ocp.io/source-groupconfig=baseline-cluster-groupconfig-rbac returns 0 of 12, while
 # -l rbac.ocp.io/config-source=cluster-rbac returns all 12.
 #   oc delete clusterrolebinding -l rbac.ocp.io/config-source=cluster-rbac
 {{- $group := "{{ .Name }}" }}

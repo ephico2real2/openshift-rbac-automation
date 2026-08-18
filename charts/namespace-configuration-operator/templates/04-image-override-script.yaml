@@ -49,6 +49,110 @@ data:
 
     log "namespace=${NAMESPACE} subscription=${SUBSCRIPTION} target=${TARGET_IMAGE}"
 
+    # --- 0. RECLAIM AN ORPHANED CSV -------------------------------------------------------
+    # `helm uninstall` deletes the Subscription but OLM LEAVES THE CSV BEHIND — measured, it carries
+    # no ownerReferences at all, so nothing garbage-collects it. The next install then cannot resolve,
+    # because a CSV for this package exists that no Subscription references:
+    #
+    #   constraints not satisfiable: @existing/...v1.2.6 and community-operators/...v1.2.6 originate
+    #   from package namespace-configuration-operator, clusterserviceversion ...v1.2.6 exists and is
+    #   not referenced by a subscription
+    #
+    # THIS MUST SELF-HEAL, not just report. ArgoCD manages this chart declaratively: there is no human
+    # in the sync loop to run `oc delete csv`, so a Subscription stuck on ResolutionFailed would fail
+    # every sync forever. So the orphan is reclaimed here and OLM re-resolves on its own.
+    #
+    # SIX CONDITIONS, ALL REQUIRED, because this deletes something the chart does not own:
+    #   1. our Subscription reports ResolutionFailed=True — on a healthy cluster nothing below runs
+    #   2. the CSV is in the INSTALL namespace (never a tenant namespace)
+    #   3. its name matches this package
+    #   4. it has NO ownerReferences (an OLM-managed CSV has an owner; an orphan does not)
+    #   5. no Subscription reports it as installedCSV
+    #   6. it is NOT an OLM copy. This one matters: AllNamespaces mode copies the CSV into EVERY
+    #      namespace — 104 of them on this cluster — and every copy looks unowned and unreferenced.
+    #      Deleting a copy fights OLM, which re-creates it. Only the source has an empty
+    #      olm.copiedFrom, and only the source blocks resolution.
+    if [ "${RECLAIM_ORPHANED_CSV:-true}" = "true" ]; then
+      # WAIT FOR OLM TO PUBLISH A VERDICT before deciding. Straight after a sync neither condition is
+      # set yet, so sampling once would see nothing and skip the reclaim — which is how this silently
+      # became dependent on the reconcile CronJob happening to fire. Poll until OLM either reports an
+      # installed CSV (healthy, nothing to do) or ResolutionFailed (act), capped so a genuinely broken
+      # catalog still fails rather than hanging.
+      RESOLUTION=""
+      rdeadline=$(( $(date +%s) + ${RECLAIM_WAIT_SECONDS:-90} ))
+      while [ "$(date +%s)" -lt "$rdeadline" ]; do
+        if [ -n "$(oc get subscription "$SUBSCRIPTION" -n "$NAMESPACE" \
+                     -o jsonpath='{.status.installedCSV}' 2>/dev/null || true)" ]; then
+          RESOLUTION="resolved"; break
+        fi
+        RESOLUTION="$(oc get subscription "$SUBSCRIPTION" -n "$NAMESPACE" \
+                        -o jsonpath='{.status.conditions[?(@.type=="ResolutionFailed")].status}' 2>/dev/null || true)"
+        [ "$RESOLUTION" = "True" ] && break
+        log "waiting for OLM to resolve Subscription/${SUBSCRIPTION} (or report why it cannot)..."
+        sleep 5
+      done
+      if [ "$RESOLUTION" = "True" ]; then
+        log "Subscription/${SUBSCRIPTION} reports ResolutionFailed; looking for an orphaned CSV to reclaim"
+        RECLAIMED=""
+        # CSVs are named <package>.vX.Y.Z and SUBSCRIPTION is already the package name, so this is
+        # scoped to our operator without another env var.
+        for c in $(oc get csv -n "$NAMESPACE" -o name 2>/dev/null | grep "$SUBSCRIPTION" || true); do
+          name="${c##*/}"
+          copied="$(oc get "$c" -n "$NAMESPACE" -o jsonpath='{.metadata.labels.olm\.copiedFrom}' 2>/dev/null || true)"
+          [ -n "$copied" ] && { log "  ${name}: OLM copy of ${copied}, leaving alone"; continue; }
+          owners="$(oc get "$c" -n "$NAMESPACE" -o jsonpath='{.metadata.ownerReferences}' 2>/dev/null || true)"
+          [ -n "$owners" ] && { log "  ${name}: has ownerReferences, OLM-managed, leaving alone"; continue; }
+          referenced=""
+          for s in $(oc get subscription -n "$NAMESPACE" -o name 2>/dev/null || true); do
+            installed="$(oc get "$s" -n "$NAMESPACE" -o jsonpath='{.status.installedCSV}' 2>/dev/null || true)"
+            [ "$installed" = "$name" ] && referenced="yes"
+          done
+          [ -n "$referenced" ] && { log "  ${name}: referenced by a Subscription, leaving alone"; continue; }
+          log "  ${name}: ORPHANED (no owner, unreferenced, not a copy) — deleting so OLM can resolve"
+          oc delete csv "$name" -n "$NAMESPACE" --wait=true 2>&1 | sed 's/^/    /' || \
+            fail "could not delete orphaned CSV ${name}; the ServiceAccount needs delete on clusterserviceversions"
+          RECLAIMED="${RECLAIMED} ${name}"
+        done
+        if [ -n "$RECLAIMED" ]; then
+          log "reclaimed:${RECLAIMED} — OLM will now re-resolve the Subscription"
+        else
+          # Resolution is failing for some OTHER reason. Say so plainly rather than letting the wait
+          # loop below time out and blame InstallPlan approval, which would be the wrong answer.
+          MSG="$(oc get subscription "$SUBSCRIPTION" -n "$NAMESPACE" \
+                   -o jsonpath='{.status.conditions[?(@.type=="ResolutionFailed")].message}' 2>/dev/null || true)"
+          fail "Subscription/${SUBSCRIPTION} cannot resolve and no orphaned CSV explains it. OLM says: ${MSG}"
+        fi
+      fi
+    fi
+
+
+    # RECLAIM-ONLY MODE. The dedicated reclaim hook runs at a lower hook-weight than the InstallPlan
+    # approver so the orphan is cleared BEFORE anything starts waiting on an InstallPlan that a failed
+    # resolution can never produce. Same script, same ConfigMap, same ServiceAccount — one code path,
+    # so the two callers cannot drift.
+    if [ "${MODE:-full}" = "reclaim-only" ]; then
+      # If this run actually reclaimed something the operator is now DOWN, because deleting the CSV
+      # removes its Deployment. Wait for OLM to put it back before letting the release continue: the
+      # later hooks and, under ArgoCD, any pruning in the next sync all assume a live controller. A CR
+      # deleted while the operator is absent is the case that leaves RBAC behind with no owning policy.
+      if [ -n "${RECLAIMED:-}" ]; then
+        log "waiting for OLM to reinstall the operator after the reclaim"
+        odeadline=$(( $(date +%s) + ${RECLAIM_WAIT_SECONDS:-90} ))
+        while [ "$(date +%s)" -lt "$odeadline" ]; do
+          NEWCSV="$(oc get subscription "$SUBSCRIPTION" -n "$NAMESPACE" \
+                      -o jsonpath='{.status.installedCSV}' 2>/dev/null || true)"
+          if [ -n "$NEWCSV" ]; then
+            log "operator CSV reinstalled: ${NEWCSV}"
+            break
+          fi
+          sleep 5
+        done
+        [ -n "${NEWCSV:-}" ] || log "WARNING: operator CSV not reinstalled within ${RECLAIM_WAIT_SECONDS:-90}s; later hooks may find no controller"
+      fi
+      log "reclaim-only mode: done"
+      exit 0
+    fi
+
     # --- 1. Resolve the CSV via the Subscription -----------------------------------------
     # .status.installedCSV rather than a hardcoded name, so an operator version bump
     # (or a different startingCSV) is followed automatically.

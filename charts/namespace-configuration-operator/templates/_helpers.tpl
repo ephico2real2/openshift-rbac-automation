@@ -24,6 +24,14 @@ Name shared by the InstallPlan approver's SA, Role, RoleBinding, ConfigMap and J
 {{- end }}
 
 {{/*
+Name shared by the orphan sweeper's SA, ClusterRole, ClusterRoleBinding, ConfigMap and Job. Same
+pattern as the two above so the whole unit is greppable and deletable together.
+*/}}
+{{- define "nco.orphanSweeper.name" -}}
+{{- printf "%s-orphan-sweeper" .Values.subscription.packageName | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
 Fully-qualified operator image the CSV should be patched to.
 */}}
 {{- define "nco.imageOverride.image" -}}
@@ -35,6 +43,18 @@ Pod spec shared by the image-override Job and the reconcile CronJob, so both run
 container, the same env and the same script. Rendered at the "spec:" level of a PodTemplate.
 */}}
 {{- define "nco.imageOverride.podSpec" -}}
+{{- /*
+  Shared by the image-override hook Job, the reconcile CronJob and the csv-reclaim hook Job, so all
+  three run byte-identical logic from one ConfigMap.
+
+  Accepts EITHER the root context (the historical callers) OR a dict {root, mode}. The dict form only
+  adds MODE to the env, which the script uses to run just the orphan reclaim and exit. Kept
+  backward-compatible on purpose: a second copy of this pod spec is how the two callers would drift.
+*/ -}}
+{{- $root := . }}
+{{- $mode := "" }}
+{{- if kindIs "map" . }}{{- if hasKey . "root" }}{{- $root = .root }}{{- $mode = .mode | default "" }}{{- end }}{{- end }}
+{{- with $root }}
 serviceAccountName: {{ include "nco.imageOverride.name" . }}
 restartPolicy: Never
 securityContext:
@@ -65,6 +85,14 @@ containers:
         value: {{ .Values.operatorImage.imagePullSecret | quote }}
       - name: WAIT_SECONDS
         value: {{ .Values.operatorImage.job.waitSeconds | quote }}
+      - name: RECLAIM_ORPHANED_CSV
+        value: {{ .Values.operatorImage.reclaimOrphanedCSV | quote }}
+      - name: RECLAIM_WAIT_SECONDS
+        value: {{ .Values.operatorImage.reclaimWaitSeconds | quote }}
+{{- if $mode }}
+      - name: MODE
+        value: {{ $mode | quote }}
+{{- end }}
     securityContext:
       allowPrivilegeEscalation: false
       readOnlyRootFilesystem: true
@@ -86,6 +114,7 @@ volumes:
       defaultMode: 0555
   - name: home
     emptyDir: {}
+{{- end }}
 {{- end }}
 
 {{/*

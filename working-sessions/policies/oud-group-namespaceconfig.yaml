@@ -36,7 +36,7 @@
 apiVersion: redhatcop.redhat.io/v1alpha1
 kind: NamespaceConfig
 metadata:
-  name: oud-group-namespaceconfig-rbac
+  name: abc-oud-group-rbac
   labels:
     app.kubernetes.io/name: namespace-configuration-operator
     app.kubernetes.io/component: rbac-automation
@@ -72,7 +72,7 @@ spec:
             rbac.ocp.io/role-type: submitter
             rbac.ocp.io/scope: namespace-scoped
           annotations:
-            rbac.ocp.io/source-namespaceconfig: oud-group-namespaceconfig-rbac
+            rbac.ocp.io/source-namespaceconfig: abc-oud-group-rbac
         rules:
           - apiGroups: [""]
             resources:
@@ -114,7 +114,7 @@ spec:
             rbac.ocp.io/scope: namespace-scoped
             rbac.ocp.io/group-name: "{{ index .Labels "company.net/oud-group" }}"
           annotations:
-            rbac.ocp.io/source-namespaceconfig: oud-group-namespaceconfig-rbac
+            rbac.ocp.io/source-namespaceconfig: abc-oud-group-rbac
         subjects:
           - kind: Group
             name: "{{ index .Labels "company.net/oud-group" }}"

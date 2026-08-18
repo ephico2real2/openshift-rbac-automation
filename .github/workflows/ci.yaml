@@ -24,15 +24,53 @@ jobs:
       - name: helm lint
         run: helm lint "$CHART"
 
-      # The default install is the operator alone: every policy flag ships false, so a render with
-      # no flags must produce ZERO policy CRs. If this ever fails, a policy has become on-by-default
-      # and someone gets access they were not granted.
-      - name: Policies are off by default
+      # The policies now ship ENABLED by default — that is the deliberate standard, so this no longer
+      # asserts zero. What still has to hold is that the OFF switches work, because they are the only
+      # way to stop the chart writing RBAC. A master switch that silently does nothing would be the
+      # dangerous failure here.
+      - name: The off switches actually switch off
         run: |
           n=$(helm template release "$CHART" \
+                --set namespaceConfigPolicy.enabled=false \
+                --set clusterRbac.enabled=false \
+                --set customGroupConfig.enabled=false \
                 | grep -cE '^kind: (NamespaceConfig|GroupConfig)' || true)
-          echo "policy CRs with no flags: $n"
-          [ "$n" -eq 0 ] || { echo "::error::expected 0 policy CRs by default, got $n"; exit 1; }
+          echo "policy CRs with every switch off: $n"
+          [ "$n" -eq 0 ] || { echo "::error::expected 0 policy CRs with all switches off, got $n"; exit 1; }
+
+      # And the master switch alone must be enough: namespaceConfigPolicy.enabled=false has to stop
+      # BOTH NamespaceConfig policies regardless of their own per-policy flags.
+      - name: The master switch overrides per-policy flags
+        run: |
+          n=$(helm template release "$CHART" \
+                --set namespaceConfigPolicy.enabled=false \
+                --set namespaceConfigPolicy.baseline.enabled=true \
+                --set namespaceConfigPolicy.oudGroup.enabled=true \
+                | grep -cE '^kind: NamespaceConfig' || true)
+          echo "NamespaceConfigs with master off but children on: $n"
+          [ "$n" -eq 0 ] || { echo "::error::master switch did not override, got $n"; exit 1; }
+
+      # The committed defaults must render what values.yaml actually declares — computed from values,
+      # not hardcoded, so this does not need editing every time a flag flips.
+      - name: Defaults render exactly the enabled policies
+        run: |
+          python3 - <<'EOF' > /tmp/expected
+          import yaml
+          v=yaml.safe_load(open("charts/namespace-configuration-operator/values.yaml"))
+          n=0
+          ncp=v["namespaceConfigPolicy"]
+          if ncp.get("enabled"):
+              if ncp["oudGroup"].get("enabled"): n+=1
+              if ncp["baseline"].get("enabled"):
+                  n+=sum(1 for p in ncp["baseline"]["policies"].values() if p.get("enabled"))
+          if v["clusterRbac"].get("enabled"): n+=1
+          if v["customGroupConfig"].get("enabled"): n+=1
+          print(n)
+          EOF
+          want=$(cat /tmp/expected)
+          got=$(helm template release "$CHART" | grep -cE '^kind: (NamespaceConfig|GroupConfig)' || true)
+          echo "values declares $want enabled policies; chart renders $got"
+          [ "$want" -eq "$got" ] || { echo "::error::values declares $want, chart renders $got"; exit 1; }
 
       # And with everything switched on, all five must render. This is the check that would have
       # caught a template silently rendering away — the failure mode that matters here, because
@@ -63,6 +101,36 @@ jobs:
           echo "$out" | grep -q 'index .Labels "company.net/oud-group"' \
             || { echo "::error::the index .Labels expression did not survive Helm"; exit 1; }
           echo "operator expressions intact"
+
+      # ArgoCD deletes in REVERSE sync-wave order, so the policy CRs must sit at a HIGHER wave than the
+      # Subscription. If that inverts, teardown deletes the Subscription first, the operator goes with
+      # it, and the CRs are left in Terminating with finalizers nothing can run — their RBAC objects
+      # stranded. Nothing about the rendered YAML looks wrong when that happens, which is why it is
+      # asserted here rather than left to review.
+      - name: Policy CRs are deleted before the Subscription
+        run: |
+          python3 - <<'EOF'
+          import subprocess, yaml, sys
+          out = subprocess.run(["helm","template","r","charts/namespace-configuration-operator",
+                  "-f","charts/namespace-configuration-operator/crc-values.yaml"],
+                  capture_output=True, text=True, check=True).stdout
+          sub, policies = None, []
+          for d in yaml.safe_load_all(out):
+              if not d: continue
+              w = (d["metadata"].get("annotations") or {}).get("argocd.argoproj.io/sync-wave")
+              if d["kind"] == "Subscription": sub = int(w) if w is not None else 0
+              if d["kind"] in ("NamespaceConfig","GroupConfig"):
+                  policies.append((d["metadata"]["name"], int(w) if w is not None else 0))
+          assert sub is not None, "no Subscription rendered"
+          assert policies, "no policy CRs rendered"
+          print("Subscription wave=%d" % sub)
+          bad = [(n,w) for n,w in policies if w <= sub]
+          for n,w in policies: print("  %-26s wave=%d" % (n,w))
+          if bad:
+              print("::error::these policy CRs are at or below the Subscription's wave (%d): %s" % (sub,bad))
+              sys.exit(1)
+          print("OK: every policy CR is deleted before the Subscription")
+          EOF
 
       # Chart.yaml's version must move when the chart does, or chart-releaser silently publishes
       # nothing (skip_existing) and the repo's index quietly stops matching the source.

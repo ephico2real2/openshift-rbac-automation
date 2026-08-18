@@ -1,0 +1,44 @@
+{{- if and .Values.operatorImage.enabled .Values.operatorImage.reclaimOrphanedCSV }}
+# Clears a CSV orphaned by a previous `helm uninstall`, so this chart installs in ONE SHOT with no
+# human step. Required for ArgoCD, which syncs declaratively and has nobody to run `oc delete csv`.
+#
+# WHY THIS IS ITS OWN HOOK RATHER THAN PART OF THE IMAGE-OVERRIDE JOB
+# hook-weight 0, which puts it AHEAD of the InstallPlan approver (5) and the image-override job (10).
+# That ordering is the whole point and it was found the hard way: with the reclaim living in the
+# image-override job at weight 10, the approver ran first and sat waiting for an InstallPlan that a
+# failed resolution can never produce. Measured on this cluster — the approver waited from 03:26:53 to
+# 03:30:29, and the install only recovered because the reconcile CronJob happened to fire at 03:30:00
+# and do the cleanup itself. With reconcile disabled, or a different schedule, that install would have
+# failed. Clearing the orphan before anything starts waiting removes the luck.
+#
+# It runs the SAME script from the SAME ConfigMap in MODE=reclaim-only, so there is one code path and
+# the two callers cannot drift.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "nco.imageOverride.name" . }}-csv-reclaim
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: csv-reclaim
+  annotations:
+    # post-install/post-upgrade, NOT pre-*: the Subscription has to exist before OLM can report
+    # ResolutionFailed, and a pre-install hook runs before it is applied.
+    #
+    # ArgoCD maps these onto PostSync, so the same ordering holds under ArgoCD as under plain Helm.
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  backoffLimit: {{ .Values.operatorImage.job.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.operatorImage.job.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ .Values.operatorImage.job.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "nco.labels" . | nindent 8 }}
+        app.kubernetes.io/component: csv-reclaim
+    spec:
+      {{- include "nco.imageOverride.podSpec" (dict "root" . "mode" "reclaim-only") | nindent 6 }}
+{{- end }}

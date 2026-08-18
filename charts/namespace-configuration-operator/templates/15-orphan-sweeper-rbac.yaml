@@ -1,0 +1,71 @@
+{{- if .Values.orphanSweeper.enabled }}
+# RBAC for the orphan sweeper.
+#
+# A ClusterRole, and deliberately so: the objects it cleans up are RoleBindings in ANY namespace and
+# ClusterRoleBindings, which are cluster-scoped. A namespaced Role cannot reach either.
+#
+# THIS IS A BROAD GRANT AND WORTH READING BEFORE ACCEPTING IT. `delete` on rolebindings,
+# clusterrolebindings and roles cluster-wide is the permission to remove RBAC anywhere on the cluster.
+# It is accepted here because the alternative measured worse: a policy CR deleted while the operator was
+# restarting left 20 RoleBindings alive and still granting, with no owning policy and no ownerReferences,
+# so nothing would ever have collected them. A silent live grant is a worse outcome than this
+# permission existing.
+#
+# WHAT NARROWS IT IN PRACTICE — the permission is broad, the script is not. It only ever deletes an
+# object that satisfies BOTH conditions together: carries
+# app.kubernetes.io/managed-by=namespace-configuration-operator, AND names a policy CR in its
+# rbac.ocp.io/source-{namespace,group}config annotation that does not exist. Objects with no such
+# annotation are counted and left alone. orphanSweeper.limit caps a single run, so a failed CR lookup
+# cannot cascade into deleting everything the chart grants.
+#
+# Set orphanSweeper.enabled=false to remove this ClusterRole and the sweeper entirely.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "nco.orphanSweeper.name" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: orphan-sweeper
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "nco.orphanSweeper.name" . }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: orphan-sweeper
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+rules:
+  # The objects being swept. list to find them, delete to remove them. No create, no update — the
+  # sweeper never makes or edits a grant, which is what keeps it auditable.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings", "clusterrolebindings", "roles"]
+    verbs: ["list", "delete"]
+  # Read-only, and it is the whole basis of the decision: an object is an orphan only because the CR
+  # named in its provenance annotation is absent from this list.
+  - apiGroups: ["redhatcop.redhat.io"]
+    resources: ["namespaceconfigs", "groupconfigs"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "nco.orphanSweeper.name" . }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: orphan-sweeper
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "nco.orphanSweeper.name" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "nco.orphanSweeper.name" . }}
+    namespace: {{ .Values.namespace }}
+{{- end }}

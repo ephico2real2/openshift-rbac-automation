@@ -5,15 +5,34 @@
 Subscription, the CSV image override, the InstallPlan approver. Touching those changes how the operator
 runs. Touching these changes **who has access to what**.
 
-| file | CRD | grants | emits |
-|---|---|---|---|
-| `10-baseline-namespaceconfig-rbac.yaml` | NamespaceConfig | the baseline every team gets, per namespace — nonprod and prod | RoleBindings |
-| `11-baseline-groupconfig-rbac.yaml` | GroupConfig | the baseline cluster-wide tiers | ClusterRoleBindings |
-| `12-custom-oud-group-namespaceconfig-rbac.yaml` | NamespaceConfig | a bespoke submitter Role, per namespace | Role + RoleBinding |
-| `13-custom-groupconfig-rbac.yaml` | GroupConfig | ClusterRoles we define, bound by group-name suffix | ClusterRoleBindings or RoleBindings |
+| file | CRD | grants | emits | CR name it creates |
+|---|---|---|---|---|
+| `10-baseline-namespaceconfig-rbac.yaml` | NamespaceConfig | the baseline every team gets, per namespace — nonprod and prod | RoleBindings | `baseline-nonprod-rbac`, `baseline-prod-rbac` |
+| `11-baseline-groupconfig-rbac.yaml` | GroupConfig | the baseline cluster-wide tiers | ClusterRoleBindings | `baseline-cluster-rbac` |
+| `12-custom-oud-group-namespaceconfig-rbac.yaml` | NamespaceConfig | a bespoke submitter Role, per namespace | Role + RoleBinding | `abc-oud-group-rbac` |
+| `13-custom-groupconfig-rbac.yaml` | GroupConfig | ClusterRoles we define, bound by group-name suffix | ClusterRoleBindings or RoleBindings | `custom-cluster-rbac` |
 
-Every one ships **disabled**. Nothing here grants anything until the matching flag in `values.yaml` is
-set, which is why the chart can be installed for the operator alone.
+## The FILENAME names the CRD. The CR NAME names the family and scope.
+
+Two different jobs, deliberately not the same string:
+
+- **The filename keeps `namespaceconfig` / `groupconfig`** so anyone opening this directory sees which
+  CRD a template handles without reading it. That is not cosmetic: a NamespaceConfig is keyed on a
+  NAMESPACE and emits RoleBindings, a GroupConfig is keyed on a GROUP and emits ClusterRoleBindings, and
+  inside an objectTemplate `.Name` therefore means a different thing in each. It is the first fact you
+  need and the last one you should have to go hunting for.
+- **The CR name drops it**, because `kind:` on the object and the `rbac.ocp.io/kind` label already state
+  it. What a CR name has to answer is *which policy is this* while you are looking at a binding's
+  provenance on a cluster — hence `<family>-<scope>-rbac`, which lines up with the
+  `rbac.ocp.io/config-source` label values (`nonprod-rbac`, `prod-rbac`, `cluster-rbac`, …).
+
+So renaming a CR is a values change and never touches these filenames. Helm ignores template filenames
+entirely; the numbering is a reading order for humans and nothing more.
+
+**As of 0.9.0 these ship ENABLED** — `namespaceConfigPolicy`, its `baseline` and `oudGroup` children, and
+`clusterRbac` all default to true; only `customGroupConfig` is still off. Installing this chart therefore
+writes RBAC against any namespace or group matching the selectors. For the operator alone, set
+`namespaceConfigPolicy.enabled=false` and `clusterRbac.enabled=false` explicitly.
 
 ## Helm renders subdirectories — this folder is not special to Helm
 

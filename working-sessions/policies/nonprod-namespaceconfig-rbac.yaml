@@ -1,7 +1,7 @@
 apiVersion: redhatcop.redhat.io/v1alpha1
 kind: NamespaceConfig
 metadata:
-  name: nonprod-namespaceconfig-rbac
+  name: baseline-nonprod-rbac
   labels:
     app.kubernetes.io/name: namespace-configuration-operator
     app.kubernetes.io/component: rbac-automation
@@ -38,7 +38,7 @@ spec:
             rbac.ocp.io/mnemonic: "{{ index .Labels "company.net/mnemonic" }}"
             rbac.ocp.io/environment: "{{ index .Labels "company.net/app-environment" }}"
           annotations:
-            rbac.ocp.io/source-namespaceconfig: nonprod-namespaceconfig-rbac
+            rbac.ocp.io/source-namespaceconfig: baseline-nonprod-rbac
         subjects:
         - kind: Group
           name: "app-ocp-rbac-{{ index .Labels "company.net/mnemonic" }}-ns-admin"
@@ -65,7 +65,7 @@ spec:
             rbac.ocp.io/mnemonic: "{{ index .Labels "company.net/mnemonic" }}"
             rbac.ocp.io/environment: "{{ index .Labels "company.net/app-environment" }}"
           annotations:
-            rbac.ocp.io/source-namespaceconfig: nonprod-namespaceconfig-rbac
+            rbac.ocp.io/source-namespaceconfig: baseline-nonprod-rbac
         subjects:
         - kind: Group
           name: "app-ocp-rbac-{{ index .Labels "company.net/mnemonic" }}-ns-developer"
@@ -92,7 +92,7 @@ spec:
             rbac.ocp.io/mnemonic: "{{ index .Labels "company.net/mnemonic" }}"
             rbac.ocp.io/environment: "{{ index .Labels "company.net/app-environment" }}"
           annotations:
-            rbac.ocp.io/source-namespaceconfig: nonprod-namespaceconfig-rbac
+            rbac.ocp.io/source-namespaceconfig: baseline-nonprod-rbac
         subjects:
         - kind: Group
           name: "app-ocp-rbac-{{ index .Labels "company.net/mnemonic" }}-ns-audit"

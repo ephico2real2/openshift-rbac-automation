@@ -109,6 +109,54 @@ subscription:
       cpu: 500m
       memory: 512Mi
 
+# -------------------- Orphan sweeper (one-shot self-healing) --------------------
+# Deletes RBAC objects whose owning policy CR no longer exists.
+#
+# ON BY DEFAULT, because the chart is meant to be one shot under ArgoCD. A declarative sync has nobody
+# to notice a dangling grant, and the failure it cleans up is silent: the objects look healthy, carry
+# valid-looking provenance, and point at a policy that is not there.
+#
+# MEASURED, not hypothetical. Three CRs deleted while the operator was restarting left 20 RoleBindings
+# alive and still granting, with no owning policy. They had no ownerReferences, so Kubernetes GC would
+# never have collected them, and no future reconcile would ever touch them again. They had to be found
+# and deleted by hand — this stanza is that clean-up made automatic.
+#
+# IT HOLDS A BROAD PERMISSION. The sweeper runs with a ClusterRole granting delete on rolebindings,
+# clusterrolebindings and roles cluster-wide, because RoleBindings live in every namespace and
+# ClusterRoleBindings are cluster-scoped. What narrows it is the script, not the RBAC: an object is only
+# ever deleted if it carries app.kubernetes.io/managed-by=namespace-configuration-operator AND names a
+# policy CR in rbac.ocp.io/source-{namespace,group}config that does not exist. Objects without that
+# annotation are counted and left alone.
+orphanSweeper:
+  # OFF removes the Job, the ConfigMap and the ClusterRole entirely — nothing is left holding the
+  # permission. The trade-off is that an orphaned grant then survives until somebody runs the query in
+  # working-sessions/docs/labels-and-annotations.md §5 and notices.
+  enabled: true
+
+  # Report without deleting. Useful for one sync to see what it WOULD remove before letting it act.
+  # Leave false for the one-shot behaviour: with dryRun true the sweeper logs orphans and exits 0, so
+  # ArgoCD reports a healthy sync while the dangling grants remain.
+  dryRun: false
+
+  # Abort a run that would delete more than this many objects in one go. 0 disables the cap.
+  #
+  # THIS IS A BLAST-RADIUS GUARD, not a tuning knob. An empty policy-CR list is legitimate (every flag
+  # off) but is also what a FAILED API lookup looks like — and in that case every object this chart
+  # manages appears orphaned. 25 is above the largest legitimate sweep seen here (20) and well below the
+  # full object count (42), so a lookup failure aborts loudly instead of revoking the cluster.
+  limit: 25
+
+  backoffLimit: 2
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 3600
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
 # -------------------- Operator image override (CSV patch) --------------------
 # Runs our own build of the operator instead of the catalog's image.
 #
@@ -134,6 +182,34 @@ operatorImage:
   tag: latest
   # Always, so a moving ":latest" tag is re-pulled on every pod start.
   pullPolicy: Always
+
+  # SELF-HEAL AN ORPHANED CSV. Leave this ON if anything automated manages the release.
+  #
+  # `helm uninstall` deletes the Subscription and OLM leaves the CSV behind with no ownerReferences, so
+  # nothing collects it. The next install cannot resolve — "clusterserviceversion ... exists and is not
+  # referenced by a subscription" — and with installPlanApproval: Manual the symptom is the image-override
+  # hook burning its full waitSeconds and then blaming InstallPlan approval, which is not the cause.
+  #
+  # ArgoCD is the reason this defaults to true: a declarative sync has no human to run
+  # `oc delete csv`, so a Subscription stuck on ResolutionFailed fails every sync forever. With this on,
+  # the hook reclaims the orphan and OLM re-resolves by itself — install and re-install are one shot.
+  #
+  # It deletes something the chart does not own, so it is fenced by six conditions checked together:
+  # our Subscription reports ResolutionFailed, the CSV is in the install namespace, its name matches the
+  # package, it has no ownerReferences, no Subscription reports it installed, and it is NOT an OLM copy.
+  # That last one is load-bearing — AllNamespaces mode copies this CSV into every namespace (104 of them
+  # on the test cluster) and every copy looks unowned and unreferenced. Only the source blocks resolution.
+  #
+  # Set false to make the hook fail loudly instead, leaving the orphan for a human to remove:
+  #   oc delete csv -n <namespace> <package>.vX.Y.Z
+  reclaimOrphanedCSV: true
+
+  # How long the reclaim hook waits for OLM to publish a verdict on the Subscription — either an
+  # installed CSV (healthy, nothing to do) or ResolutionFailed (act). Straight after a sync neither is
+  # set yet, so it has to poll; sampling once is how this silently became dependent on the reconcile
+  # CronJob firing. Measured: a healthy upgrade resolves on the first poll and the hook exits in ~1s,
+  # so this ceiling only applies when something is actually wrong.
+  reclaimWaitSeconds: 90
 
   # Safety guard. The patch is applied only when the CSV's current image either sits in the
   # `repository` above (a tag bump — always in policy) or matches this pattern. Anything else
@@ -211,7 +287,7 @@ podSecurity:
 namespaceConfigPolicy:
   # Master switch for every policy below. With this false, no policy renders whatever its own flag
   # says — one place to stop the chart writing RBAC at all.
-  enabled: false
+  enabled: true
 
   # -------- company.net/oud-group --------
   # The label holds the WHOLE group name and the template uses it verbatim:
@@ -228,13 +304,20 @@ namespaceConfigPolicy:
   # somewhere else, so it lives in Kyverno — working-sessions/policies/kyverno-namespace-oud-group.yaml
   # — where it is visible and auditable rather than buried in an objectTemplate.
   oudGroup:
-    enabled: false
+    enabled: true
 
     # The CR's name, and the value written into every generated object's
-    # rbac.ocp.io/source-namespaceconfig label — so a generated Role can be traced back to what made
-    # it. Changing it ORPHANS objects created under the old name: the operator no longer recognises
-    # them and will not clean them up.
-    name: oud-group-namespaceconfig-rbac
+    # rbac.ocp.io/source-namespaceconfig ANNOTATION — so a generated Role can be traced back to what
+    # made it. Annotation, not a label: `oc -l` will not match it, so use
+    # rbac.ocp.io/config-source below to select this policy's objects.
+    #
+    # CHANGING THIS IS A REVOCATION, not an orphaning. Helm treats a renamed resource as a delete plus
+    # a create: the old CR is deleted, its namespaceconfig-controller finalizer revokes every object it
+    # made, and the new CR then rebuilds them under the new name. Measured on this cluster: 6 objects
+    # (3 Roles + 3 RoleBindings) gone in ~4s and back within ~50s. Nothing is left behind — an earlier
+    # version of this comment claimed objects would be orphaned, which is the opposite of what happens
+    # and would have led someone to hunt for stale objects instead of planning a window.
+    name: abc-oud-group-rbac
 
     # THE LABEL, and it does two jobs: the CR selects namespaces that HAVE it, and the template binds
     # whatever its VALUE says. Both, from one key — which is why the template refuses to render when
@@ -253,7 +336,7 @@ namespaceConfigPolicy:
     # The TIER, written to rbac.ocp.io/role-type on both the Role and the RoleBinding — the same key
     # every policy uses, so one query finds every tier across all of them. Descriptive only: it grants
     # nothing, `rules` below is the grant.
-    roleType: submitter
+    roleType: spark-job-submitter
 
     # Paths the operator IGNORES when comparing what it would create against what exists, so a
     # cluster-assigned field does not read as drift and cause a rewrite every reconcile.
@@ -286,6 +369,18 @@ namespaceConfigPolicy:
           - watch
           - delete
           - deletecollection
+          - patch
+          - update
+      - apiGroups: [""]
+        resources:
+          - secrets
+        verbs:
+          - create
+          - get
+          - watch
+          - delete
+          - update
+          - patch
       - apiGroups: [""]
         resources:
           - pods/log
@@ -318,7 +413,7 @@ namespaceConfigPolicy:
     # them 44 seconds after the delete — so a flag flip on a shared cluster is a 44-second window with
     # no namespace access for anyone this grants. Same applies to renaming a policy's `name`: Helm
     # deletes the old resource and creates the new one.
-    enabled: false
+    enabled: true
 
     # The group family. Combined with the mnemonic and the role, this produces
     # app-ocp-rbac-<mnemonic>-ns-<role> — the convention
@@ -339,7 +434,7 @@ namespaceConfigPolicy:
       # ---- non-production: rnd / eng / qa / uat ----
       nonprod:
         enabled: true
-        name: nonprod-namespaceconfig-rbac
+        name: baseline-nonprod-rbac
         description: "Nonprod RBAC: admin/developer/audit access for rnd/eng/qa/uat environments only"
 
         # AN EXPLICIT ALLOW-LIST, not "everything that is not prod". An environment nobody has ruled on
@@ -358,15 +453,18 @@ namespaceConfigPolicy:
         excludeEnvironments:
           - prod
 
-
         # `name` names the group and the binding; `clusterRole` IS the grant. Everything else — the
         # RoleBinding name, role-type, bound-role, group name — derives from these two; see
         # working-sessions/docs/templating-guide.md §3 for the full derivation table. clusterRole is
         # explicit because it is NOT derivable from the tier (developer -> edit, audit -> view) and
         # because it is the field an auditor reads.
+        #
+        # ns-admin WAS REMOVED FROM THIS LIST, and removing it did NOT fully revoke it. Of its 10
+        # RoleBindings, 4 disappeared and 6 SURVIVED still granting ClusterRole/admin — see the warning on
+        # clusterRbac.roles for the mechanism. They had to be deleted by hand:
+        #   oc delete rolebinding -A -l rbac.ocp.io/config-source=nonprod-rbac,rbac.ocp.io/role-type=ns-admin
+        # Do the same for any tier taken out of this list, and verify the count reaches zero.
         roles:
-          - name: admin
-            clusterRole: admin
           - name: developer
             clusterRole: edit
           - name: audit
@@ -383,8 +481,8 @@ namespaceConfigPolicy:
       # and the answer is: the full baseline. Turn this off only to deploy the nonprod half alone.
       prod:
         enabled: true
-        name: prod-namespaceconfig-rbac
-        description: "Prod RBAC: developer/audit access for prod environments only (no admin)"
+        name: baseline-prod-rbac
+        description: "Prod RBAC: developer/audit access for prod environments only (no admin or edit)"
         environments:
           - prod
         # Nothing to exclude: the allow-list is already a single value.
@@ -395,8 +493,6 @@ namespaceConfigPolicy:
         # reviewed exception, never by a namespace label. Adding an admin entry here would hand it to
         # every prod namespace at once.
         roles:
-          - name: developer
-            clusterRole: edit
           - name: audit
             clusterRole: view
 
@@ -423,13 +519,21 @@ clusterRbac:
   # ClusterRoleBinding it created. Measured on the namespace equivalent: 39 objects gone in 2 seconds,
   # restored 44 seconds later. On a shared cluster that is a window with no cluster-wide access for
   # anyone this grants.
-  enabled: false
+  enabled: true
 
   # ONE CR for all three tiers. The three source policies under working-sessions/policies/ are three
   # separate CRs; this is deliberately one, because they share an identical selector and differ only
   # in data. Renaming this ORPHANS nothing but DOES delete and recreate: the operator revokes the old
   # CR's bindings and the new CR rebuilds them.
-  name: baseline-groupconfig-rbac
+  # RENAMING THIS IS RELIABLE, unlike removing a role from the list below — the two look similar and
+  # behave differently, so it is worth knowing which you are doing. A rename is delete-plus-create: the
+  # old CR's finalizer removes every ClusterRoleBinding it made and the new CR recreates all of them.
+  # Measured on this rename: 12 objects rebuilt within 6 seconds, every one carrying the new name in its
+  # rbac.ocp.io/source-groupconfig annotation, and ZERO left claiming the old one. Removing a role
+  # instead leaves orphans — see the warning above the roles list.
+  #
+  # The window is real though: for those few seconds nobody this policy grants has cluster-wide access.
+  name: baseline-cluster-rbac
   description: "Cluster RBAC baseline: admin/view/edit ClusterRoles for the cluster tiers of synced groups"
 
   # SYNCED GROUPS ONLY, and this is the only thing narrowing the selector. GroupSync sets this label
@@ -453,8 +557,21 @@ clusterRbac:
   # template header for the five derivations.
   #
   # A TIER IS PRESENT OR IT IS NOT IN THIS LIST. There is no per-role enabled flag, deliberately —
-  # one way to express one thing. Removing an entry removes its template, and the operator prunes that
-  # tier's ClusterRoleBindings on the next reconcile, which is a revocation.
+  # one way to express one thing.
+  #
+  # REMOVING AN ENTRY DOES NOT RELIABLY REVOKE WHAT IT CREATED. Measured on this cluster when ns-admin
+  # was dropped from the baseline policy: of its 10 RoleBindings, 4 went and 6 SURVIVED — recreated by an
+  # in-flight reconcile a second before the operator shut down their per-object controllers ("Shutdown
+  # signal received" in the manager log). Those 6 still granted ClusterRole/admin, carried no
+  # ownerReferences so Kubernetes GC would never collect them, and nothing would ever reconcile them
+  # again. An earlier version of this comment claimed the operator prunes the tier on the next reconcile;
+  # it does not, and believing it leaves live grants behind.
+  #
+  # SO AFTER REMOVING A TIER, DELETE ITS OBJECTS EXPLICITLY and check the count reaches zero:
+  #   oc delete clusterrolebinding -l rbac.ocp.io/config-source=cluster-rbac,rbac.ocp.io/role-type=cluster-admin
+  #   oc get clusterrolebinding -l rbac.ocp.io/config-source=cluster-rbac,rbac.ocp.io/role-type=cluster-admin
+  # The provenance labels survive on the orphans, which is exactly what makes them selectable — one more
+  # reason config-source and role-type are on every object.
   roles:
     - name: admin
       clusterRole: admin
@@ -489,12 +606,13 @@ clusterRbac:
 # apimachinery resolves to labels.Everything(), i.e. EVERY group. The template hardcodes the
 # combination proven to narrow (sync-provider Exists, plus a per-entry hasSuffix guard) and lets you
 # vary only the axes where variation is safe.
+
 customGroupConfig:
   # OFF is chart safety. Turning it back off is a REVOCATION: the CR carries the
   # groupconfig-controller finalizer, so the operator deletes every binding it made.
   enabled: false
 
-  name: custom-groupconfig-rbac
+  name: custom-cluster-rbac
   description: "Custom RBAC: bind ClusterRoles defined outside this chart to chosen group suffixes"
   configSource: custom-rbac
 

@@ -32,7 +32,7 @@ Everything below was executed and the output is real, not illustrative.
 oc apply -f working-sessions/bda-namespace.yaml
 ```
 
-The standard `nonprod-namespaceconfig-rbac` matched immediately (all three namespaces carry
+The standard `baseline-nonprod-rbac` matched immediately (all three namespaces carry
 `company.net/mnemonic` + a non-prod `app-environment`) and created **all three** RoleBindings:
 
 ```
@@ -442,11 +442,11 @@ metadata change  adding an annotation to the template
 > objects and a delete reads as a clean no-op. Measured per family:
 >
 > ```
-> -l rbac.ocp.io/source-namespaceconfig=nonprod-namespaceconfig-rbac    0  (of 30)
+> -l rbac.ocp.io/source-namespaceconfig=baseline-nonprod-rbac    0  (of 30)
 > -l rbac.ocp.io/config-source=nonprod-rbac                           30
-> -l rbac.ocp.io/source-groupconfig=baseline-groupconfig-rbac           0  (of 12)
+> -l rbac.ocp.io/source-groupconfig=baseline-cluster-rbac   0  (of 12)
 > -l rbac.ocp.io/config-source=cluster-rbac                           12
-> -l rbac.ocp.io/source-namespaceconfig=oud-group-namespaceconfig-rbac  3  (of 3 — the exception)
+> -l rbac.ocp.io/source-namespaceconfig=abc-oud-group-rbac  3  (of 3 — the exception)
 > ```
 >
 > So `config-source` for everything the chart renders; `source-namespaceconfig` only for oud-group,

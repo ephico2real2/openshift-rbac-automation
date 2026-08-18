@@ -43,7 +43,7 @@ metadata:
     # because it is provenance rather than something to select on.
     rbac.ocp.io/policy-family: custom
   annotations:
-    rbac.ocp.io/bound-by: custom-groupconfig-rbac
+    rbac.ocp.io/bound-by: custom-cluster-rbac
     description: >-
       Administer database workloads (StatefulSets and their storage, services and
       non-secret config) in any namespace. Deliberately excludes cluster-wide secret
