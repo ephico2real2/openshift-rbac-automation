@@ -48,34 +48,36 @@
 {{- if not $p.rules }}
 {{- fail (printf "namespaceConfigPolicy.oudGroup.policies.%s has no rules, so it would create an empty Role that grants nothing while looking configured." $key) }}
 {{- end }}
-{{- /*
-  ONE labelKey PER POLICY — a convention, not a render-time guard, because it cannot be one. The
-  RoleBinding is named "<label value>-rb", and that value is read from a namespace at reconcile time, so
-  Helm cannot know whether two policies would collide. Uniqueness is (namespace, name), which makes it a
-  fact about the cluster rather than about values.
-
-  IF TWO POLICIES DO SHARE A labelKey, the failure is silent — measured by trying it:
-    - both Roles are created and coexist; only the RoleBinding is contested
-    - the second policy creates ZERO RoleBindings, because roleRef is immutable:
-        RoleBinding "…-rb" is invalid: roleRef: Invalid value: …: cannot change roleRef
-    - the operator error-loops on that patch while the CR logs "resources processed successfully"
-
-  So the CR reads healthy and the grant is absent. If a grant here is missing, grep the manager log for
-  "cannot change roleRef" first.
-*/ -}}
-{{- /*
-  NAME AND configSource ARE DERIVED FROM THE MAP KEY, so the key is the single place a policy's identity
-  is written. values.yaml ships both as '' and this fills them in: key `abc` gives the CR name
-  abc-oud-group-rbac and the config-source label abc-oud-group-rbac. Setting either explicitly overrides
-  the derivation, which is the escape hatch for a policy that has to keep a name it already has on a
-  cluster.
-
-  THE CONSEQUENCE OF DERIVING, worth knowing before renaming a key: the CR name IS cluster identity, and
-  Helm treats a renamed resource as delete-plus-create — the old CR's finalizer revokes every object it
-  made and the new CR rebuilds them. So renaming a key here is not a cosmetic values edit; it is a
-  revocation and rebuild of that policy's objects. Measured elsewhere in this chart at ~4s to revoke and
-  ~50s to restore. Rename deliberately, not while tidying.
-*/ -}}
+# ONE labelKey PER POLICY — a convention, not a render-time guard, because it cannot be one. The
+# RoleBinding is named "<label value>-rb", and that value is read from a namespace at reconcile time, so
+# Helm cannot know whether two policies would collide. Uniqueness is (namespace, name), which makes it a
+# fact about the cluster rather than about values.
+#
+# IF TWO POLICIES DO SHARE A labelKey, the failure is silent — measured by trying it:
+#   - both Roles are created and coexist; only the RoleBinding is contested
+#   - the second policy creates ZERO RoleBindings, because roleRef is immutable:
+#       RoleBinding "…-rb" is invalid: roleRef: Invalid value: …: cannot change roleRef
+#   - the operator error-loops on that patch while the CR logs "resources processed successfully"
+#
+# So the CR reads healthy and the grant is absent. If a grant here is missing, grep the manager log for
+# "cannot change roleRef" first.
+#
+# ONE roleName PER POLICY TOO, for the same reason with a worse failure. "Each policy defines its own
+# Role" holds only while the names differ: two policies sharing a roleName whose selectors overlap on a
+# namespace are two CRs reconciling ONE Role object — and rules are SPEC, which propagates, so each
+# reconcile rewrites the other's rules and the namespace's effective permissions oscillate between the
+# two lists. Nothing errors and both CRs log success. Unguardable at render time for the same reason as
+# labelKey: whether the selectors overlap is a fact about the cluster, not about values.
+# NAME IS DERIVED FROM THE MAP KEY, so the key is the single place a policy's identity is written.
+# values.yaml ships name: '' and this fills it in: key `bdp` gives the CR name bdp-oud-group-rbac.
+# Setting name explicitly overrides the derivation — the escape hatch for a policy that must keep a
+# name it already has on a cluster. The rbac.ocp.io/config-source label always carries the CR name;
+# it is not separately settable, so name (or the key) is also the selector for this policy's objects.
+#
+# THE CONSEQUENCE OF DERIVING, worth knowing before renaming a key: the CR name IS cluster identity,
+# and Helm treats a renamed resource as delete-plus-create — the old CR's finalizer revokes every
+# object it made and the new CR rebuilds them. Measured elsewhere in this chart at ~4s to revoke and
+# ~50s to restore. Rename deliberately, not while tidying.
 {{- $name := $p.name | default (printf "%s-oud-group-rbac" $key) }}
 {{- $group := printf "{{ index .Labels %s%s%s }}" "\"" $p.labelKey "\"" }}
 ---
@@ -143,20 +145,22 @@ spec:
             rbac.ocp.io/role-type: {{ $p.roleType }}
             rbac.ocp.io/scope: namespace-scoped
           annotations:
-            # THE CR THAT CREATED THIS OBJECT, in readable form. The same value is on the
-            # rbac.ocp.io/config-source LABEL above, and that duplication is deliberate rather than
-            # sloppy: the label is what you SELECT on, this is what you READ when you pull the object
-            # with `oc get -o yaml` or `oc describe`, where annotations are shown and labels are easy to
-            # skim past. The key name also carries which CRD owns it.
-            #
-            # It is also why the old `oc -l` trap is now harmless: if someone selects on this annotation
-            # and gets nothing, the label beside it holds the identical value and does work.
+            # The CR that created this object, readable. Same value as the config-source LABEL above:
+            # the label is what you select on, this is what you read in `oc get -o yaml` / `oc describe`
+            # — which is also why the old `oc -l`-on-an-annotation trap is now harmless.
             rbac.ocp.io/source-namespaceconfig: {{ $name }}
         rules:
           {{- toYaml $p.rules | nindent 10 }}
 
     # -------------------------------------------------------------------------
     # RoleBinding — subject is the label value, used VERBATIM
+    #
+    # AN EMPTY LABEL VALUE IS A REACHABLE BAD STATE: `labelKey Exists` matches a namespace whose
+    # value is "", the Role above still renders, and this binding renders name "-rb" with subject ""
+    # — which the API REJECTS (DNS-1123), so the operator error-loops on the create while the CR
+    # logs "resources processed successfully": no grant, no visible error. The Kyverno allowlist
+    # audits the value but does not block (Audit mode). If this policy's grant is missing in one
+    # namespace, check the label VALUE before reading the operator log.
     # -------------------------------------------------------------------------
     - excludedPaths:
         {{- toYaml $p.excludedPaths | nindent 8 }}

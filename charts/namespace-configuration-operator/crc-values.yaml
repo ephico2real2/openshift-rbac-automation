@@ -66,7 +66,7 @@ namespaceConfigPolicy:
 clusterRbac:
   enabled: true
 
-# THE ONE GENUINE OVERRIDE. customGroupConfig is the only policy still defaulting to false in
+# THE TWO GENUINE OVERRIDES are this and oudGroup.policies.bdp.enabled above — the only flags false in
 # values.yaml, so without this line an upgrade with -f would switch it off and revoke the
 # app-ocp-rbac-alpha-database-admin-crb binding. It stays on here because the LDAP group and the
 # ClusterRole both exist on this cluster:

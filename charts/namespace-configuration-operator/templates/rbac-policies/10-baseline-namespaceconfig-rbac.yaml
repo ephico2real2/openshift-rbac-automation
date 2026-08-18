@@ -140,7 +140,7 @@ spec:
   # config-source, which is a LABEL. source-namespaceconfig carries the same value but is an ANNOTATION,
   # and `oc -l` matches labels only — selecting on it returns nothing and the delete reads as a clean
   # no-op. Read the annotation, select on the label.
-  #   oc delete rolebinding -A -l rbac.ocp.io/config-source=nonprod-rbac   # prod-rbac for the prod CR
+  #   oc delete rolebinding -A -l rbac.ocp.io/config-source=baseline-nonprod-rbac   # baseline-prod-rbac for the prod CR
   templates:
     {{- range $r := $p.roles }}
     {{- $group := printf "%s-%s-ns-%s" $b.groupPrefix $mn $r.name }}

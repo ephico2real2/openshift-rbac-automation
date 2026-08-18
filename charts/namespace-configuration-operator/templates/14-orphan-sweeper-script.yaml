@@ -37,7 +37,12 @@ data:
     log()  { printf '%s  %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
     fail() { log "ERROR: $*"; exit 1; }
 
-    : "${MANAGED_BY:?}" "${DRY_RUN:?}"
+    # ORPHAN_LIMIT is required alongside the other two: an UNSET limit used to default to 0, which means
+    # "no cap" — so running this script outside the Job (a runbook, a debug pod) silently discarded the
+    # blast-radius guard values.yaml promises. Required-and-numeric makes 0 an explicit choice, never an
+    # accident of a missing env var or a typo'd value.
+    : "${MANAGED_BY:?}" "${DRY_RUN:?}" "${ORPHAN_LIMIT:?}"
+    case "$ORPHAN_LIMIT" in ''|*[!0-9]*) fail "ORPHAN_LIMIT must be a whole number (0 disables the cap), got '${ORPHAN_LIMIT}' — refusing to run without a working blast-radius guard";; esac
 
     log "sweeping objects labelled app.kubernetes.io/managed-by=${MANAGED_BY} whose owning CR is gone"
     [ "$DRY_RUN" = "true" ] && log "DRY RUN: nothing will be deleted"
@@ -49,19 +54,24 @@ data:
     # A FAILED LOOKUP IS NOT AN EMPTY RESULT. These used to end in `2>/dev/null || true`, which turned
     # any API error into "no policy CRs exist" — and every managed object would then look orphaned.
     # ORPHAN_LIMIT would have caught the resulting mass deletion, but a limit is a backstop, not a
-    # diagnosis. Abort instead, with the API's own message.
-    NCS="$(oc get namespaceconfig -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>&1)" \
-      || fail "cannot list namespaceconfigs, so which CRs are alive is unknown and NOTHING will be swept: ${NCS}"
-    GCS="$(oc get groupconfig -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>&1)" \
-      || fail "cannot list groupconfigs, so which CRs are alive is unknown and NOTHING will be swept: ${GCS}"
+    # diagnosis. Abort instead; the API's own message goes to the log on stderr, just above the abort.
+    #
+    # STDOUT ONLY on every capture in this script, deliberately: oc prints warnings to STDERR with
+    # rc=0, and a warning merged into a parsed result becomes a phantom data row — or, on the named-role
+    # probe below, makes an ABSENT Role read as PRESENT. Anything oc says that is not data belongs in
+    # the pod log, not in a variable.
+    NCS="$(oc get namespaceconfig -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')" \
+      || fail "cannot list namespaceconfigs, so which CRs are alive is unknown and NOTHING will be swept — the API's error is printed above"
+    GCS="$(oc get groupconfig -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')" \
+      || fail "cannot list groupconfigs, so which CRs are alive is unknown and NOTHING will be swept — the API's error is printed above"
     EXISTING="$(printf '%s\n%s\n' "$NCS" "$GCS" | sed '/^$/d')"
     log "live policy CRs: $(printf '%s' "$EXISTING" | tr '\n' ' ')"
 
-    # Guard against sweeping the whole cluster if the CR lookup failed rather than genuinely returned
-    # nothing. An empty list is legitimate (every policy disabled), but combined with a large number of
-    # labelled objects it is far more likely to be a broken API call — and the consequence would be
-    # deleting every grant this chart manages.
-    ORPHAN_LIMIT="${ORPHAN_LIMIT:-0}"
+    # The cap below guards against a run whose CR list is legitimately EMPTY or legitimately WRONG for
+    # the objects on the cluster — every flag switched off by a bad -f upgrade, or a label-value
+    # migration where existing objects still carry a config-source no CR matches (measured at 0.16.0:
+    # 36 stale objects, and this cap turned the mass revocation into a failed sync). A failed lookup no
+    # longer reaches here at all — it aborts above.
 
     # NO HEREDOC HERE, deliberately. A heredoc terminator has to sit at the start of its line, which
     # ends the enclosing YAML block scalar and makes this ConfigMap unparseable — `helm lint` catches it
@@ -83,9 +93,8 @@ data:
       # consequence is the opposite direction — a swallowed failure means a genuine orphan is missed and
       # the log still says "no orphans found" — which is why it aborts rather than reporting a clean run.
       RAW="$(oc get "$kind" $scope -l "app.kubernetes.io/managed-by=${MANAGED_BY}" \
-               -o jsonpath="{range .items[*]}{.metadata.namespace}|{.metadata.name}|{.metadata.labels.rbac\.ocp\.io/config-source}{'\n'}{end}" \
-               2>&1)" \
-        || fail "cannot list ${kind}, so this sweep would report a clean run without having checked: ${RAW}"
+               -o jsonpath="{range .items[*]}{.metadata.namespace}|{.metadata.name}|{.metadata.labels.rbac\.ocp\.io/config-source}{'\n'}{end}")" \
+        || fail "cannot list ${kind}, so this sweep would report a clean run without having checked — the API's error is printed above"
       OLDIFS="$IFS"; IFS="$NL"
       for line in $RAW; do
         IFS="$OLDIFS"
@@ -118,7 +127,7 @@ data:
     if [ "$COUNT" -gt 0 ] && [ "$ORPHAN_LIMIT" -gt 0 ] && [ "$COUNT" -gt "$ORPHAN_LIMIT" ]; then
       log "found ${COUNT} orphan candidates:"
       printf '%s' "$CANDIDATES" | sed '/^$/d' | sed 's/^/    /'
-      fail "refusing to delete ${COUNT} objects, which exceeds orphanSweeper.limit=${ORPHAN_LIMIT}. That many at once usually means the policy-CR lookup failed rather than the objects genuinely being orphaned — deleting them would revoke everything this chart grants. Check 'oc get namespaceconfig,groupconfig' returns your policies, then re-run or raise the limit."
+      fail "refusing to delete ${COUNT} objects, which exceeds orphanSweeper.limit=${ORPHAN_LIMIT}. That many at once usually means the policy-CR list is wrong for what is on the cluster — every policy switched off by a bad upgrade, or a label-value migration — rather than the objects genuinely being orphaned, and deleting them would revoke everything this chart grants. Check 'oc get namespaceconfig,groupconfig' returns your policies, then re-run or raise the limit."
     fi
 
     if [ "$COUNT" -gt 0 ]; then
@@ -168,26 +177,32 @@ data:
     #   exists     rc=0, "role.rbac.../<name>"             -> leave alone
     #   forbidden  rc=1, "Error from server (Forbidden)"   -> UNKNOWN, must not delete
     # Deleting RBAC on an unknown is the one outcome a sweeper must never produce, so rc!=0 aborts.
+    # STDOUT ONLY, like every capture above: oc warnings arrive on stderr with rc=0, and one captured
+    # here would make an absent Role read as present — the sweep would keep the dangling binding and
+    # report a clean run, silently un-fixing the roleName self-heal.
     DANGLING=0
     # Same no-heredoc rule as the sweep above: a terminator at column 0 would end this YAML block scalar.
     RAWRB="$(oc get rolebinding -A -l "app.kubernetes.io/managed-by=${MANAGED_BY}" \
-               -o jsonpath="{range .items[?(@.roleRef.kind=='Role')]}{.metadata.namespace}|{.metadata.name}|{.roleRef.name}{'\n'}{end}" \
-               2>&1)" \
-      || fail "cannot list rolebindings for the dangling-Role sweep: ${RAWRB}"
+               -o jsonpath="{range .items[?(@.roleRef.kind=='Role')]}{.metadata.namespace}|{.metadata.name}|{.roleRef.name}{'\n'}{end}")" \
+      || fail "cannot list rolebindings for the dangling-Role sweep — the API's error is printed above"
     OLDIFS="$IFS"; IFS="$NL"
     for line in $RAWRB; do
       IFS="$OLDIFS"
       if [ -n "$line" ]; then
         dns="${line%%|*}"; drest="${line#*|}"; dname="${drest%%|*}"; drole="${drest#*|}"
         if [ -n "$dname" ] && [ -n "$drole" ]; then
-          if ROLEOUT="$(oc get role "$drole" -n "$dns" --ignore-not-found -o name 2>&1)"; then
+          if ROLEOUT="$(oc get role "$drole" -n "$dns" --ignore-not-found -o name)"; then
             if [ -z "$ROLEOUT" ]; then
-              log "  rolebinding ${dns}/${dname} -> Role/${drole} does not exist; deleting so the operator rebuilds it"
-              [ "$DRY_RUN" != "true" ] && oc delete rolebinding "$dname" -n "$dns" --ignore-not-found 2>&1 | sed 's/^/    /'
+              if [ "$DRY_RUN" = "true" ]; then
+                log "  rolebinding ${dns}/${dname} -> Role/${drole} does not exist; would delete so the operator rebuilds it"
+              else
+                log "  rolebinding ${dns}/${dname} -> Role/${drole} does not exist; deleting so the operator rebuilds it"
+                oc delete rolebinding "$dname" -n "$dns" --ignore-not-found 2>&1 | sed 's/^/    /'
+              fi
               DANGLING=$((DANGLING+1))
             fi
           else
-            fail "cannot determine whether Role/${drole} exists in ${dns}, so ${dns}/${dname} is being LEFT ALONE rather than deleted on a guess. Most likely the sweeper's ClusterRole is missing 'get' on roles. API said: ${ROLEOUT}"
+            fail "cannot determine whether Role/${drole} exists in ${dns}, so ${dns}/${dname} is being LEFT ALONE rather than deleted on a guess. Most likely the sweeper's ClusterRole is missing 'get' on roles — the API's error is printed above"
           fi
         fi
       fi

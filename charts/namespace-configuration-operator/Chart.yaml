@@ -4,8 +4,9 @@ description: >-
   Installs the Red Hat CoP Namespace Configuration Operator (NCO) on OpenShift via
   OLM — a dedicated namespace, an AllNamespaces (global) OperatorGroup, and a
   Subscription. It can ALSO deploy RBAC policies (NamespaceConfig CRs) from
-  namespaceConfigPolicy, one policy per flag and every one off by default; the raw
-  manifests under ../policies stay the readable reference for those.
+  namespaceConfigPolicy and clusterRbac, one policy per flag — the baseline tiers ship
+  ENABLED, so a stock install grants RBAC; the raw manifests under
+  working-sessions/policies stay the readable reference for those.
 type: application
 # 0.4.0, MINOR: a new template and a new TOP-LEVEL values stanza. `clusterRbac` renders one
 # GroupConfig carrying the three cluster-wide tiers (admin/view/edit ClusterRoles bound to the
@@ -30,6 +31,54 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.19.2, PATCH: applies the accepted findings of the 0.19.1 adversarial review
+# (working-sessions/docs/REVIEW_chart_0.19.1.md — 19 accepted, 2 rejected, 3 amended). Two behaviour
+# changes; everything else corrects comments and docs to say what the chart actually ships.
+#
+# 1. THE SWEEPER CAPTURES STDOUT ONLY AND REFUSES A NON-NUMERIC ORPHAN_LIMIT. Every $(oc ...) used to
+#    merge stderr into the parsed result (2>&1), so a warning printed on rc=0 would become a phantom
+#    orphan row on the list calls — or make an ABSENT Role read as PRESENT on the named-role probe,
+#    silently un-fixing 0.19.0's roleName self-heal. That half was LATENT, not active: measured with a
+#    4.13.6 client against the 4.18.2 server (a five-minor skew), stderr was empty on rc=0 for all four
+#    of the script's commands. Fixed anyway — a delete decision must not be read from a stream that can
+#    carry non-data, and the API's message still reaches the pod log via stderr. The ORPHAN_LIMIT half
+#    WAS active, and reachable through a values typo: `limit: abc` renders straight into the Job env,
+#    `[ -gt ]` errors inside an && list, and the cap then silently does not fire — measured, 30
+#    deletions proceed with exit 0. ORPHAN_LIMIT now joins the :? guard and must be a whole number
+#    (0 still disables the cap, as an explicit choice). The second sweep also logs "would delete"
+#    under dry run instead of describing a delete that never happened.
+#
+# 2. THE SWEEPER'S CLUSTERROLE DROPS WHAT NOTHING EXERCISES: `get` on rolebindings and
+#    clusterrolebindings (never fetched by name — the 0.19.1 incident is the measured proof that
+#    delete works without get) and on the policy CR kinds (only ever listed). The rules split three
+#    ways so "`get` IS REQUIRED AND WAS THE BUG" now sits only on roles, the one resource where it
+#    is true.
+#
+# check-ordering.py GAINED TWO ASSERTIONS IT DID NOT MAKE: the sweeper must be the LAST hook of its
+# events (weight DIRECTION, not just uniqueness — at weight 4, unique with every wave intact, it would
+# run before the InstallPlan approver and fail a plain-Helm install, and the checker printed OK), and
+# a sync-wave must be an annotation LINE, not a substring (commented out in the gated 00-namespace.yaml
+# the substring still passed, and no render exists to catch a gated template). Both verified by
+# mutation: each mutant fails, the real chart passes.
+#
+# COMMENTS AND DOCS CORRECTED where they contradicted the shipped chart: the policies ship ON since
+# 0.18.0 (values.yaml claimed off-by-default in four places — a plain install DOES create RBAC); the
+# sweeper matches the rbac.ocp.io/config-source LABEL, not the retired source-*config annotations,
+# and the limit guards the rc=0 catastrophes now that failed lookups abort; every remediation selector
+# that matched ZERO live objects is re-measured (nonprod-rbac -> baseline-nonprod-rbac, cluster-rbac ->
+# baseline-cluster-rbac, abc -> bdp, 55 objects/52 bindings -> 42/39 = 26 RB + 13 CRB + 3 Roles, and
+# the ns-admin row retired in 0.9.0 is dropped from the labels contract). File 12 gains the two traps
+# the review measured: an EMPTY label value renders RoleBinding "-rb", which the API rejects while the
+# CR logs success; and two policies sharing a roleName rewrite ONE Role's rules on every reconcile
+# (rules are spec, and spec propagates), oscillating that namespace's permissions with no error. The
+# phantom `configSource` values key is no longer documented as settable, and crc-values.yaml admits it
+# carries TWO genuine overrides (bdp and customGroupConfig).
+#
+# FORM: file 12's two {{- /* */ -}} blocks are converted to `#` comments — the repo convention; files
+# 10, 11 and 13 carry zero Helm comment blocks. A `#` comment survives into the rendered manifest, so
+# the render hash moves against BASELINE_0.19.1.md; the proof for those edits is a YAML diff showing
+# only comments moved.
+#
 # 0.19.1, PATCH: the dangling-Role sweep was deleting HEALTHY RoleBindings. It asked whether a
 # roleRef's target existed with `! oc get role ... >/dev/null 2>&1`, which is true for "not found" AND
 # for "Forbidden" — and the sweeper's ClusterRole granted list+delete on roles but NOT `get`. So the
@@ -422,7 +471,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.19.1
+version: 0.19.2
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:

@@ -862,3 +862,36 @@ Chart version: **0.19.2**, PATCH. Behaviour changes are a guard becoming strict 
 narrowed; everything else is comment and doc truth. `BASELINE_0.19.1.md` is the before-picture, and its
 own rule 4 applies — the render hash WILL move because comments live in the manifests, so the proof for
 those steps is a YAML diff showing only comments moved, not an unchanged hash.
+
+### A6 — applied by Claude during the implementation review
+
+Three things the accepted findings did not cover, found while checking the applied diff. Two are the same
+defect class as D2-1, so leaving them would have undermined the fix they belong to.
+
+**The version attribution in D2-1's own replacement text was wrong, in all four places it landed.** The
+text said "ON BY DEFAULT since 0.18.0". The flip is commit `9bd965e`, whose Chart.yaml reads **0.8.0** —
+and the published artifacts settle it: released `0.8.0` has every flag **false**, released `0.13.0` has
+them true. So 0.13.0 is the first release a consumer could install and receive RBAC from, 0.18.0 is simply
+not the answer, and `_README.txt`'s "As of 0.9.0" names a version that was never published at all.
+
+Rather than substitute one version for another, the clause is **removed**: 0.19.0 deliberately moved
+version history out of template and values comments and into `Chart.yaml`, and a comment that says "ON BY
+DEFAULT" without archaeology cannot go stale the way this one did.
+
+**`Chart.yaml`'s `description` still said "every one off by default".** This is the most visible copy of
+the claim D2-1 exists to correct — it is what `helm search repo` prints and what the published index
+carries, so it reaches people who never open values.yaml. Corrected to state that the baseline tiers ship
+enabled and a stock install grants RBAC. (Also fixed the stale `../policies` path, now
+`working-sessions/policies`.)
+
+**`_README.txt` carried two more instances**: the `config-source` example values were the pre-0.16.0 family
+names (`nonprod-rbac`, …) — the exact stale-selector class as D2-6 — and "only `customGroupConfig` is
+still off" omitted `bdp`, which also defaults false while its parent switch is on.
+
+**The redundancy flagged for review was real** and is removed: `clusterRbac`'s comment promised "Turning it
+OFF … is a REVOCATION, not a no-op:" directly above a paragraph opening "TURNING IT BACK OFF IS A
+REVOCATION, NOT A NO-OP."
+
+Gates after A6: `helm lint` 0 failed, `check-ordering.py` OK, and 0 remaining "every one off by default"
+claims in the chart.
+
