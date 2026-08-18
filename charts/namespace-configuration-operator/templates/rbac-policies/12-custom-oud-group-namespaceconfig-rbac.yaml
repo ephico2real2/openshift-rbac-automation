@@ -7,8 +7,7 @@
 # NamespaceConfig — oud-group families, ONE CR PER POLICY
 # =============================================================================
 # Ranges over namespaceConfigPolicy.oudGroup.policies and renders a separate NamespaceConfig for each,
-# exactly as 10-baseline- does for nonprod/prod. Until 0.14.0 this bound a single values stanza directly,
-# which meant exactly one oud-group policy could ever exist — a second family had nowhere to go.
+# exactly as 10-baseline- does for nonprod/prod, so each family gets its own CR.
 #
 # WHY A MAP OF POLICIES AND NOT AN `entries` LIST, which is what 13-custom-groupconfig- uses. An entries
 # list renders multiple objectTemplates INSIDE ONE CR, and they all share that CR's single labelSelector.
@@ -24,41 +23,18 @@
 # the readable reference and the record of why this access model exists. This file is the deployable
 # form; that file is the explanation. Neither replaces the other.
 #
-# ── THE ONE THING THAT MAKES THIS TEMPLATE UNUSUAL ───────────────────────────
-# There are TWO template engines in play and they use the same delimiters.
+# ── TWO TEMPLATE ENGINES, SAME { } DELIMITERS ──────────────────────────────
+# Helm renders this file at install; the OPERATOR renders each objectTemplate later, once per matching
+# namespace, where .Name is the namespace and .Labels are its labels. Expressions meant for the operator are BUILT AS STRINGS below so
+# Helm cannot evaluate them — if it does, it tests an undefined .Name, renders the object away, and
+# reports success. There is no error, only a missing grant.
 #
-#   Helm          evaluates this file at `helm template` / `helm upgrade` time.
-#   The OPERATOR  evaluates each objectTemplate body LATER, once per matching namespace, where
-#                 .Name is the namespace and .Labels are its labels.
+# A `#` COMMENT IS NOT A HELM COMMENT — it is YAML, and Helm processes this file as text first, so an
+# action inside one IS evaluated. Never `| quote` a built string either: the operator renders each
+# objectTemplate as a Go template FIRST and parses YAML SECOND, so a backslash-quote breaks the parse.
 #
-# An expression meant for the operator must SURVIVE Helm and reach the cluster unevaluated. Helm has
-# no leave-this-alone block, so the operator's two expressions are BUILT AS STRINGS below — $ns and
-# $group — and substituted in. Helm renders a string; it does not recurse into what it produced.
-#
-# NOTE THAT A # COMMENT IS NOT A HELM COMMENT. It is a YAML comment, and Helm processes this file as
-# text before YAML ever sees it — so an action written inside one of these comments IS EVALUATED.
-# That is why the paragraphs below describe the operator's expressions in words instead of quoting
-# them; an earlier draft quoted them and failed to render with `unexpected "\\" in operand`. The
-# literal syntax lives in the source policy file named above, and in $ns / $group below.
-#
-# WHY NOT PIPE THROUGH `quote`. It escapes the inner double quotes of the index expression, and that
-# breaks the operator: it renders each objectTemplate as a Go template FIRST and parses the result as
-# YAML SECOND, so at render time a backslash-quote is not an escape — it is a backslash inside an
-# action, and the parse fails. The quotes are therefore LITERAL TEXT here, outside the substitution.
-#
-# WHICH IS ALSO WHY AN objectTemplate IS NOT VALID YAML UNTIL IT IS RENDERED. Measured: handing one to
-# a YAML parser fails on the nested double quotes around the index expression — they only nest
-# correctly once the expression has been replaced by a plain value. So verify a change here by
-# rendering the expressions out and THEN parsing, never by parsing the objectTemplate directly.
-#
-# WHY NOT `.Files.Get`, which would sidestep the escaping entirely: the body would be opaque, so the
-# label key, the role name and the verbs could not come from values — the whole point of templating it.
-#
-# Equivalence to the source policy is proven rather than assumed: both objectTemplates were rendered
-# with the same namespace context and compared as parsed YAML. Identical, both templates.
-#
-# The operator's own expressions, as strings. printf takes the quote characters as ARGUMENTS, because
-# a literal escaped quote written inside a Helm action would be escaped again into the output.
+# Full explanation, including how $group is derived three different ways:
+#   working-sessions/docs/templating-guide.md
 {{- $ns := "{{ .Name }}" }}
 {{- range $key, $p := $og.policies }}
 {{- if not $p.enabled }}
@@ -73,33 +49,19 @@
 {{- fail (printf "namespaceConfigPolicy.oudGroup.policies.%s has no rules, so it would create an empty Role that grants nothing while looking configured." $key) }}
 {{- end }}
 {{- /*
-  ONE LABEL PER FAMILY — a convention, NOT a render-time guard, and it cannot be one.
+  ONE labelKey PER POLICY — a convention, not a render-time guard, because it cannot be one. The
+  RoleBinding is named "<label value>-rb", and that value is read from a namespace at reconcile time, so
+  Helm cannot know whether two policies would collide. Uniqueness is (namespace, name), which makes it a
+  fact about the cluster rather than about values.
 
-  There used to be a check here refusing two policies that shared a labelKey. It has been removed because
-  it was on the wrong axis in both directions:
-
-    NOT NECESSARY  two policies CAN share a labelKey harmlessly if their objects end up with different
-                   names. The Roles already do — each policy names its own — so only the RoleBinding is
-                   at risk.
-    NOT SUFFICIENT two policies with DIFFERENT labelKeys still collide if a namespace carries both labels
-                   with the SAME VALUE, because the RoleBinding is named "<label value>-rb". The check
-                   compared labelKeys, so it allowed exactly that.
-
-  And no render-time check can be correct: the RoleBinding name comes from the label's VALUE, which is
-  read from a namespace at reconcile time. Helm cannot see it. Uniqueness of a RoleBinding is
-  (namespace, name), so whether two policies collide is a fact about the cluster, not about values.
-
-  WHAT A COLLISION ACTUALLY LOOKS LIKE, measured by applying two same-labelKey CRs on purpose — worth
-  knowing because it does not announce itself:
-    - both Roles are created and coexist. Only the RoleBinding is contested.
-    - the second policy creates ZERO RoleBindings, because roleRef is IMMUTABLE in Kubernetes:
+  IF TWO POLICIES DO SHARE A labelKey, the failure is silent — measured by trying it:
+    - both Roles are created and coexist; only the RoleBinding is contested
+    - the second policy creates ZERO RoleBindings, because roleRef is immutable:
         RoleBinding "…-rb" is invalid: roleRef: Invalid value: …: cannot change roleRef
-    - the operator error-loops on that patch forever, while the CR still logs
-      "resources processed successfully" at INFO. So the CR looks healthy and the grant is simply absent.
+    - the operator error-loops on that patch while the CR logs "resources processed successfully"
 
-  So: give each policy its own labelKey. That is the family boundary, and different label -> different
-  namespaces -> different RoleBinding names -> nothing to contest. If a grant from one of these policies
-  is missing, check the manager log for "cannot change roleRef" before suspecting anything else.
+  So the CR reads healthy and the grant is absent. If a grant here is missing, grep the manager log for
+  "cannot change roleRef" first.
 */ -}}
 {{- /*
   NAME AND configSource ARE DERIVED FROM THE MAP KEY, so the key is the single place a policy's identity
@@ -172,22 +134,11 @@ spec:
             # NAMESPACE, not one per group (fixed name {{ $p.roleName }}), so tying it to a single
             # group name would be wrong rather than merely redundant.
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            # THE CR THAT CREATED THIS OBJECT, and the only provenance key there is. A LABEL, so it can
-            # be selected on:
-            #   oc get rolebinding,clusterrolebinding,role -A -l rbac.ocp.io/config-source=abc-oud-group-rbac
-            # Until 0.16.0 this held a short family name while rbac.ocp.io/source-{namespace,group}config
-            # held the CR name as an ANNOTATION — two names for one relationship, split across a label and
-            # an annotation and split again by CRD kind. That split is what made four documented
-            # remediation commands select nothing: they used `oc -l` on an annotation. One key, one form,
-            # one meaning.
+            # The CR that created this object. A LABEL, so it can be selected on — see
+            # working-sessions/docs/labels-and-annotations.md for the full contract.
             rbac.ocp.io/config-source: {{ $name }}
-            # WHICH CRD OWNS IT. config-source above names the CR; this says what kind of CR, so the
-            # pair is self-describing without a lookup. A LABEL rather than an annotation, deliberately:
-            # the old source-{namespace,group}config encoded the kind in the KEY NAME and was an
-            # annotation, so `oc -l` could not use it and two queries were needed to cover both kinds.
-            # Now one query does either:
+            # Which CRD owns it, so config-source and this pair up without a lookup. Also a label:
             #   oc get rolebinding,role -A -l rbac.ocp.io/source-kind=NamespaceConfig
-            #   oc get clusterrolebinding  -l rbac.ocp.io/source-kind=GroupConfig
             rbac.ocp.io/source-kind: NamespaceConfig
             rbac.ocp.io/role-type: {{ $p.roleType }}
             rbac.ocp.io/scope: namespace-scoped
@@ -217,22 +168,11 @@ spec:
           namespace: "{{ $ns }}"
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            # THE CR THAT CREATED THIS OBJECT, and the only provenance key there is. A LABEL, so it can
-            # be selected on:
-            #   oc get rolebinding,clusterrolebinding,role -A -l rbac.ocp.io/config-source=abc-oud-group-rbac
-            # Until 0.16.0 this held a short family name while rbac.ocp.io/source-{namespace,group}config
-            # held the CR name as an ANNOTATION — two names for one relationship, split across a label and
-            # an annotation and split again by CRD kind. That split is what made four documented
-            # remediation commands select nothing: they used `oc -l` on an annotation. One key, one form,
-            # one meaning.
+            # The CR that created this object. A LABEL, so it can be selected on — see
+            # working-sessions/docs/labels-and-annotations.md for the full contract.
             rbac.ocp.io/config-source: {{ $name }}
-            # WHICH CRD OWNS IT. config-source above names the CR; this says what kind of CR, so the
-            # pair is self-describing without a lookup. A LABEL rather than an annotation, deliberately:
-            # the old source-{namespace,group}config encoded the kind in the KEY NAME and was an
-            # annotation, so `oc -l` could not use it and two queries were needed to cover both kinds.
-            # Now one query does either:
+            # Which CRD owns it, so config-source and this pair up without a lookup. Also a label:
             #   oc get rolebinding,role -A -l rbac.ocp.io/source-kind=NamespaceConfig
-            #   oc get clusterrolebinding  -l rbac.ocp.io/source-kind=GroupConfig
             rbac.ocp.io/source-kind: NamespaceConfig
             rbac.ocp.io/role-type: {{ $p.roleType }}
             rbac.ocp.io/bound-role: {{ $p.roleName }}

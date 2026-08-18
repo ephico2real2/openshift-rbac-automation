@@ -308,8 +308,8 @@ namespaceConfigPolicy:
     enabled: true
 
     # A MAP OF POLICIES, one CR each — the same shape as namespaceConfigPolicy.baseline.policies, and
-    # for the same reason. This was a single stanza until 0.14.0, which meant exactly one oud-group
-    # policy could ever exist: adding a second name had nowhere to go.
+    # for the same reason: each family selects on its own label and defines its own Role, so each needs
+    # its own CR.
     #
     # WHY A MAP AND NOT AN `entries` LIST like customGroupConfig uses. An entries list renders multiple
     # objectTemplates INSIDE ONE CR, sharing that CR's single labelSelector. These policies each select
@@ -356,14 +356,15 @@ namespaceConfigPolicy:
         # The Role the RoleBinding points at. One Role per namespace, created by the first template.
         # The Role this policy creates, and what its RoleBinding points at.
         #
-        # CHANGING THIS NEEDS THE CR DELETED, unlike most values edits. roleRef is IMMUTABLE in
-        # Kubernetes, so the operator cannot repoint an existing RoleBinding at a renamed Role: it creates
-        # the new Role, fails the patch with "cannot change roleRef", and error-loops while the CR still
-        # logs "resources processed successfully". The binding keeps pointing at the old Role, which the
-        # template no longer maintains. Delete the CR and let Helm recreate it:
-        #   oc delete namespaceconfig <this policy's CR>
-        # Verified on the cluster when this changed from oud-group-submitter-role: after the delete all
-        # three RoleBindings came back on spark-job-submitter-role with zero roleRef errors.
+        # CHANGING THIS IS SELF-HEALING on a plain `helm upgrade` — no manual step. It takes a detour
+        # worth knowing about, because roleRef is IMMUTABLE in Kubernetes:
+        #   1. the operator creates the new Role and removes the old one
+        #   2. it CANNOT repoint the existing RoleBinding, so that patch fails with "cannot change
+        #      roleRef" and the binding is left referencing a Role that is gone — granting nothing
+        #   3. the orphan sweeper deletes any RoleBinding whose Role does not exist, and the operator
+        #      rebuilds it from the CR with the correct roleRef
+        # Measured end to end: 3 bindings repointed within 15 seconds of the upgrade, grants intact.
+        # The sweep is scoped to roleRef kind=Role for a reason — see templates/14-orphan-sweeper-script.
         roleName: spark-job-submitter-role
 
         # The TIER, written to rbac.ocp.io/role-type on both the Role and the RoleBinding — the same key
@@ -615,8 +616,8 @@ clusterRbac:
   # in-flight reconcile a second before the operator shut down their per-object controllers ("Shutdown
   # signal received" in the manager log). Those 6 still granted ClusterRole/admin, carried no
   # ownerReferences so Kubernetes GC would never collect them, and nothing would ever reconcile them
-  # again. An earlier version of this comment claimed the operator prunes the tier on the next reconcile;
-  # it does not, and believing it leaves live grants behind.
+  # again. The operator does NOT prune the tier on the next reconcile — believing it does leaves live
+  # grants behind.
   #
   # SO AFTER REMOVING A TIER, DELETE ITS OBJECTS EXPLICITLY and check the count reaches zero:
   #   oc delete clusterrolebinding -l rbac.ocp.io/config-source=cluster-rbac,rbac.ocp.io/role-type=cluster-admin

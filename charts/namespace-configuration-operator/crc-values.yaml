@@ -20,9 +20,8 @@
 # single-node cluster, and operatorImage pointing at the quay build.
 
 namespaceConfigPolicy:
-  # The master switch. Already true in the chart defaults as of 0.9.0, but stated explicitly because
-  # this file is the record of what this cluster runs — a reader should not have to open values.yaml to
-  # know whether policies are on.
+  # The master switch, stated explicitly because this file is the record of what this cluster runs — a
+  # reader should not have to open values.yaml to know whether policies are on.
   enabled: true
 
   # Namespace RBAC keyed on company.net/oud-group.

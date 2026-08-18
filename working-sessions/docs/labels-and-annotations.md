@@ -242,11 +242,18 @@ comparison. `helm upgrade` reports success, the CR is correct, and every existin
 labels — a cluster with two generations of metadata and nothing complaining. (This is GOTCHA 9 in
 `working-sessions/README.md`.) Spec-level changes — `subjects`, `roleRef`, `rules` — **do** propagate.
 
-**A RENAME is different from a RELABEL, and only one of them needs your help.** Renaming a CR changes a
-resource name, so Helm deletes the old one and creates the new one — the finalizer revokes and the new CR
-rebuilds, all from Helm's own diff. Verified: renaming a policy key took 15 seconds end to end with zero
-orphans and no manual step. Changing a LABEL on a CR that keeps its name is the case below: Helm patches
-the same object, `.metadata` is excluded, and nothing in Helm's diff can reach the existing objects.
+### Which changes finish on their own, and which need help
+
+Helm always updates the CR correctly — it is the objects the operator creates from that CR that behave
+differently, so the distinction is about Kubernetes and the operator, not about Helm.
+
+| change | finishes on a plain `helm upgrade`? | why |
+|---|---|---|
+| rename a policy CR | **yes** | Helm sees a resource name change, deletes the old CR and creates the new one; the finalizer revokes and the new CR rebuilds. Measured at ~15s. |
+| rename a `roleName` | **yes** | The operator creates the new Role and removes the old one but cannot repoint the binding, because `roleRef` is immutable. The orphan sweeper deletes any binding whose Role is missing and the operator rebuilds it. Measured at ~15s. |
+| change a LABEL or ANNOTATION | **no** | Helm patches the same CR, but the operator injects `excludedPaths: [.metadata, …]`, so new metadata never reaches objects that already exist. Delete the CRs and let them rebuild. |
+
+The third row is the one to plan around, and it is the reason for the procedure below.
 
 The only way to move metadata onto existing objects is to delete them and let the operator rebuild:
 

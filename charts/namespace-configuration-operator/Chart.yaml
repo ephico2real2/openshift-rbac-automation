@@ -30,6 +30,36 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.19.0, MINOR: a roleName change is now SELF-HEALING, and the policy comments are deduplicated.
+#
+# THE SWEEPER GAINED A SECOND SWEEP: any RoleBinding whose roleRef names a Role that does not exist is
+# deleted, so the operator rebuilds it from the CR with the correct roleRef. That closes the one case a
+# plain `helm upgrade` could not finish on its own.
+#
+# Helm was never the problem — it overrides the CR correctly. Kubernetes is: roleRef is IMMUTABLE, so the
+# operator creates the new Role, removes the old one, and then cannot repoint the existing binding. It
+# error-loops on "cannot change roleRef" while the CR logs "resources processed successfully", leaving a
+# binding that references a Role that is gone and grants nothing. Measured before this change: a plain
+# upgrade left `oc auth can-i` returning
+#   no - RBAC: role.rbac.authorization.k8s.io "spark-job-submitter-role" not found
+# Measured after: 3 bindings repointed within 15 seconds, grants intact, no manual step.
+#
+# SCOPED TO roleRef kind=Role DELIBERATELY. A Role is created by the same policy that binds it, so a
+# missing target means a rename. A ClusterRole is EXTERNAL — customGroupConfig binds roles this chart does
+# not create — and one may be legitimately absent while someone applies it; sweeping those would fight the
+# operator in a delete/recreate loop. They remain the documented silent-dangle case.
+#
+# Also fixed a bug in the sweeper found while testing: the first sweep exited 0 on "no orphans", which
+# skipped the second sweep entirely — exactly the case where the CRs are healthy and only the bindings are
+# stale. Both sweeps now always run.
+#
+# COMMENTS DEDUPLICATED across templates/rbac-policies: the provenance explanation was copy-pasted into
+# all four files and the two-engine explanation into all four, so 35 duplicated comment lines are now 25
+# and the files are 20-40% shorter. The canonical explanations live in
+# working-sessions/docs/labels-and-annotations.md and templating-guide.md; the templates point at them and
+# keep only what is specific to each file. Version history was removed from template and values comments —
+# it belongs in this changelog, not in prose that has to be re-read every time.
+#
 # 0.18.1, PATCH: the oudGroup Role is renamed oud-group-submitter-role -> spark-job-submitter-role, and
 # the hazard that comes with it is documented at the key.
 #
@@ -365,7 +395,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.18.1
+version: 0.19.0
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:

@@ -99,17 +99,20 @@ data:
     done
 
     COUNT="$(printf '%s' "$CANDIDATES" | sed '/^$/d' | wc -l | tr -d ' ')"
+    # NO EARLY EXIT HERE. The dangling-Role sweep below is independent of this one and must run even when
+    # every object has a live owner — a roleName change leaves bindings dangling while their CR is
+    # perfectly healthy, so an `exit 0` on "no orphans" would skip exactly the case it needs to catch.
     if [ "$COUNT" -eq 0 ]; then
       log "no orphans found (${KEPT} objects checked, all owned by a live CR)"
-      exit 0
     fi
 
-    if [ "$ORPHAN_LIMIT" -gt 0 ] && [ "$COUNT" -gt "$ORPHAN_LIMIT" ]; then
+    if [ "$COUNT" -gt 0 ] && [ "$ORPHAN_LIMIT" -gt 0 ] && [ "$COUNT" -gt "$ORPHAN_LIMIT" ]; then
       log "found ${COUNT} orphan candidates:"
       printf '%s' "$CANDIDATES" | sed '/^$/d' | sed 's/^/    /'
       fail "refusing to delete ${COUNT} objects, which exceeds orphanSweeper.limit=${ORPHAN_LIMIT}. That many at once usually means the policy-CR lookup failed rather than the objects genuinely being orphaned — deleting them would revoke everything this chart grants. Check 'oc get namespaceconfig,groupconfig' returns your policies, then re-run or raise the limit."
     fi
 
+    if [ "$COUNT" -gt 0 ]; then
     log "found ${COUNT} orphaned object(s); their owning CR does not exist:"
     printf '%s' "$CANDIDATES" | sed '/^$/d' | while IFS='|' read -r kind ns name owner; do
       log "  ${kind} ${ns:-<cluster>}/${name}  ->  missing CR '${owner}'"
@@ -117,8 +120,7 @@ data:
 
     if [ "$DRY_RUN" = "true" ]; then
       log "DRY RUN: leaving all ${COUNT} in place"
-      exit 0
-    fi
+    else
 
     printf '%s' "$CANDIDATES" | sed '/^$/d' | while IFS='|' read -r kind ns name owner; do
       if [ -n "$ns" ]; then
@@ -128,4 +130,46 @@ data:
       fi
     done
     log "swept ${COUNT} orphaned object(s); ${KEPT} left in place under a live CR"
+    fi
+    fi
+    # --- SECOND SWEEP: RoleBindings whose Role no longer exists -----------------------------
+    # Renaming a policy's roleName cannot be applied in place: roleRef is IMMUTABLE in Kubernetes, so the
+    # operator creates the new Role, REMOVES the old one, and then fails forever trying to repoint the
+    # binding — "cannot change roleRef" — while the CR still logs "resources processed successfully". The
+    # binding is left referencing a Role that is gone, which grants nothing and reports nothing.
+    #
+    # Deleting the binding is the fix, because the operator recreates it from the CR with the correct
+    # roleRef on the next reconcile. That makes a roleName change self-healing on a plain `helm upgrade`,
+    # with no manual CR delete.
+    #
+    # SCOPED TO roleRef kind=Role ON PURPOSE. A Role is created by the same policy that binds it, so a
+    # missing target means a rename. A ClusterRole is EXTERNAL — customGroupConfig deliberately binds
+    # roles this chart does not create — and one may be legitimately absent while someone applies it.
+    # Deleting those bindings would fight the operator in a delete/recreate loop, so they are left alone
+    # and remain the documented silent-dangle case.
+    DANGLING=0
+    # Same no-heredoc rule as the sweep above: a terminator at column 0 would end this YAML block scalar.
+    RAWRB="$(oc get rolebinding -A -l "app.kubernetes.io/managed-by=${MANAGED_BY}" \
+               -o jsonpath="{range .items[?(@.roleRef.kind=='Role')]}{.metadata.namespace}|{.metadata.name}|{.roleRef.name}{'\n'}{end}" \
+               2>/dev/null || true)"
+    OLDIFS="$IFS"; IFS="$NL"
+    for line in $RAWRB; do
+      IFS="$OLDIFS"
+      if [ -n "$line" ]; then
+        dns="${line%%|*}"; drest="${line#*|}"; dname="${drest%%|*}"; drole="${drest#*|}"
+        if [ -n "$dname" ] && [ -n "$drole" ] && ! oc get role "$drole" -n "$dns" >/dev/null 2>&1; then
+          log "  rolebinding ${dns}/${dname} -> Role/${drole} does not exist; deleting so the operator rebuilds it"
+          [ "$DRY_RUN" != "true" ] && oc delete rolebinding "$dname" -n "$dns" --ignore-not-found 2>&1 | sed 's/^/    /'
+          DANGLING=$((DANGLING+1))
+        fi
+      fi
+      IFS="$NL"
+    done
+    IFS="$OLDIFS"
+    if [ "$DANGLING" -gt 0 ]; then
+      log "found ${DANGLING} rolebinding(s) pointing at a missing Role$([ "$DRY_RUN" = "true" ] && echo ' (dry run: left in place)')"
+    else
+      log "no rolebinding points at a missing Role"
+    fi
+
 {{- end }}

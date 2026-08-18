@@ -46,42 +46,18 @@
 # Exists at CR level, plus a per-template hasSuffix guard — and the free-form axes are the ones where
 # freedom is safe: which suffix, which role, and cluster-wide or namespaced.
 #
-# ── THE TWO-ENGINE PROBLEM, as in the other two templates ────────────────────
-# Helm evaluates this file at install time; the OPERATOR evaluates each objectTemplate later, once per
-# selected group, where .Name is the GROUP name. The guard below is a whole `if` action that must reach
-# the cluster UNEVALUATED — Helm would otherwise evaluate it with .Name undefined and silently render
-# the binding away, with no error. So the guard, its end, and the group reference are BUILT AS STRINGS
-# and substituted; Helm renders a string and does not recurse into what it produced.
+# ── TWO TEMPLATE ENGINES, SAME { } DELIMITERS ──────────────────────────────
+# Helm renders this file at install; the OPERATOR renders each objectTemplate later, once per matching
+# group, where .Name is the GROUP name, not a namespace. Expressions meant for the operator are BUILT AS STRINGS below so
+# Helm cannot evaluate them — if it does, it tests an undefined .Name, renders the object away, and
+# reports success. There is no error, only a missing grant.
 #
-# A # COMMENT IS NOT A HELM COMMENT. It is a YAML comment, and Helm processes this file as text before
-# YAML sees it, so an action inside one of these comments IS EVALUATED. Hence prose, not quotes. And
-# never `| quote` on the built strings: the operator renders each objectTemplate as a Go template FIRST
-# and parses YAML SECOND, so a backslash-quote is a backslash inside an action there and the parse
-# fails. printf takes the quotes as ARGUMENTS.
+# A `#` COMMENT IS NOT A HELM COMMENT — it is YAML, and Helm processes this file as text first, so an
+# action inside one IS evaluated. Never `| quote` a built string either: the operator renders each
+# objectTemplate as a Go template FIRST and parses YAML SECOND, so a backslash-quote breaks the parse.
 #
-# ── BINDING NAMES: <group>-<bindingSuffix, or name if unset> ─────────────────
-# The source policy hardcodes <group>-crb. That is fine for one entry and collides the moment two
-# entries want a binding for the same group — both render <group>-crb and the operator rewrites one over
-# the other on every reconcile. Reachable by ordinary use here, since arbitrary suffix/role pairs are
-# the whole point.
-#
-# So the name carries a per-entry component, defaulting to the entry's `name`. `bindingSuffix` overrides
-# it, which exists because the default STUTTERS when the entry name repeats the suffix: entry
-# `database-admin` with suffix `-database-admin` yields
-# app-ocp-rbac-x-database-admin-database-admin. Setting bindingSuffix: crb gives the source's exact
-# name back. The guard above refuses two entries resolving to the same value, so uniqueness is
-# structural rather than a convention to remember.
-#
-# ── NO excludedPaths, AND THE OPERATOR ADDS ITS OWN ──────────────────────────
-# Measured on this cluster: the operator writes [.metadata, .status, .spec.replicas] into the spec on
-# reconcile even when nothing sends them. Not mirrored, because .spec.replicas is meaningless for a
-# binding. It does mean GOTCHA 9 applies — editing labels or annotations below changes NOTHING on
-# bindings that already exist. SELECT ON config-source, NOT on source-groupconfig — both hold the same
-# value (the CR name) as of 0.16.0, but source-groupconfig is an ANNOTATION and `oc -l` matches labels
-# only, so selecting on it returns NOTHING and the delete reads as a clean no-op.
-#   oc delete clusterrolebinding -l rbac.ocp.io/config-source={{ $c.configSource }}
-# For a scope: namespace entry the objects are RoleBindings, so:
-#   oc delete rolebinding -n <targetNamespace> -l rbac.ocp.io/config-source={{ $c.configSource }}
+# Full explanation, including how $group is derived three different ways:
+#   working-sessions/docs/templating-guide.md
 {{- $group := "{{ .Name }}" }}
 {{- $endif := "{{- end }}" }}
 {{- $seen := dict }}
@@ -164,22 +140,11 @@ spec:
           {{- end }}
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            # THE CR THAT CREATED THIS OBJECT, and the only provenance key there is. A LABEL, so it can
-            # be selected on:
-            #   oc get rolebinding,clusterrolebinding,role -A -l rbac.ocp.io/config-source=custom-cluster-rbac
-            # Until 0.16.0 this held a short family name while rbac.ocp.io/source-{namespace,group}config
-            # held the CR name as an ANNOTATION — two names for one relationship, split across a label and
-            # an annotation and split again by CRD kind. That split is what made four documented
-            # remediation commands select nothing: they used `oc -l` on an annotation. One key, one form,
-            # one meaning.
+            # The CR that created this object. A LABEL, so it can be selected on — see
+            # working-sessions/docs/labels-and-annotations.md for the full contract.
             rbac.ocp.io/config-source: {{ $c.name }}
-            # WHICH CRD OWNS IT. config-source above names the CR; this says what kind of CR, so the
-            # pair is self-describing without a lookup. A LABEL rather than an annotation, deliberately:
-            # the old source-{namespace,group}config encoded the kind in the KEY NAME and was an
-            # annotation, so `oc -l` could not use it and two queries were needed to cover both kinds.
-            # Now one query does either:
+            # Which CRD owns it, so config-source and this pair up without a lookup. Also a label:
             #   oc get rolebinding,role -A -l rbac.ocp.io/source-kind=NamespaceConfig
-            #   oc get clusterrolebinding  -l rbac.ocp.io/source-kind=GroupConfig
             rbac.ocp.io/source-kind: GroupConfig
             rbac.ocp.io/role-type: {{ $entry.name }}
             # THE ROLE ACTUALLY BOUND, on its own key and meaning the same thing on every policy in this

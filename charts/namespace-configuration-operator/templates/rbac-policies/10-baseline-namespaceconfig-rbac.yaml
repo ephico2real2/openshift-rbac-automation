@@ -37,60 +37,18 @@
 # -> define a Role. ClusterRoleBindings are a different thing entirely and live in the GroupConfig
 # policies, not here.
 #
-# ── THE ONE THING THAT MAKES THIS TEMPLATE UNUSUAL ───────────────────────────
-# There are TWO template engines in play and they use the same delimiters.
+# ── TWO TEMPLATE ENGINES, SAME { } DELIMITERS ──────────────────────────────
+# Helm renders this file at install; the OPERATOR renders each objectTemplate later, once per matching
+# namespace, where .Name is the namespace and .Labels are its labels. Expressions meant for the operator are BUILT AS STRINGS below so
+# Helm cannot evaluate them — if it does, it tests an undefined .Name, renders the object away, and
+# reports success. There is no error, only a missing grant.
 #
-#   Helm          evaluates this file at `helm template` / `helm upgrade` time.
-#   The OPERATOR  evaluates each objectTemplate body LATER, once per matching namespace, where
-#                 .Name is the namespace and .Labels are its labels.
+# A `#` COMMENT IS NOT A HELM COMMENT — it is YAML, and Helm processes this file as text first, so an
+# action inside one IS evaluated. Never `| quote` a built string either: the operator renders each
+# objectTemplate as a Go template FIRST and parses YAML SECOND, so a backslash-quote breaks the parse.
 #
-# An expression meant for the operator must SURVIVE Helm and reach the cluster unevaluated. Helm has
-# no leave-this-alone block, so the operator's expressions are BUILT AS STRINGS below and substituted
-# in. Helm renders a string; it does not recurse into what it produced.
-#
-# NOTE THAT A # COMMENT IS NOT A HELM COMMENT. It is a YAML comment, and Helm processes this file as
-# text before YAML ever sees it — so an action written inside one of these comments IS EVALUATED. That
-# is why these paragraphs describe the operator's expressions in words instead of quoting them; the
-# literal syntax lives in the source policies and in the variables below.
-#
-# WHY NOT PIPE THROUGH `quote`. It escapes the inner double quotes of the index expression, and that
-# breaks the operator: it renders each objectTemplate as a Go template FIRST and parses the result as
-# YAML SECOND, so at render time a backslash-quote is not an escape — it is a backslash inside an
-# action, and the parse fails. The quotes are therefore LITERAL TEXT here, outside the substitution.
-#
-# WHICH IS ALSO WHY AN objectTemplate IS NOT VALID YAML UNTIL IT IS RENDERED. Verify a change by
-# rendering the expressions out and THEN parsing, never by parsing the objectTemplate directly.
-#
-# ── NO app.kubernetes.io/version ON THE GENERATED OBJECTS ────────────────────
-# It is Helm's label with a defined meaning — the version of the APPLICATION — and
-# _helpers.tpl#nco.labels already sets it on the CR from Chart.AppVersion. Hand-setting it inside an
-# objectTemplate made the same key mean the OPERATOR version on the CR (1.2.6) and the POLICY version on
-# the objects that CR created (0.1.0): one policy, one key, two contradictory answers. The source policies
-# did that; this does not. Provenance is carried instead by rbac.ocp.io/config-source (label) and
-# rbac.ocp.io/source-namespaceconfig (annotation), which name
-# the CR that owns the object — a pointer that cannot go stale the way a copied version string does.
-#
-# ── WHAT EACH ROLE ENTRY IN VALUES EXPANDS TO ────────────────────────────────
-# Only `name` and `clusterRole` are irreducible. Everything else is derived, and identically in both
-# policies — measured against both source files before this template was written:
-#
-#   RoleBinding name          <mnemonic>-<name>-rb
-#   rbac.ocp.io/role-type     ns-<name>
-#   subject group             <groupPrefix>-<mnemonic>-ns-<name>
-#   rbac.ocp.io/bound-role    <clusterRole>
-#   rbac.ocp.io/scope         namespace-scoped
-#
-# role-type is the TIER (ns-audit) and bound-role is the ROLE IT BINDS (view). Two keys because they are
-# two facts, and the words deliberately differ — audit binds view, developer binds edit. A reviewer asking
-# "who can read?" needs bound-role; one asking "who is a namespace admin?" needs role-type. The full
-# contract is working-sessions/docs/labels-and-annotations.md.
-#
-# `clusterRole` stays explicit because it IS the grant — admin versus view is what an auditor reads,
-# and it is not derivable from the role name (developer -> edit, audit -> view).
-#
-# The group pattern is not invented here. working-sessions/policies/kyverno-group-naming-app-ocp-rbac.yaml
-# already validates app-ocp-rbac-{mnemonic}-(ns|cluster)-(admin|developer|audit); groupPrefix plus the
-# derived ns-<name> is that existing convention expressed in values.
+# Full explanation, including how $group is derived three different ways:
+#   working-sessions/docs/templating-guide.md
 {{- $ns := "{{ .Name }}" }}
 {{- $mn := printf "{{ index .Labels %s%s%s }}" "\"" $b.mnemonicLabelKey "\"" }}
 {{- $env := printf "{{ index .Labels %s%s%s }}" "\"" $b.environmentLabelKey "\"" }}
@@ -179,9 +137,9 @@ spec:
   # RoleBindings that already exist. The operator reports success and the old metadata stays, so a
   # cluster ends up with two generations of it. Spec-level edits (subjects, roleRef) DO propagate.
   # To roll metadata forward, delete the objects and let the operator rebuild them. SELECT ON
-  # config-source, which is a LABEL. source-namespaceconfig carries the SAME value as of 0.16.0 but is an
-  # ANNOTATION, and `oc -l` matches labels only — so selecting on it returns NOTHING and the delete reads
-  # as a clean no-op. Same value, different form: read the annotation, select on the label.
+  # config-source, which is a LABEL. source-namespaceconfig carries the same value but is an ANNOTATION,
+  # and `oc -l` matches labels only — selecting on it returns nothing and the delete reads as a clean
+  # no-op. Read the annotation, select on the label.
   #   oc delete rolebinding -A -l rbac.ocp.io/config-source=nonprod-rbac   # prod-rbac for the prod CR
   templates:
     {{- range $r := $p.roles }}
@@ -197,22 +155,11 @@ spec:
           namespace: "{{ $ns }}"
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            # THE CR THAT CREATED THIS OBJECT, and the only provenance key there is. A LABEL, so it can
-            # be selected on:
-            #   oc get rolebinding,clusterrolebinding,role -A -l rbac.ocp.io/config-source=<the CR name>
-            # Until 0.16.0 this held a short family name while rbac.ocp.io/source-{namespace,group}config
-            # held the CR name as an ANNOTATION — two names for one relationship, split across a label and
-            # an annotation and split again by CRD kind. That split is what made four documented
-            # remediation commands select nothing: they used `oc -l` on an annotation. One key, one form,
-            # one meaning.
+            # The CR that created this object. A LABEL, so it can be selected on — see
+            # working-sessions/docs/labels-and-annotations.md for the full contract.
             rbac.ocp.io/config-source: {{ $p.name }}
-            # WHICH CRD OWNS IT. config-source above names the CR; this says what kind of CR, so the
-            # pair is self-describing without a lookup. A LABEL rather than an annotation, deliberately:
-            # the old source-{namespace,group}config encoded the kind in the KEY NAME and was an
-            # annotation, so `oc -l` could not use it and two queries were needed to cover both kinds.
-            # Now one query does either:
+            # Which CRD owns it, so config-source and this pair up without a lookup. Also a label:
             #   oc get rolebinding,role -A -l rbac.ocp.io/source-kind=NamespaceConfig
-            #   oc get clusterrolebinding  -l rbac.ocp.io/source-kind=GroupConfig
             rbac.ocp.io/source-kind: NamespaceConfig
             rbac.ocp.io/role-type: ns-{{ $r.name }}
             rbac.ocp.io/bound-role: {{ $r.clusterRole }}
