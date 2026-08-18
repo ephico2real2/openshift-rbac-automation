@@ -30,6 +30,53 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.16.0, MINOR and A MIGRATION, NOT JUST AN UPGRADE — read the procedure below before syncing.
+#
+# rbac.ocp.io/config-source NOW HOLDS THE NAME OF THE CR that created the object, on every object, so it
+# finally means what its name says. It used to hold a short family name that matched no CR:
+#
+#   before   config-source: cluster-rbac              label   short family name, matched nothing
+#            source-groupconfig: baseline-cluster-rbac  annotation  the actual CR
+#   after    config-source: baseline-cluster-rbac     label   the actual CR
+#            source-groupconfig: baseline-cluster-rbac  annotation  unchanged, same value
+#            source-kind: GroupConfig                 label   NEW — which CRD owns it
+#
+# THE source-{namespace,group}config ANNOTATIONS ARE UNCHANGED AND STILL PRESENT. They and the label now
+# carry the SAME value, and that duplication is deliberate: the label is what you SELECT on, the
+# annotation is what you READ in `oc get -o yaml` / `oc describe`, and its key name says which CRD owns
+# the object. group-pattern is likewise untouched on the two GroupConfig policies.
+#
+# It also defangs a trap this repo hit before: `oc -l` matches labels only, so selecting on the
+# source-*config annotation returns nothing. That is still true — but the label beside it now holds the
+# identical value and does work, so the mistake costs a retry rather than a wrong answer.
+#
+# source-kind is NEW: NamespaceConfig or GroupConfig, as a LABEL so one query covers either kind
+# (`-l rbac.ocp.io/source-kind=GroupConfig`). The annotation key names already implied it; this makes it
+# selectable.
+#
+# THE MIGRATION MATTERS, and skipping it is dangerous. This changes a label VALUE on 36 of 42 objects,
+# and metadata does not propagate (GOTCHA 9) — so after a plain `helm upgrade` every existing object
+# still carries the OLD value, which matches no CR name. The orphan sweeper reads exactly that key and
+# would see all 36 as orphaned. Verified on the test cluster: it found exactly 36 and REFUSED, because
+# orphanSweeper.limit is 25:
+#
+#   ERROR: refusing to delete 36 objects, which exceeds orphanSweeper.limit=25
+#
+# That guard turned a mass revocation into a failed sync, which is the outcome it exists for. Do NOT
+# raise the limit to work around it.
+#
+# THE PROCEDURE — rebuild the objects as part of the upgrade so the interim state never exists:
+#   oc delete namespaceconfig --all && oc delete groupconfig --all   # operator ALIVE; revokes cleanly
+#   helm upgrade ... -f <your values>                                # recreates CRs; objects built fresh
+# Under ArgoCD the policy CRs sit at a higher sync-wave than the Subscription precisely so reverse-order
+# deletion runs their finalizers while the operator is still up.
+#
+# THE SWEEPER now reads the config-source LABEL instead of the two annotations — one field instead of two
+# concatenated, and the same key a human selects on, so the sweeper and the runbook cannot disagree.
+#
+# The configSource values keys are gone from every stanza: the value is the CR name, so there is nothing
+# left to configure.
+#
 # 0.15.0, MINOR: oudGroup policy `name` and `configSource` are DERIVED FROM THE MAP KEY when left empty.
 #
 #   policies:
@@ -246,7 +293,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.15.0
+version: 0.16.0
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:

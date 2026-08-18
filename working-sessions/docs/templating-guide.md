@@ -349,8 +349,9 @@ the operator injects `excludedPaths: [.metadata, .status, .spec.replicas]`, so a
 objectTemplate reaches **nothing that already exists**. Delete the CRs and let it rebuild. Measured:
 55 objects revoked in ~4s, restored within ~50s.
 
-Select on `rbac.ocp.io/config-source` for that delete — **not** on `source-namespaceconfig`, which is
-an annotation, and `oc -l` matches labels only.
+Select on `rbac.ocp.io/config-source` for that delete. As of 0.16.0 `source-namespaceconfig` holds the
+same value, but it is an annotation and `oc -l` matches labels only — so the annotation form matches
+nothing.
 
 ---
 
@@ -402,7 +403,7 @@ this guide is in `working-sessions/docs/`.
 | Parsing an objectTemplate directly | YAML error on the guard line | render expressions out first |
 | `.` inside `range` | root context lost; `include "nco.labels" .` gets the loop item | pass `$` |
 | Editing labels and expecting propagation | GOTCHA 9 — `.metadata` is excluded, existing objects keep old metadata | delete the CRs, let it rebuild |
-| `-l` on `source-namespaceconfig` | matches nothing on most policies (it is an annotation) | `-l rbac.ocp.io/config-source=…` |
+| `-l` on `source-namespaceconfig` | matches nothing — it is an annotation, though it holds the same value | `-l rbac.ocp.io/config-source=…` |
 | `--set` with a list index | can empty the whole list and trip a different guard | use `-f` with a temp values file |
 
 ---

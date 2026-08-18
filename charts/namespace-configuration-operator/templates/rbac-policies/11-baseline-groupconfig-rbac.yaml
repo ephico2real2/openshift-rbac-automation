@@ -82,10 +82,9 @@
 # ClusterRoleBinding. It does mean GOTCHA 9 applies: because .metadata is excluded, editing labels or
 # annotations in an objectTemplate below changes NOTHING on bindings that already exist. To roll
 # metadata forward, delete them and let the operator rebuild. SELECT ON config-source, NOT on
-# source-groupconfig — the latter is an ANNOTATION below, and `oc -l` matches only labels, so it selects
-# NOTHING and the delete reads as a clean no-op. Verified against the live objects:
-# -l rbac.ocp.io/source-groupconfig=baseline-cluster-groupconfig-rbac returns 0 of 12, while
-# -l rbac.ocp.io/config-source=cluster-rbac returns all 12.
+# source-groupconfig. Both carry the SAME value as of 0.16.0 — the CR name — but source-groupconfig is an
+# ANNOTATION and `oc -l` matches labels only, so selecting on it returns NOTHING and the delete reads as a
+# clean no-op. Read the annotation, select on the label.
 #   oc delete clusterrolebinding -l rbac.ocp.io/config-source=cluster-rbac
 {{- $group := "{{ .Name }}" }}
 {{- $endif := "{{- end }}" }}
@@ -146,7 +145,23 @@ spec:
           name: "{{ $group }}-crb"
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            rbac.ocp.io/config-source: cluster-rbac
+            # THE CR THAT CREATED THIS OBJECT, and the only provenance key there is. A LABEL, so it can
+            # be selected on:
+            #   oc get rolebinding,clusterrolebinding,role -A -l rbac.ocp.io/config-source=baseline-cluster-rbac
+            # Until 0.16.0 this held a short family name while rbac.ocp.io/source-{namespace,group}config
+            # held the CR name as an ANNOTATION — two names for one relationship, split across a label and
+            # an annotation and split again by CRD kind. That split is what made four documented
+            # remediation commands select nothing: they used `oc -l` on an annotation. One key, one form,
+            # one meaning.
+            rbac.ocp.io/config-source: {{ $c.name }}
+            # WHICH CRD OWNS IT. config-source above names the CR; this says what kind of CR, so the
+            # pair is self-describing without a lookup. A LABEL rather than an annotation, deliberately:
+            # the old source-{namespace,group}config encoded the kind in the KEY NAME and was an
+            # annotation, so `oc -l` could not use it and two queries were needed to cover both kinds.
+            # Now one query does either:
+            #   oc get rolebinding,role -A -l rbac.ocp.io/source-kind=NamespaceConfig
+            #   oc get clusterrolebinding  -l rbac.ocp.io/source-kind=GroupConfig
+            rbac.ocp.io/source-kind: GroupConfig
             rbac.ocp.io/role-type: cluster-{{ $r.name }}
             rbac.ocp.io/bound-role: {{ $r.clusterRole }}
             rbac.ocp.io/scope: cluster-wide

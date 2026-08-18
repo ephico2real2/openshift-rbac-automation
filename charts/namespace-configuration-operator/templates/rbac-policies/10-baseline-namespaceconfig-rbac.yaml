@@ -66,7 +66,8 @@
 # _helpers.tpl#nco.labels already sets it on the CR from Chart.AppVersion. Hand-setting it inside an
 # objectTemplate made the same key mean the OPERATOR version on the CR (1.2.6) and the POLICY version on
 # the objects that CR created (0.1.0): one policy, one key, two contradictory answers. The source policies
-# did that; this does not. Provenance is carried instead by rbac.ocp.io/source-namespaceconfig, which names
+# did that; this does not. Provenance is carried instead by rbac.ocp.io/config-source (label) and
+# rbac.ocp.io/source-namespaceconfig (annotation), which name
 # the CR that owns the object — a pointer that cannot go stale the way a copied version string does.
 #
 # ── WHAT EACH ROLE ENTRY IN VALUES EXPANDS TO ────────────────────────────────
@@ -178,11 +179,9 @@ spec:
   # RoleBindings that already exist. The operator reports success and the old metadata stays, so a
   # cluster ends up with two generations of it. Spec-level edits (subjects, roleRef) DO propagate.
   # To roll metadata forward, delete the objects and let the operator rebuild them. SELECT ON
-  # config-source, NOT on source-namespaceconfig — the latter is an ANNOTATION here, and `oc -l` matches
-  # only labels, so it selects NOTHING and the delete reads as a clean no-op. Verified against the live
-  # objects: -l rbac.ocp.io/source-namespaceconfig=nonprod-namespaceconfig-rbac returns 0 of 30, while
-  # -l rbac.ocp.io/config-source=nonprod-rbac returns all 30. (oud-group is the one exception on this
-  # cluster — it sets source-namespaceconfig as a label and has no config-source at all.)
+  # config-source, which is a LABEL. source-namespaceconfig carries the SAME value as of 0.16.0 but is an
+  # ANNOTATION, and `oc -l` matches labels only — so selecting on it returns NOTHING and the delete reads
+  # as a clean no-op. Same value, different form: read the annotation, select on the label.
   #   oc delete rolebinding -A -l rbac.ocp.io/config-source=nonprod-rbac   # prod-rbac for the prod CR
   templates:
     {{- range $r := $p.roles }}
@@ -198,7 +197,23 @@ spec:
           namespace: "{{ $ns }}"
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            rbac.ocp.io/config-source: {{ $key }}-rbac
+            # THE CR THAT CREATED THIS OBJECT, and the only provenance key there is. A LABEL, so it can
+            # be selected on:
+            #   oc get rolebinding,clusterrolebinding,role -A -l rbac.ocp.io/config-source=<the CR name>
+            # Until 0.16.0 this held a short family name while rbac.ocp.io/source-{namespace,group}config
+            # held the CR name as an ANNOTATION — two names for one relationship, split across a label and
+            # an annotation and split again by CRD kind. That split is what made four documented
+            # remediation commands select nothing: they used `oc -l` on an annotation. One key, one form,
+            # one meaning.
+            rbac.ocp.io/config-source: {{ $p.name }}
+            # WHICH CRD OWNS IT. config-source above names the CR; this says what kind of CR, so the
+            # pair is self-describing without a lookup. A LABEL rather than an annotation, deliberately:
+            # the old source-{namespace,group}config encoded the kind in the KEY NAME and was an
+            # annotation, so `oc -l` could not use it and two queries were needed to cover both kinds.
+            # Now one query does either:
+            #   oc get rolebinding,role -A -l rbac.ocp.io/source-kind=NamespaceConfig
+            #   oc get clusterrolebinding  -l rbac.ocp.io/source-kind=GroupConfig
+            rbac.ocp.io/source-kind: NamespaceConfig
             rbac.ocp.io/role-type: ns-{{ $r.name }}
             rbac.ocp.io/bound-role: {{ $r.clusterRole }}
             rbac.ocp.io/scope: namespace-scoped
@@ -206,10 +221,18 @@ spec:
             rbac.ocp.io/mnemonic: "{{ $mn }}"
             rbac.ocp.io/environment: "{{ $env }}"
           annotations:
+            # THE CR THAT CREATED THIS OBJECT, in readable form. The same value is on the
+            # rbac.ocp.io/config-source LABEL above, and that duplication is deliberate rather than
+            # sloppy: the label is what you SELECT on, this is what you READ when you pull the object
+            # with `oc get -o yaml` or `oc describe`, where annotations are shown and labels are easy to
+            # skim past. The key name also carries which CRD owns it.
+            #
+            # It is also why the old `oc -l` trap is now harmless: if someone selects on this annotation
+            # and gets nothing, the label beside it holds the identical value and does work.
+            rbac.ocp.io/source-namespaceconfig: {{ $p.name }}
             # NO group-pattern on this policy: it computes a CONCRETE group name, not a wildcard, and
             # that name is the rbac.ocp.io/group-name LABEL above where it can be selected on. The
             # annotation exists only on the two GroupConfig policies, whose value really is a pattern.
-            rbac.ocp.io/source-namespaceconfig: {{ $p.name }}
         subjects:
         - kind: Group
           name: "{{ $group }}"

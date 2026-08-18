@@ -435,28 +435,19 @@ metadata change  adding an annotation to the template
 > oc delete rolebinding -A -l rbac.ocp.io/config-source=<short name>
 > ```
 >
-> **Select on `config-source`, not on `source-namespaceconfig` — corrected 2026-08-14.** These two
-> commands originally used `source-namespaceconfig`, which was right when oud-group was the only
-> policy here: it sets that key as a **label**. Every policy the chart added since sets it as an
-> **annotation** instead, and `oc -l` matches labels only — so on those the selector matches zero
-> objects and a delete reads as a clean no-op. Measured per family:
+> **Select on `config-source`, not on `source-namespaceconfig`.** As of chart 0.16.0 both carry the SAME
+> value — the name of the CR that created the object — but `config-source` is a LABEL and
+> `source-namespaceconfig` is an ANNOTATION, and `oc -l` matches labels only. So the annotation form
+> returns nothing and the delete reads as a clean no-op:
 >
 > ```
-> -l rbac.ocp.io/source-namespaceconfig=baseline-nonprod-rbac    0  (of 30)
-> -l rbac.ocp.io/config-source=nonprod-rbac                           30
-> -l rbac.ocp.io/source-groupconfig=baseline-cluster-rbac   0  (of 12)
-> -l rbac.ocp.io/config-source=cluster-rbac                           12
-> -l rbac.ocp.io/source-namespaceconfig=abc-oud-group-rbac  3  (of 3 — the exception)
+> -l rbac.ocp.io/source-namespaceconfig=baseline-nonprod-rbac    0   (annotation — never matches)
+> -l rbac.ocp.io/config-source=baseline-nonprod-rbac            20   (label — works)
 > ```
 >
-> So `config-source` for everything the chart renders; `source-namespaceconfig` only for oud-group,
-> which carries no `config-source` at all. The annotation placement is itself deliberate — provenance
-> is not meant to be a selector — which is precisely why a selector built on it fails, and fails
-> *quietly*. See `docs/labels-and-annotations.md` §3.2 for the underlying key inconsistency.
->
-> This is arguably the right default — it stops NCO fighting other controllers that annotate
-> resources — but it is silent, and it is the *only* drift case NCO does not self-heal.
-> Everything at the object level does.
+> Read the annotation when you are looking at one object; select on the label when you are operating on
+> a set. `rbac.ocp.io/source-kind` (NamespaceConfig | GroupConfig) is a label too, so one query can cover
+> a whole CRD's output. See `docs/labels-and-annotations.md` §2.
 
 ## Kyverno gotchas
 

@@ -97,7 +97,6 @@
   ~50s to restore. Rename deliberately, not while tidying.
 */ -}}
 {{- $name := $p.name | default (printf "%s-oud-group-rbac" $key) }}
-{{- $configSource := $p.configSource | default (printf "%s-oud-group-rbac" $key) }}
 {{- $group := printf "{{ index .Labels %s%s%s }}" "\"" $p.labelKey "\"" }}
 ---
 apiVersion: redhatcop.redhat.io/v1alpha1
@@ -155,10 +154,34 @@ spec:
             # NAMESPACE, not one per group (fixed name {{ $p.roleName }}), so tying it to a single
             # group name would be wrong rather than merely redundant.
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            rbac.ocp.io/config-source: {{ $configSource }}
+            # THE CR THAT CREATED THIS OBJECT, and the only provenance key there is. A LABEL, so it can
+            # be selected on:
+            #   oc get rolebinding,clusterrolebinding,role -A -l rbac.ocp.io/config-source=abc-oud-group-rbac
+            # Until 0.16.0 this held a short family name while rbac.ocp.io/source-{namespace,group}config
+            # held the CR name as an ANNOTATION — two names for one relationship, split across a label and
+            # an annotation and split again by CRD kind. That split is what made four documented
+            # remediation commands select nothing: they used `oc -l` on an annotation. One key, one form,
+            # one meaning.
+            rbac.ocp.io/config-source: {{ $name }}
+            # WHICH CRD OWNS IT. config-source above names the CR; this says what kind of CR, so the
+            # pair is self-describing without a lookup. A LABEL rather than an annotation, deliberately:
+            # the old source-{namespace,group}config encoded the kind in the KEY NAME and was an
+            # annotation, so `oc -l` could not use it and two queries were needed to cover both kinds.
+            # Now one query does either:
+            #   oc get rolebinding,role -A -l rbac.ocp.io/source-kind=NamespaceConfig
+            #   oc get clusterrolebinding  -l rbac.ocp.io/source-kind=GroupConfig
+            rbac.ocp.io/source-kind: NamespaceConfig
             rbac.ocp.io/role-type: {{ $p.roleType }}
             rbac.ocp.io/scope: namespace-scoped
           annotations:
+            # THE CR THAT CREATED THIS OBJECT, in readable form. The same value is on the
+            # rbac.ocp.io/config-source LABEL above, and that duplication is deliberate rather than
+            # sloppy: the label is what you SELECT on, this is what you READ when you pull the object
+            # with `oc get -o yaml` or `oc describe`, where annotations are shown and labels are easy to
+            # skim past. The key name also carries which CRD owns it.
+            #
+            # It is also why the old `oc -l` trap is now harmless: if someone selects on this annotation
+            # and gets nothing, the label beside it holds the identical value and does work.
             rbac.ocp.io/source-namespaceconfig: {{ $name }}
         rules:
           {{- toYaml $p.rules | nindent 10 }}
@@ -176,7 +199,23 @@ spec:
           namespace: "{{ $ns }}"
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            rbac.ocp.io/config-source: {{ $configSource }}
+            # THE CR THAT CREATED THIS OBJECT, and the only provenance key there is. A LABEL, so it can
+            # be selected on:
+            #   oc get rolebinding,clusterrolebinding,role -A -l rbac.ocp.io/config-source=abc-oud-group-rbac
+            # Until 0.16.0 this held a short family name while rbac.ocp.io/source-{namespace,group}config
+            # held the CR name as an ANNOTATION — two names for one relationship, split across a label and
+            # an annotation and split again by CRD kind. That split is what made four documented
+            # remediation commands select nothing: they used `oc -l` on an annotation. One key, one form,
+            # one meaning.
+            rbac.ocp.io/config-source: {{ $name }}
+            # WHICH CRD OWNS IT. config-source above names the CR; this says what kind of CR, so the
+            # pair is self-describing without a lookup. A LABEL rather than an annotation, deliberately:
+            # the old source-{namespace,group}config encoded the kind in the KEY NAME and was an
+            # annotation, so `oc -l` could not use it and two queries were needed to cover both kinds.
+            # Now one query does either:
+            #   oc get rolebinding,role -A -l rbac.ocp.io/source-kind=NamespaceConfig
+            #   oc get clusterrolebinding  -l rbac.ocp.io/source-kind=GroupConfig
+            rbac.ocp.io/source-kind: NamespaceConfig
             rbac.ocp.io/role-type: {{ $p.roleType }}
             rbac.ocp.io/bound-role: {{ $p.roleName }}
             rbac.ocp.io/scope: namespace-scoped
@@ -185,9 +224,12 @@ spec:
             #   oc get rolebinding,clusterrolebinding -A -l rbac.ocp.io/group-name=<group>
             rbac.ocp.io/group-name: "{{ $group }}"
           annotations:
+            # The CR that created this object, readable. Same value as the config-source LABEL above:
+            # the label is what you select on, this is what you read in `oc get -o yaml` / `oc describe`.
+            # No group-pattern — this policy reads its group from a namespace label, not a wildcard.
+            rbac.ocp.io/source-namespaceconfig: {{ $name }}
             # No group-pattern: this policy's group comes from a NAMESPACE LABEL, not from a name
             # pattern, so there is no wildcard to record. That absence is correct, not a gap.
-            rbac.ocp.io/source-namespaceconfig: {{ $name }}
         subjects:
           - kind: Group
             name: "{{ $group }}"

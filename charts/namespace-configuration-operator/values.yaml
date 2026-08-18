@@ -350,9 +350,6 @@ namespaceConfigPolicy:
         # That label is the ONE reliable way to select a policy's objects — which a metadata change needs,
         # since it requires deleting and rebuilding them. See working-sessions/docs/labels-and-annotations.md
         # §6. Keep it short and distinct from every other policy's.
-        # EMPTY = derive from the map key: `abc` -> abc-oud-group-rbac. This is the rbac.ocp.io/config-source
-        # label, and the one label that reliably selects this policy's objects.
-        configSource: ''
 
         # The Role the RoleBinding points at. One Role per namespace, created by the first template.
         roleName: oud-group-submitter-role
@@ -420,7 +417,6 @@ namespaceConfigPolicy:
       #   name: xyz-oud-group-rbac
       #   # MUST DIFFER from every other policy's labelKey — the template refuses a duplicate.
       #   labelKey: company.net/xyz-oud-group
-      #   configSource: xyz-oud-group-rbac
       #   roleName: xyz-submitter-role
       #   roleType: xyz-job-submitter
       #   excludedPaths:
@@ -657,7 +653,6 @@ customGroupConfig:
 
   name: custom-cluster-rbac
   description: "Custom RBAC: bind ClusterRoles defined outside this chart to chosen group suffixes"
-  configSource: custom-rbac
 
   # SYNCED GROUPS ONLY — the only thing narrowing the selector, and the template refuses it empty.
   syncProviderLabelKey: group-sync-operator.redhat-cop.io/sync-provider

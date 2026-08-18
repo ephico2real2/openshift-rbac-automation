@@ -70,8 +70,12 @@ data:
     for kind in rolebinding clusterrolebinding role; do
       # -A is invalid for a cluster-scoped kind, so the flag is chosen per kind.
       scope="-A"; [ "$kind" = "clusterrolebinding" ] && scope=""
+      # READS THE config-source LABEL, not the old source-{namespace,group}config annotations. As of
+      # 0.16.0 there is ONE provenance key and it is a label, so this is a single field lookup instead of
+      # two concatenated annotations — and it is the same key a human would select on, so the sweeper and
+      # the runbook cannot disagree about what owns an object.
       RAW="$(oc get "$kind" $scope -l "app.kubernetes.io/managed-by=${MANAGED_BY}" \
-               -o jsonpath="{range .items[*]}{.metadata.namespace}|{.metadata.name}|{.metadata.annotations.rbac\.ocp\.io/source-namespaceconfig}{.metadata.annotations.rbac\.ocp\.io/source-groupconfig}{'\n'}{end}" \
+               -o jsonpath="{range .items[*]}{.metadata.namespace}|{.metadata.name}|{.metadata.labels.rbac\.ocp\.io/config-source}{'\n'}{end}" \
                2>/dev/null || true)"
       OLDIFS="$IFS"; IFS="$NL"
       for line in $RAW; do
@@ -82,7 +86,7 @@ data:
         name="${rest%%|*}"
         owner="${rest#*|}"
         if [ -z "$name" ]; then IFS="$NL"; continue; fi
-        # No provenance annotation: not ours to reason about, left alone deliberately. The sweeper only
+        # No config-source label: not ours to reason about, left alone deliberately. The sweeper only
         # ever acts on an object that NAMES the policy which should own it.
         if [ -z "$owner" ]; then KEPT=$((KEPT+1)); IFS="$NL"; continue; fi
         if printf '%s\n' "$EXISTING" | grep -qxF "$owner"; then

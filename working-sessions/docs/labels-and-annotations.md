@@ -31,7 +31,8 @@ and Role it creates.
 | key | values on the cluster today | meaning |
 |---|---|---|
 | `app.kubernetes.io/managed-by` | `namespace-configuration-operator` | the operator created this; hand-made RBAC has no such label |
-| `rbac.ocp.io/config-source` | `nonprod-rbac` `prod-rbac` `cluster-rbac` `custom-rbac` `oud-group-rbac` | which policy produced it — **the selector to use for a delete-and-rebuild** |
+| `rbac.ocp.io/config-source` | `baseline-nonprod-rbac` `baseline-prod-rbac` `baseline-cluster-rbac` `custom-cluster-rbac` `abc-oud-group-rbac` | **the NAME OF THE CR that created it** — the one provenance key, and the selector for a delete-and-rebuild |
+| `rbac.ocp.io/source-kind` | `NamespaceConfig` `GroupConfig` | which CRD owns it, so the pair is self-describing without a lookup |
 | `rbac.ocp.io/role-type` | `ns-admin` `ns-developer` `ns-audit` `cluster-admin` `cluster-developer` `cluster-audit` `database-admin` `submitter` | the **tier** — the promise being made |
 | `rbac.ocp.io/bound-role` | `admin` `edit` `view` `database-admin` `oud-group-submitter-role` | the role **actually referenced** by `roleRef` — the effective permission |
 | `rbac.ocp.io/scope` | `namespace-scoped` `cluster-wide` | whether it applies in one namespace or all of them |
@@ -68,45 +69,46 @@ oc get rolebinding,clusterrolebinding -A -l rbac.ocp.io/bound-role=view    # all
 |---|---|---|
 | `rbac.ocp.io/source-namespaceconfig` | `baseline-nonprod-rbac` `baseline-prod-rbac` `abc-oud-group-rbac` | the NamespaceConfig that owns it |
 | `rbac.ocp.io/source-groupconfig` | `baseline-cluster-rbac` `custom-cluster-rbac` | the GroupConfig that owns it |
-| `rbac.ocp.io/group-pattern` | `app-ocp-rbac-*-cluster-admin`, `app-ocp-rbac-*-database-admin`, … | the wildcard the operator matched groups against |
+| `rbac.ocp.io/group-pattern` | `app-ocp-rbac-*-cluster-admin`, `app-ocp-rbac-*-database-admin` | the wildcard the operator matched groups against |
 
-**`config-source` and `source-*config` are NOT the same fact, and must not be "aligned".** They agree on
-`abc-oud-group-rbac` and disagree on the other four, which looks like an inconsistency and is not:
+### The provenance keys, and why there are three of them
 
 ```
-CR that created it       config-source label      
-abc-oud-group-rbac       abc-oud-group-rbac       agree
-baseline-cluster-rbac    cluster-rbac             differ
-baseline-nonprod-rbac    nonprod-rbac             differ
-baseline-prod-rbac       prod-rbac                differ
-custom-cluster-rbac      custom-rbac              differ
+rbac.ocp.io/config-source        LABEL       baseline-cluster-rbac   the CR name — SELECT on this
+rbac.ocp.io/source-kind          LABEL       GroupConfig             which CRD owns it
+rbac.ocp.io/source-groupconfig   ANNOTATION  baseline-cluster-rbac   the CR name — READ this
 ```
 
-`config-source` answers *which policy* — a stable short identity, and a LABEL so it can be selected on.
-`source-*config` answers *which CR object* — the exact name, an ANNOTATION because it is provenance.
+The label and the annotation carry the **same value**, deliberately. They are read in different ways:
 
-The four baseline policies are **singletons with hand-chosen names**: there is no map key to rename, so
-their identity cannot drift and a short stable value is the right thing. `oudGroup.policies` multiplies,
-so its identity is derived from the map key — which is why its two values coincide, not because equality
-is the rule.
+- **`config-source` is a label**, so `oc get -l` works. It is what any bulk operation selects on — the
+  delete-and-rebuild in §6, and the orphan sweeper.
+- **`source-*config` is an annotation**, so it shows up in `oc describe` and `oc get -o yaml` where a
+  human is reading one object and wants to know what made it. Its key **name** also states which CRD.
+- **`source-kind` is the selectable form of that last fact**, so one query covers a whole CRD's output:
+  `-l rbac.ocp.io/source-kind=GroupConfig`.
 
-Making the other four match would rebuild all 42 objects for no gain, and dropping `source-*config` as
-"redundant" would remove the only key that names the actual CR — which is exactly what the orphan
-sweeper reads to decide whether an object still has an owner.
+`config-source` did not always equal the CR name. Until 0.16.0 it held a short family name
+(`cluster-rbac` for `baseline-cluster-rbac`) that matched no CR, which is what made "which policy made
+this?" answerable two different ways with two different answers.
 
-**These are annotations on purpose, and `oc -l` will not find them.** Provenance is for reading, and
-`config-source` is the label that answers the same question selectably. Use it for any bulk operation:
+**`oc -l` on the annotation still returns nothing** — that is how labels and annotations work, not a bug.
+The difference now is that it costs a retry rather than a wrong answer, because the label beside it holds
+the identical value. Four documented remediation commands in this repo once got that wrong and reported
+success while matching zero objects.
 
-```sh
-oc delete rolebinding -A -l rbac.ocp.io/config-source=nonprod-rbac      # 30 objects
-oc delete clusterrolebinding  -l rbac.ocp.io/config-source=cluster-rbac # 12 objects
+**A label-VALUE migration is not free, and the sweeper is why.** `config-source` is metadata, so a change
+to it does not propagate (§6). After a plain upgrade every existing object still carries the old value,
+which matches no CR — and the sweeper reads exactly that key. Measured when 0.16.0 was applied: it found
+all 36 stale objects and REFUSED, because `orphanSweeper.limit` is 25:
+
+```
+ERROR: refusing to delete 36 objects, which exceeds orphanSweeper.limit=25
 ```
 
-`group-pattern` appears only where the value genuinely **is** a pattern — the two GroupConfig policies.
-The namespace-keyed policies compute a concrete group name instead, and that name is the `group-name`
-label, where it can be selected on.
-
----
+The guard turned a mass revocation into a failed sync. The fix is to rebuild the objects as part of the
+upgrade so the interim state never exists — delete the CRs first, with the operator alive, then sync. Do
+not raise the limit to work around it.
 
 ## 3. On the policy CRs
 
