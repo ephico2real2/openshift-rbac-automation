@@ -30,6 +30,31 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.11.0, MINOR: shortens every policy CR name to <family>-<scope>-rbac.
+#
+#   nonprod-namespaceconfig-rbac         -> baseline-nonprod-rbac
+#   prod-namespaceconfig-rbac            -> baseline-prod-rbac
+#   baseline-cluster-groupconfig-rbac    -> baseline-cluster-rbac
+#   abc-oud-group-namespaceconfig-rbac   -> abc-oud-group-rbac
+#   custom-groupconfig-rbac              -> custom-cluster-rbac
+#
+# The two baseline NamespaceConfigs gain the `baseline-` prefix they were missing, and every name drops
+# the CRD kind. Nothing forced the shortening — the name lands only in the rbac.ocp.io/source-*config
+# ANNOTATION, which is unbounded, and no generated object name derives from it, so the 63-character label
+# cap never applied. It is a readability change: `kind:` and the rbac.ocp.io/kind label already state the
+# CRD, and the names now line up with the rbac.ocp.io/config-source label values.
+#
+# THE TEMPLATE FILENAMES DELIBERATELY KEEP THE KIND — 10-baseline-namespaceconfig-rbac.yaml,
+# 11-baseline-groupconfig-rbac.yaml and so on are unchanged. Filename says which CRD a template handles;
+# CR name says which policy it is on a cluster. See templates/rbac-policies/_README.txt.
+#
+# FIVE RENAMES IS FIVE DELETE-PLUS-CREATES: all 42 generated objects are revoked and rebuilt in one
+# window. Measured on the 0.10.0 single rename: 12 objects back within ~6s, zero orphans. A rename is
+# reliable, unlike removing a role from a list — see the warning on clusterRbac.roles.
+#
+# Anything reading rbac.ocp.io/source-namespaceconfig or source-groupconfig needs updating.
+# rbac.ocp.io/config-source is UNCHANGED and remains the label to select on.
+#
 # 0.10.0, MINOR: renames the cluster-wide GroupConfig from baseline-groupconfig-rbac to
 # baseline-cluster-groupconfig-rbac, so its name says which SCOPE it covers — the sibling NamespaceConfig
 # policies already carry nonprod/prod in theirs, and "baseline" alone did not distinguish the two.
@@ -103,7 +128,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.10.0
+version: 0.11.0
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:

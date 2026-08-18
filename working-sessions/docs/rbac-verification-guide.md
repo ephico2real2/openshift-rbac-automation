@@ -21,8 +21,8 @@ oc get namespaceconfig,groupconfig,userconfig
 ```
 NAME                                                               AGE
 namespaceconfig.redhatcop.redhat.io/multitenant                    96d
-namespaceconfig.redhatcop.redhat.io/nonprod-namespaceconfig-rbac   30m
-namespaceconfig.redhatcop.redhat.io/prod-namespaceconfig-rbac      98d
+namespaceconfig.redhatcop.redhat.io/baseline-nonprod-rbac   30m
+namespaceconfig.redhatcop.redhat.io/baseline-prod-rbac      98d
 
 NAME                                                                                  AGE
 groupconfig.redhatcop.redhat.io/cluster-admin-groupconfig-rbac                        96d
@@ -262,7 +262,7 @@ app-ocp-rbac-demo-ns-developer-monitoring-config-edit  Role/user-workload-monito
 
 ```bash
 # Verify nonprod NamespaceConfig selector
-oc get namespaceconfig nonprod-namespaceconfig-rbac -o json | \
+oc get namespaceconfig baseline-nonprod-rbac -o json | \
   jq '.spec.labelSelector'
 ```
 
@@ -299,7 +299,7 @@ oc get namespaceconfig nonprod-namespaceconfig-rbac -o json | \
 
 ```bash
 # Verify prod NamespaceConfig selector
-oc get namespaceconfig prod-namespaceconfig-rbac -o json | \
+oc get namespaceconfig baseline-prod-rbac -o json | \
   jq '.spec.labelSelector'
 ```
 
@@ -502,7 +502,7 @@ Use this checklist to confirm your deployment:
 oc get namespace <namespace-name> --show-labels
 
 # Verify NamespaceConfig is reconciling
-oc get namespaceconfig nonprod-namespaceconfig-rbac -o yaml | grep -A 5 status
+oc get namespaceconfig baseline-nonprod-rbac -o yaml | grep -A 5 status
 
 # Check operator logs
 oc logs -n namespace-configuration-operator \

@@ -241,7 +241,7 @@ namespaceConfigPolicy:
     # (3 Roles + 3 RoleBindings) gone in ~4s and back within ~50s. Nothing is left behind — an earlier
     # version of this comment claimed objects would be orphaned, which is the opposite of what happens
     # and would have led someone to hunt for stale objects instead of planning a window.
-    name: abc-oud-group-namespaceconfig-rbac
+    name: abc-oud-group-rbac
 
     # THE LABEL, and it does two jobs: the CR selects namespaces that HAVE it, and the template binds
     # whatever its VALUE says. Both, from one key — which is why the template refuses to render when
@@ -358,7 +358,7 @@ namespaceConfigPolicy:
       # ---- non-production: rnd / eng / qa / uat ----
       nonprod:
         enabled: true
-        name: nonprod-namespaceconfig-rbac
+        name: baseline-nonprod-rbac
         description: "Nonprod RBAC: admin/developer/audit access for rnd/eng/qa/uat environments only"
 
         # AN EXPLICIT ALLOW-LIST, not "everything that is not prod". An environment nobody has ruled on
@@ -405,7 +405,7 @@ namespaceConfigPolicy:
       # and the answer is: the full baseline. Turn this off only to deploy the nonprod half alone.
       prod:
         enabled: true
-        name: prod-namespaceconfig-rbac
+        name: baseline-prod-rbac
         description: "Prod RBAC: developer/audit access for prod environments only (no admin or edit)"
         environments:
           - prod
@@ -457,7 +457,7 @@ clusterRbac:
   # instead leaves orphans — see the warning above the roles list.
   #
   # The window is real though: for those few seconds nobody this policy grants has cluster-wide access.
-  name: baseline-cluster-groupconfig-rbac
+  name: baseline-cluster-rbac
   description: "Cluster RBAC baseline: admin/view/edit ClusterRoles for the cluster tiers of synced groups"
 
   # SYNCED GROUPS ONLY, and this is the only thing narrowing the selector. GroupSync sets this label
@@ -536,7 +536,7 @@ customGroupConfig:
   # groupconfig-controller finalizer, so the operator deletes every binding it made.
   enabled: false
 
-  name: custom-groupconfig-rbac
+  name: custom-cluster-rbac
   description: "Custom RBAC: bind ClusterRoles defined outside this chart to chosen group suffixes"
   configSource: custom-rbac
 
