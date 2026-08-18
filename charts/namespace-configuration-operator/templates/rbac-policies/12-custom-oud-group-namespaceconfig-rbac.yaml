@@ -64,17 +64,11 @@
 {{- range $key, $p := $og.policies }}
 {{- if not $p.enabled }}
 {{- else }}
-{{- if not $p.name }}
-{{- fail (printf "namespaceConfigPolicy.oudGroup.policies.%s has no name. It names the CR and is written into every generated object's provenance annotation, so it cannot be empty." $key) }}
-{{- end }}
 {{- if not $p.labelKey }}
 {{- fail (printf "namespaceConfigPolicy.oudGroup.policies.%s has no labelKey. It is the label the NamespaceConfig selects on AND the label whose VALUE becomes the bound group, so empty would select EVERY namespace and bind a group called \"\"." $key) }}
 {{- end }}
 {{- if not $p.roleName }}
 {{- fail (printf "namespaceConfigPolicy.oudGroup.policies.%s has no roleName. The RoleBinding's roleRef names it, and a RoleBinding pointing at a Role that does not exist is created successfully, reports healthy, and grants NOTHING." $key) }}
-{{- end }}
-{{- if not $p.configSource }}
-{{- fail (printf "namespaceConfigPolicy.oudGroup.policies.%s has no configSource. It is the rbac.ocp.io/config-source label, and the ONLY label that reliably selects this policy's objects for the delete-and-rebuild a metadata change needs." $key) }}
 {{- end }}
 {{- if not $p.rules }}
 {{- fail (printf "namespaceConfigPolicy.oudGroup.policies.%s has no rules, so it would create an empty Role that grants nothing while looking configured." $key) }}
@@ -89,12 +83,27 @@
 {{- fail (printf "namespaceConfigPolicy.oudGroup.policies.%s reuses labelKey %q, already used by %q. Both CRs would select the same namespaces and create the same RoleBinding name with different roles, and the operator would rewrite one over the other every reconcile. Give each policy its own label." $key $p.labelKey (index $seenLabel $p.labelKey)) }}
 {{- end }}
 {{- $seenLabel = set $seenLabel $p.labelKey $key }}
+{{- /*
+  NAME AND configSource ARE DERIVED FROM THE MAP KEY, so the key is the single place a policy's identity
+  is written. values.yaml ships both as '' and this fills them in: key `abc` gives the CR name
+  abc-oud-group-rbac and the config-source label abc-oud-group-rbac. Setting either explicitly overrides
+  the derivation, which is the escape hatch for a policy that has to keep a name it already has on a
+  cluster.
+
+  THE CONSEQUENCE OF DERIVING, worth knowing before renaming a key: the CR name IS cluster identity, and
+  Helm treats a renamed resource as delete-plus-create — the old CR's finalizer revokes every object it
+  made and the new CR rebuilds them. So renaming a key here is not a cosmetic values edit; it is a
+  revocation and rebuild of that policy's objects. Measured elsewhere in this chart at ~4s to revoke and
+  ~50s to restore. Rename deliberately, not while tidying.
+*/ -}}
+{{- $name := $p.name | default (printf "%s-oud-group-rbac" $key) }}
+{{- $configSource := $p.configSource | default (printf "%s-oud-group-rbac" $key) }}
 {{- $group := printf "{{ index .Labels %s%s%s }}" "\"" $p.labelKey "\"" }}
 ---
 apiVersion: redhatcop.redhat.io/v1alpha1
 kind: NamespaceConfig
 metadata:
-  name: {{ $p.name }}
+  name: {{ $name }}
   labels:
     {{- include "nco.labels" $ | nindent 4 }}
     app.kubernetes.io/component: rbac-automation
@@ -146,11 +155,11 @@ spec:
             # NAMESPACE, not one per group (fixed name {{ $p.roleName }}), so tying it to a single
             # group name would be wrong rather than merely redundant.
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            rbac.ocp.io/config-source: {{ $p.configSource }}
+            rbac.ocp.io/config-source: {{ $configSource }}
             rbac.ocp.io/role-type: {{ $p.roleType }}
             rbac.ocp.io/scope: namespace-scoped
           annotations:
-            rbac.ocp.io/source-namespaceconfig: {{ $p.name }}
+            rbac.ocp.io/source-namespaceconfig: {{ $name }}
         rules:
           {{- toYaml $p.rules | nindent 10 }}
 
@@ -167,7 +176,7 @@ spec:
           namespace: "{{ $ns }}"
           labels:
             app.kubernetes.io/managed-by: namespace-configuration-operator
-            rbac.ocp.io/config-source: {{ $p.configSource }}
+            rbac.ocp.io/config-source: {{ $configSource }}
             rbac.ocp.io/role-type: {{ $p.roleType }}
             rbac.ocp.io/bound-role: {{ $p.roleName }}
             rbac.ocp.io/scope: namespace-scoped
@@ -178,7 +187,7 @@ spec:
           annotations:
             # No group-pattern: this policy's group comes from a NAMESPACE LABEL, not from a name
             # pattern, so there is no wildcard to record. That absence is correct, not a gap.
-            rbac.ocp.io/source-namespaceconfig: {{ $p.name }}
+            rbac.ocp.io/source-namespaceconfig: {{ $name }}
         subjects:
           - kind: Group
             name: "{{ $group }}"

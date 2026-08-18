@@ -336,7 +336,10 @@ namespaceConfigPolicy:
         # (3 Roles + 3 RoleBindings) gone in ~4s and back within ~50s. Nothing is left behind — an earlier
         # version of this comment claimed objects would be orphaned, which is the opposite of what happens
         # and would have led someone to hunt for stale objects instead of planning a window.
-        name: abc-oud-group-rbac
+        # EMPTY = derive from the map key above: `abc` -> abc-oud-group-rbac. Set it explicitly only to
+        # pin a name a cluster already has. Renaming the KEY renames the CR, and a CR rename is
+        # delete-plus-create: the finalizer revokes this policy's objects and rebuilds them.
+        name: ''
 
         # THE LABEL, and it does two jobs: the CR selects namespaces that HAVE it, and the template binds
         # whatever its VALUE says. Both, from one key — which is why the template refuses to render when
@@ -347,7 +350,9 @@ namespaceConfigPolicy:
         # That label is the ONE reliable way to select a policy's objects — which a metadata change needs,
         # since it requires deleting and rebuilding them. See working-sessions/docs/labels-and-annotations.md
         # §6. Keep it short and distinct from every other policy's.
-        configSource: oud-group-rbac
+        # EMPTY = derive from the map key: `abc` -> abc-oud-group-rbac. This is the rbac.ocp.io/config-source
+        # label, and the one label that reliably selects this policy's objects.
+        configSource: ''
 
         # The Role the RoleBinding points at. One Role per namespace, created by the first template.
         roleName: oud-group-submitter-role

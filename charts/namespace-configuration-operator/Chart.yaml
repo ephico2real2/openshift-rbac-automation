@@ -30,6 +30,34 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.15.0, MINOR: oudGroup policy `name` and `configSource` are DERIVED FROM THE MAP KEY when left empty.
+#
+#   policies:
+#     abc:
+#       name: ''            -> abc-oud-group-rbac
+#       configSource: ''    -> abc-oud-group-rbac
+#
+# The key becomes the single place a policy's identity is written, so the key and the name cannot drift
+# apart. Setting either explicitly still overrides the derivation — the escape hatch for a policy that
+# must keep a name a cluster already has (verified: name: legacy-name-i-must-keep renders exactly that).
+#
+# THE CR NAME IS UNCHANGED for the shipped policy: key `abc` derives abc-oud-group-rbac, which is what it
+# was already called. No rename, so no revocation.
+#
+# THE config-source LABEL DOES CHANGE, oud-group-rbac -> abc-oud-group-rbac, and that is metadata, so
+# GOTCHA 9 applies: the 6 existing objects keep the OLD value until they are deleted and rebuilt. Until
+# then `-l rbac.ocp.io/config-source=abc-oud-group-rbac` finds nothing and the old value still works.
+# Deleting the CR and letting Helm recreate it is the fix, and is what was done on the test cluster.
+#
+# KNOW WHAT DERIVING COSTS: the CR name is cluster identity and Helm treats a renamed resource as
+# delete-plus-create, so renaming a KEY now revokes and rebuilds that policy's objects (~4s out, ~50s
+# back). That is a deliberate trade for having one source of truth — rename keys on purpose, not while
+# tidying values.
+#
+# The name/configSource "must not be empty" guards are gone, since empty is now the normal case. The
+# other guards remain: labelKey, roleName and rules are still required, and two policies may not share a
+# labelKey.
+#
 # 0.14.0, MINOR and A BREAKING VALUES CHANGE: namespaceConfigPolicy.oudGroup becomes a MAP OF POLICIES.
 #
 # It was a single stanza, so exactly one oud-group policy could ever exist — adding a second name had
@@ -218,7 +246,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.14.0
+version: 0.15.0
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:
