@@ -60,9 +60,15 @@ jobs:
           n=0
           ncp=v["namespaceConfigPolicy"]
           if ncp.get("enabled"):
-              if ncp["oudGroup"].get("enabled"): n+=1
-              if ncp["baseline"].get("enabled"):
-                  n+=sum(1 for p in ncp["baseline"]["policies"].values() if p.get("enabled"))
+              # BOTH children are maps of policies, and both must be counted per-policy. This arm used to
+              # add 1 for oudGroup whenever its master switch was on, which was right when oudGroup was a
+              # single stanza and silently wrong from 0.14.0, when it became a map. It stayed green only
+              # because the one policy in it happened to be enabled; disabling that policy is what exposed
+              # it. Count the same way for both, so restructuring either cannot drift again.
+              for child in ("oudGroup", "baseline"):
+                  c = ncp.get(child) or {}
+                  if c.get("enabled"):
+                      n += sum(1 for p in (c.get("policies") or {}).values() if p.get("enabled"))
           if v["clusterRbac"].get("enabled"): n+=1
           if v["customGroupConfig"].get("enabled"): n+=1
           print(n)
@@ -72,20 +78,41 @@ jobs:
           echo "values declares $want enabled policies; chart renders $got"
           [ "$want" -eq "$got" ] || { echo "::error::values declares $want, chart renders $got"; exit 1; }
 
-      # And with everything switched on, all five must render. This is the check that would have
-      # caught a template silently rendering away — the failure mode that matters here, because
-      # Helm evaluating an operator-bound expression produces NO error, just a missing object.
-      - name: All five policies render when enabled
+      # THE PER-CLUSTER OVERLAY MUST RENDER WHAT IT DECLARES. crc-values.yaml is the committed
+      # "everything on" configuration, so it is the honest thing to check: it exercises the same file an
+      # operator actually deploys with, and the expectation is computed from the MERGED values rather than
+      # hardcoded, so adding or renaming a policy cannot make this check stale. The previous version set
+      # every master switch with --set and asserted 5, which broke the moment an individual policy shipped
+      # disabled — the switch was on, the policy was not.
+      - name: The crc overlay renders exactly the policies it declares
         run: |
-          n=$(helm template release "$CHART" \
-                --set namespaceConfigPolicy.enabled=true \
-                --set namespaceConfigPolicy.baseline.enabled=true \
-                --set namespaceConfigPolicy.oudGroup.enabled=true \
-                --set clusterRbac.enabled=true \
-                --set customGroupConfig.enabled=true \
-              | grep -cE '^kind: (NamespaceConfig|GroupConfig)' || true)
-          echo "policy CRs with all flags: $n"
-          [ "$n" -eq 5 ] || { echo "::error::expected 5 policy CRs, got $n"; exit 1; }
+          python3 - <<'EOF' > /tmp/expected
+          import yaml
+          def merge(a, b):
+              out = dict(a)
+              for k, v in (b or {}).items():
+                  out[k] = merge(a.get(k) or {}, v) if isinstance(v, dict) and isinstance(a.get(k), dict) else v
+              return out
+          base = yaml.safe_load(open("charts/namespace-configuration-operator/values.yaml"))
+          over = yaml.safe_load(open("charts/namespace-configuration-operator/crc-values.yaml"))
+          v = merge(base, over)
+          n = 0
+          ncp = v["namespaceConfigPolicy"]
+          if ncp.get("enabled"):
+              for child in ("oudGroup", "baseline"):
+                  c = ncp.get(child) or {}
+                  if c.get("enabled"):
+                      n += sum(1 for p in (c.get("policies") or {}).values() if p.get("enabled"))
+          if v["clusterRbac"].get("enabled"): n += 1
+          if v["customGroupConfig"].get("enabled"): n += 1
+          print(n)
+          EOF
+          want=$(cat /tmp/expected)
+          got=$(helm template release "$CHART" -f "$CHART/crc-values.yaml" \
+                  | grep -cE '^kind: (NamespaceConfig|GroupConfig)' || true)
+          echo "crc-values declares $want enabled policies; chart renders $got"
+          [ "$want" -eq "$got" ] || { echo "::error::crc-values declares $want, chart renders $got"; exit 1; }
+          [ "$got" -gt 0 ] || { echo "::error::the overlay rendered no policies at all"; exit 1; }
 
       # The operator's own template expressions must reach the cluster UNEVALUATED. If Helm ever
       # evaluates one, the guard disappears from the objectTemplate and the binding is created for

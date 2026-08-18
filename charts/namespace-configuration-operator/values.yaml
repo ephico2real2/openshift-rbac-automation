@@ -354,7 +354,7 @@ namespaceConfigPolicy:
         # §6. Keep it short and distinct from every other policy's.
 
         # The Role the RoleBinding points at. One Role per namespace, created by the first template.
-        roleName: oud-group-submitter-role
+        roleName: spark-job-submitter-role
 
         # The TIER, written to rbac.ocp.io/role-type on both the Role and the RoleBinding — the same key
         # every policy uses, so one query finds every tier across all of them. Descriptive only: it grants
