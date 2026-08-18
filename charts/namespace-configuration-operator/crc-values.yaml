@@ -25,16 +25,34 @@ namespaceConfigPolicy:
   # know whether policies are on.
   enabled: true
 
-  # Namespace RBAC keyed on company.net/oud-group. Renamed twice: 0.9.0 gave it the abc- prefix
-  # (abc-oud-group-namespaceconfig-rbac), 0.11.0 shortened it to abc-oud-group-rbac. Each rename deleted
-  # and rebuilt its 6 objects, because Helm treats a rename as delete-plus-create.
+  # Namespace RBAC keyed on company.net/oud-group.
+  #
+  # The MASTER switch is on here; the individual policy is enabled below. values.yaml ships every policy
+  # off, so this file is the record of what THIS cluster actually grants.
   oudGroup:
     enabled: true
+    policies:
+      # bdp is off in values.yaml. Turning it on is a per-cluster decision, so it lives here.
+      #
+      # Its CR name and config-source are DERIVED from this key: `bdp` gives bdp-oud-group-rbac for both.
+      # So renaming the key renames the CR, and Helm treats that as delete-plus-create — the finalizer
+      # revokes this policy's objects and rebuilds them. Rename deliberately, not while tidying.
+      bdp:
+        enabled: true
 
   # The baseline every team receives. As of 0.9.0 nonprod grants developer + audit (admin removed) and
   # prod grants audit only (developer removed).
   baseline:
     enabled: true
+
+    # THE TWO LABELS THIS CLUSTER KEYS ON, stated explicitly rather than inherited from values.yaml.
+    # They are not decoration: mnemonicLabelKey both SELECTS the namespaces and supplies the mnemonic that
+    # names the bound group, and environmentLabelKey is what partitions nonprod from prod. Get either
+    # wrong and the policy either matches nothing or lets a prod namespace collect the nonprod grants — so
+    # a per-cluster values file should say out loud which labels it depends on. The template refuses to
+    # render if either is empty.
+    mnemonicLabelKey: company.net/mnemonic
+    environmentLabelKey: company.net/app-environment
 
 # The cluster-wide tiers.
 clusterRbac:

@@ -321,9 +321,11 @@ namespaceConfigPolicy:
     # Each policy renders: one namespace-scoped Role from its `rules`, plus one RoleBinding whose subject
     # is the VALUE of its labelKey, used verbatim.
     policies:
-      # ---- the original oud-group family ----
-      abc:
-        enabled: true
+      # ---- the bdp oud-group family ----
+      # OFF here, ON per cluster. values.yaml is the shipped default and should grant nothing by itself;
+      # crc-values.yaml turns this on for the test cluster. Same split as every other policy flag.
+      bdp:
+        enabled: false
 
         # The CR's name, and the value written into every generated object's
         # rbac.ocp.io/source-namespaceconfig ANNOTATION — so a generated Role can be traced back to what

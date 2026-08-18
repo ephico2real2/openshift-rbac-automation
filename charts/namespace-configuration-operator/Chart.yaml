@@ -30,6 +30,37 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.18.0, MINOR: the shipped oudGroup policy is renamed abc -> bdp, and turned OFF in values.yaml.
+#
+# values.yaml now grants NOTHING from oudGroup by itself — the policy ships disabled and crc-values.yaml
+# turns it on, the same split every other policy flag already uses. A default install of this chart no
+# longer creates an oud-group policy at all: defaults render 3 policy CRs, crc-values.yaml renders 5.
+#
+# `helm upgrade` HANDLES THE RENAME ON ITS OWN — no manual step. Verified: a plain upgrade removed
+# abc-oud-group-rbac, created bdp-oud-group-rbac, and the 6 objects came back under the new
+# config-source inside 15 seconds with zero orphans.
+#
+#   key abc -> CR abc-oud-group-rbac, config-source abc-oud-group-rbac
+#   key bdp -> CR bdp-oud-group-rbac, config-source bdp-oud-group-rbac
+#
+# WHY IT WORKS HERE AND NOT IN 0.16.0 — the two cases look alike and are not:
+#
+#   RENAMING a CR          Helm sees a resource name change, so it DELETES the old CR and CREATES the new
+#                          one. Deleting the CR runs its finalizer, which revokes its objects, and the new
+#                          CR rebuilds them. Helm's own diff drives it, so `helm upgrade` is enough.
+#   CHANGING A LABEL       Helm patches the SAME CR. The operator injects excludedPaths [.metadata, …], so
+#   on an unchanged CR     the new label never reaches objects that already exist (GOTCHA 9). Nothing in
+#                          Helm's diff can fix that, which is why 0.16.0 needed the CRs deleted by hand.
+#
+# So: a rename is self-healing, a relabel is not. The brief window while the objects rebuild is real
+# either way — for those seconds nobody this policy grants has access — so rename deliberately, not while
+# tidying values.
+#
+# crc-values.yaml also now states baseline.mnemonicLabelKey and baseline.environmentLabelKey explicitly
+# rather than inheriting them. They are not decoration — mnemonicLabelKey both SELECTS the namespaces and
+# supplies the mnemonic that names the bound group, and environmentLabelKey is what partitions nonprod
+# from prod. A per-cluster values file should say out loud which labels it depends on.
+#
 # 0.17.0, MINOR: removes the duplicate-labelKey guard from the oudGroup template. Behaviour for any
 # valid configuration is unchanged — this only stops refusing a configuration it should never have judged.
 #
@@ -318,7 +349,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.17.0
+version: 0.18.0
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:
