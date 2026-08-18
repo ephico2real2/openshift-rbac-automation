@@ -45,11 +45,16 @@ data:
     # Which policy CRs currently exist, in ANY state. A CR mid-deletion still counts as existing: its
     # finalizer is running and revoking its own objects, so sweeping underneath it would be racing the
     # operator for no benefit.
-    EXISTING="$(
-      { oc get namespaceconfig -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true
-        oc get groupconfig     -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true
-      } | sed '/^$/d'
-    )"
+    #
+    # A FAILED LOOKUP IS NOT AN EMPTY RESULT. These used to end in `2>/dev/null || true`, which turned
+    # any API error into "no policy CRs exist" — and every managed object would then look orphaned.
+    # ORPHAN_LIMIT would have caught the resulting mass deletion, but a limit is a backstop, not a
+    # diagnosis. Abort instead, with the API's own message.
+    NCS="$(oc get namespaceconfig -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>&1)" \
+      || fail "cannot list namespaceconfigs, so which CRs are alive is unknown and NOTHING will be swept: ${NCS}"
+    GCS="$(oc get groupconfig -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>&1)" \
+      || fail "cannot list groupconfigs, so which CRs are alive is unknown and NOTHING will be swept: ${GCS}"
+    EXISTING="$(printf '%s\n%s\n' "$NCS" "$GCS" | sed '/^$/d')"
     log "live policy CRs: $(printf '%s' "$EXISTING" | tr '\n' ' ')"
 
     # Guard against sweeping the whole cluster if the CR lookup failed rather than genuinely returned
@@ -70,9 +75,17 @@ data:
     for kind in rolebinding clusterrolebinding role; do
       # -A is invalid for a cluster-scoped kind, so the flag is chosen per kind.
       scope="-A"; [ "$kind" = "clusterrolebinding" ] && scope=""
+      # READS THE config-source LABEL, not the old source-{namespace,group}config annotations. As of
+      # 0.16.0 there is ONE provenance key and it is a label, so this is a single field lookup instead of
+      # two concatenated annotations — and it is the same key a human would select on, so the sweeper and
+      # the runbook cannot disagree about what owns an object.
+      # Same rule as the CR lookup above: an error must not masquerade as an empty result. Here the
+      # consequence is the opposite direction — a swallowed failure means a genuine orphan is missed and
+      # the log still says "no orphans found" — which is why it aborts rather than reporting a clean run.
       RAW="$(oc get "$kind" $scope -l "app.kubernetes.io/managed-by=${MANAGED_BY}" \
-               -o jsonpath="{range .items[*]}{.metadata.namespace}|{.metadata.name}|{.metadata.annotations.rbac\.ocp\.io/source-namespaceconfig}{.metadata.annotations.rbac\.ocp\.io/source-groupconfig}{'\n'}{end}" \
-               2>/dev/null || true)"
+               -o jsonpath="{range .items[*]}{.metadata.namespace}|{.metadata.name}|{.metadata.labels.rbac\.ocp\.io/config-source}{'\n'}{end}" \
+               2>&1)" \
+        || fail "cannot list ${kind}, so this sweep would report a clean run without having checked: ${RAW}"
       OLDIFS="$IFS"; IFS="$NL"
       for line in $RAW; do
         IFS="$OLDIFS"
@@ -82,7 +95,7 @@ data:
         name="${rest%%|*}"
         owner="${rest#*|}"
         if [ -z "$name" ]; then IFS="$NL"; continue; fi
-        # No provenance annotation: not ours to reason about, left alone deliberately. The sweeper only
+        # No config-source label: not ours to reason about, left alone deliberately. The sweeper only
         # ever acts on an object that NAMES the policy which should own it.
         if [ -z "$owner" ]; then KEPT=$((KEPT+1)); IFS="$NL"; continue; fi
         if printf '%s\n' "$EXISTING" | grep -qxF "$owner"; then
@@ -95,17 +108,20 @@ data:
     done
 
     COUNT="$(printf '%s' "$CANDIDATES" | sed '/^$/d' | wc -l | tr -d ' ')"
+    # NO EARLY EXIT HERE. The dangling-Role sweep below is independent of this one and must run even when
+    # every object has a live owner — a roleName change leaves bindings dangling while their CR is
+    # perfectly healthy, so an `exit 0` on "no orphans" would skip exactly the case it needs to catch.
     if [ "$COUNT" -eq 0 ]; then
       log "no orphans found (${KEPT} objects checked, all owned by a live CR)"
-      exit 0
     fi
 
-    if [ "$ORPHAN_LIMIT" -gt 0 ] && [ "$COUNT" -gt "$ORPHAN_LIMIT" ]; then
+    if [ "$COUNT" -gt 0 ] && [ "$ORPHAN_LIMIT" -gt 0 ] && [ "$COUNT" -gt "$ORPHAN_LIMIT" ]; then
       log "found ${COUNT} orphan candidates:"
       printf '%s' "$CANDIDATES" | sed '/^$/d' | sed 's/^/    /'
       fail "refusing to delete ${COUNT} objects, which exceeds orphanSweeper.limit=${ORPHAN_LIMIT}. That many at once usually means the policy-CR lookup failed rather than the objects genuinely being orphaned — deleting them would revoke everything this chart grants. Check 'oc get namespaceconfig,groupconfig' returns your policies, then re-run or raise the limit."
     fi
 
+    if [ "$COUNT" -gt 0 ]; then
     log "found ${COUNT} orphaned object(s); their owning CR does not exist:"
     printf '%s' "$CANDIDATES" | sed '/^$/d' | while IFS='|' read -r kind ns name owner; do
       log "  ${kind} ${ns:-<cluster>}/${name}  ->  missing CR '${owner}'"
@@ -113,8 +129,7 @@ data:
 
     if [ "$DRY_RUN" = "true" ]; then
       log "DRY RUN: leaving all ${COUNT} in place"
-      exit 0
-    fi
+    else
 
     printf '%s' "$CANDIDATES" | sed '/^$/d' | while IFS='|' read -r kind ns name owner; do
       if [ -n "$ns" ]; then
@@ -124,4 +139,65 @@ data:
       fi
     done
     log "swept ${COUNT} orphaned object(s); ${KEPT} left in place under a live CR"
+    fi
+    fi
+    # --- SECOND SWEEP: RoleBindings whose Role no longer exists -----------------------------
+    # Renaming a policy's roleName cannot be applied in place: roleRef is IMMUTABLE in Kubernetes, so the
+    # operator creates the new Role, REMOVES the old one, and then fails forever trying to repoint the
+    # binding — "cannot change roleRef" — while the CR still logs "resources processed successfully". The
+    # binding is left referencing a Role that is gone, which grants nothing and reports nothing.
+    #
+    # Deleting the binding is the fix, because the operator recreates it from the CR with the correct
+    # roleRef on the next reconcile. That makes a roleName change self-healing on a plain `helm upgrade`,
+    # with no manual CR delete.
+    #
+    # SCOPED TO roleRef kind=Role ON PURPOSE. A Role is created by the same policy that binds it, so a
+    # missing target means a rename. A ClusterRole is EXTERNAL — customGroupConfig deliberately binds
+    # roles this chart does not create — and one may be legitimately absent while someone applies it.
+    # Deleting those bindings would fight the operator in a delete/recreate loop, so they are left alone
+    # and remain the documented silent-dangle case.
+    # ABSENT AND UNREADABLE ARE DIFFERENT ANSWERS, and conflating them is how this sweep deleted three
+    # healthy RoleBindings on a no-op upgrade. The test was `! oc get role ... >/dev/null 2>&1`, which is
+    # true for "not found" AND for "Forbidden" — and the ClusterRole granted list+delete on roles but not
+    # `get`, so EVERY managed RoleBinding looked dangling on EVERY sync. The operator rebuilt each one
+    # within a second or two, so the object counts matched afterwards and nothing in `oc get` showed it.
+    #
+    # `--ignore-not-found` gives the three-way answer this decision actually needs. Measured on this
+    # cluster before relying on it:
+    #   absent     rc=0, empty output                      -> the rename case, safe to delete
+    #   exists     rc=0, "role.rbac.../<name>"             -> leave alone
+    #   forbidden  rc=1, "Error from server (Forbidden)"   -> UNKNOWN, must not delete
+    # Deleting RBAC on an unknown is the one outcome a sweeper must never produce, so rc!=0 aborts.
+    DANGLING=0
+    # Same no-heredoc rule as the sweep above: a terminator at column 0 would end this YAML block scalar.
+    RAWRB="$(oc get rolebinding -A -l "app.kubernetes.io/managed-by=${MANAGED_BY}" \
+               -o jsonpath="{range .items[?(@.roleRef.kind=='Role')]}{.metadata.namespace}|{.metadata.name}|{.roleRef.name}{'\n'}{end}" \
+               2>&1)" \
+      || fail "cannot list rolebindings for the dangling-Role sweep: ${RAWRB}"
+    OLDIFS="$IFS"; IFS="$NL"
+    for line in $RAWRB; do
+      IFS="$OLDIFS"
+      if [ -n "$line" ]; then
+        dns="${line%%|*}"; drest="${line#*|}"; dname="${drest%%|*}"; drole="${drest#*|}"
+        if [ -n "$dname" ] && [ -n "$drole" ]; then
+          if ROLEOUT="$(oc get role "$drole" -n "$dns" --ignore-not-found -o name 2>&1)"; then
+            if [ -z "$ROLEOUT" ]; then
+              log "  rolebinding ${dns}/${dname} -> Role/${drole} does not exist; deleting so the operator rebuilds it"
+              [ "$DRY_RUN" != "true" ] && oc delete rolebinding "$dname" -n "$dns" --ignore-not-found 2>&1 | sed 's/^/    /'
+              DANGLING=$((DANGLING+1))
+            fi
+          else
+            fail "cannot determine whether Role/${drole} exists in ${dns}, so ${dns}/${dname} is being LEFT ALONE rather than deleted on a guess. Most likely the sweeper's ClusterRole is missing 'get' on roles. API said: ${ROLEOUT}"
+          fi
+        fi
+      fi
+      IFS="$NL"
+    done
+    IFS="$OLDIFS"
+    if [ "$DANGLING" -gt 0 ]; then
+      log "found ${DANGLING} rolebinding(s) pointing at a missing Role$([ "$DRY_RUN" = "true" ] && echo ' (dry run: left in place)')"
+    else
+      log "no rolebinding points at a missing Role"
+    fi
+
 {{- end }}

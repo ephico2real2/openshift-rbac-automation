@@ -30,6 +30,239 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.19.1, PATCH: the dangling-Role sweep was deleting HEALTHY RoleBindings. It asked whether a
+# roleRef's target existed with `! oc get role ... >/dev/null 2>&1`, which is true for "not found" AND
+# for "Forbidden" — and the sweeper's ClusterRole granted list+delete on roles but NOT `get`. So the
+# lookup was refused, every managed RoleBinding looked dangling, and every sync deleted all of them.
+#
+# It hid because the outcome looked correct. Measured on a no-op 0.18.1 -> 0.19.0 upgrade:
+#   06:10:36-40  sweeper deleted 3 rolebindings, reporting "Role/spark-job-submitter-role does not exist"
+#   06:10:37-42  the operator rebuilt all 3
+#   before 26/13/3 = 42 objects, after 26/13/3 = 42, inventory diff IDENTICAL
+# Counts matched, grants worked, and `oc get` showed nothing — while access was actually revoked for a
+# second or two in three namespaces on every single sync. The 0.19.0 verification confirmed the EFFECT
+# (the roleRef repointed) and never checked the MECHANISM, which is how it shipped.
+#
+# TWO FIXES, because either alone leaves the trap:
+#   1. `get` added to the roles rule. The question needs it; list cannot answer it.
+#   2. The script now distinguishes absent from unreadable, using --ignore-not-found (verified on this
+#      cluster: absent rc=0/empty, exists rc=0/name, forbidden rc=1). It deletes ONLY on a definite
+#      absence and ABORTS on any error, naming the missing verb as the likely cause.
+#
+# THE SAME DEFECT CLASS WAS FIXED IN BOTH SWEEPS. Every `2>/dev/null || true` is gone: the policy-CR
+# lookups now abort instead of yielding an empty list that would make every object look orphaned
+# (ORPHAN_LIMIT would have caught that mass deletion, but a limit is a backstop, not a diagnosis), and
+# the per-kind object lookups abort instead of reporting a clean run they never performed.
+#
+# ALSO: crc-values.yaml states the bdp policy's labelKey (company.net/oud-group) explicitly, so the
+# per-cluster file records which label decides the grant rather than inheriting it silently.
+
+# 0.19.0, MINOR: a roleName change is now SELF-HEALING, and the policy comments are deduplicated.
+#
+# THE SWEEPER GAINED A SECOND SWEEP: any RoleBinding whose roleRef names a Role that does not exist is
+# deleted, so the operator rebuilds it from the CR with the correct roleRef. That closes the one case a
+# plain `helm upgrade` could not finish on its own.
+#
+# Helm was never the problem — it overrides the CR correctly. Kubernetes is: roleRef is IMMUTABLE, so the
+# operator creates the new Role, removes the old one, and then cannot repoint the existing binding. It
+# error-loops on "cannot change roleRef" while the CR logs "resources processed successfully", leaving a
+# binding that references a Role that is gone and grants nothing. Measured before this change: a plain
+# upgrade left `oc auth can-i` returning
+#   no - RBAC: role.rbac.authorization.k8s.io "spark-job-submitter-role" not found
+# Measured after: 3 bindings repointed within 15 seconds, grants intact, no manual step.
+#
+# SCOPED TO roleRef kind=Role DELIBERATELY. A Role is created by the same policy that binds it, so a
+# missing target means a rename. A ClusterRole is EXTERNAL — customGroupConfig binds roles this chart does
+# not create — and one may be legitimately absent while someone applies it; sweeping those would fight the
+# operator in a delete/recreate loop. They remain the documented silent-dangle case.
+#
+# Also fixed a bug in the sweeper found while testing: the first sweep exited 0 on "no orphans", which
+# skipped the second sweep entirely — exactly the case where the CRs are healthy and only the bindings are
+# stale. Both sweeps now always run.
+#
+# COMMENTS DEDUPLICATED across templates/rbac-policies: the provenance explanation was copy-pasted into
+# all four files and the two-engine explanation into all four, so 35 duplicated comment lines are now 25
+# and the files are 20-40% shorter. The canonical explanations live in
+# working-sessions/docs/labels-and-annotations.md and templating-guide.md; the templates point at them and
+# keep only what is specific to each file. Version history was removed from template and values comments —
+# it belongs in this changelog, not in prose that has to be re-read every time.
+#
+# 0.18.1, PATCH: the oudGroup Role is renamed oud-group-submitter-role -> spark-job-submitter-role, and
+# the hazard that comes with it is documented at the key.
+#
+# CHANGING roleName NEEDS THE CR DELETED. roleRef is IMMUTABLE, so the operator cannot repoint an existing
+# RoleBinding at a renamed Role — it creates the new Role, fails the patch with "cannot change roleRef",
+# and error-loops while the CR keeps logging "resources processed successfully". The binding stays on the
+# old Role, which the template no longer maintains.
+#
+# Note this is a THIRD distinct case, alongside the two in 0.18.0:
+#   rename the CR        `helm upgrade` handles it — Helm deletes and recreates, the finalizer revokes
+#   relabel a CR         needs a CR delete — .metadata is excluded, so labels never reach existing objects
+#   rename a Role        needs a CR delete — roleRef is immutable, so the binding cannot be repointed
+#
+# Verified: deleted the CR, upgraded, all three RoleBindings came back on spark-job-submitter-role with
+# zero "cannot change roleRef" errors, no stale Roles, 42 objects, grants confirmed.
+#
+# 0.18.0, MINOR: the shipped oudGroup policy is renamed abc -> bdp, and turned OFF in values.yaml.
+#
+# values.yaml now grants NOTHING from oudGroup by itself — the policy ships disabled and crc-values.yaml
+# turns it on, the same split every other policy flag already uses. A default install of this chart no
+# longer creates an oud-group policy at all: defaults render 3 policy CRs, crc-values.yaml renders 5.
+#
+# `helm upgrade` HANDLES THE RENAME ON ITS OWN — no manual step. Verified: a plain upgrade removed
+# abc-oud-group-rbac, created bdp-oud-group-rbac, and the 6 objects came back under the new
+# config-source inside 15 seconds with zero orphans.
+#
+#   key abc -> CR abc-oud-group-rbac, config-source abc-oud-group-rbac
+#   key bdp -> CR bdp-oud-group-rbac, config-source bdp-oud-group-rbac
+#
+# WHY IT WORKS HERE AND NOT IN 0.16.0 — the two cases look alike and are not:
+#
+#   RENAMING a CR          Helm sees a resource name change, so it DELETES the old CR and CREATES the new
+#                          one. Deleting the CR runs its finalizer, which revokes its objects, and the new
+#                          CR rebuilds them. Helm's own diff drives it, so `helm upgrade` is enough.
+#   CHANGING A LABEL       Helm patches the SAME CR. The operator injects excludedPaths [.metadata, …], so
+#   on an unchanged CR     the new label never reaches objects that already exist (GOTCHA 9). Nothing in
+#                          Helm's diff can fix that, which is why 0.16.0 needed the CRs deleted by hand.
+#
+# So: a rename is self-healing, a relabel is not. The brief window while the objects rebuild is real
+# either way — for those seconds nobody this policy grants has access — so rename deliberately, not while
+# tidying values.
+#
+# crc-values.yaml also now states baseline.mnemonicLabelKey and baseline.environmentLabelKey explicitly
+# rather than inheriting them. They are not decoration — mnemonicLabelKey both SELECTS the namespaces and
+# supplies the mnemonic that names the bound group, and environmentLabelKey is what partitions nonprod
+# from prod. A per-cluster values file should say out loud which labels it depends on.
+#
+# 0.17.0, MINOR: removes the duplicate-labelKey guard from the oudGroup template. Behaviour for any
+# valid configuration is unchanged — this only stops refusing a configuration it should never have judged.
+#
+# The guard was on the wrong axis in BOTH directions:
+#   NOT NECESSARY   two policies can share a labelKey harmlessly if their objects end up named
+#                   differently. The Roles already are — each policy names its own.
+#   NOT SUFFICIENT  two policies with DIFFERENT labelKeys still collide if a namespace carries both
+#                   labels with the SAME VALUE, since the RoleBinding is named "<label value>-rb". The
+#                   guard compared labelKeys, so it permitted exactly that.
+#
+# AND NO RENDER-TIME GUARD CAN BE CORRECT. The RoleBinding name comes from the label's VALUE, read from a
+# namespace at reconcile time — Helm cannot see it. RoleBinding uniqueness is (namespace, name), so
+# whether two policies collide is a fact about the cluster, not about values.yaml.
+#
+# Replaced with the measured failure mode, because it does not announce itself. Applying two
+# same-labelKey CRs on purpose showed:
+#   - both Roles are created and coexist; only the RoleBinding is contested
+#   - the second policy creates ZERO RoleBindings — roleRef is IMMUTABLE:
+#       RoleBinding "…-rb" is invalid: roleRef: Invalid value: …: cannot change roleRef
+#   - the operator error-loops on that patch forever while the CR still logs
+#     "resources processed successfully" at INFO, so the CR looks healthy and the grant is just absent
+#
+# One labelKey per family is the convention, and it is the family boundary anyway: different label ->
+# different namespaces -> different RoleBinding names -> nothing to contest.
+#
+# 0.16.0, MINOR and A MIGRATION, NOT JUST AN UPGRADE — read the procedure below before syncing.
+#
+# rbac.ocp.io/config-source NOW HOLDS THE NAME OF THE CR that created the object, on every object, so it
+# finally means what its name says. It used to hold a short family name that matched no CR:
+#
+#   before   config-source: cluster-rbac              label   short family name, matched nothing
+#            source-groupconfig: baseline-cluster-rbac  annotation  the actual CR
+#   after    config-source: baseline-cluster-rbac     label   the actual CR
+#            source-groupconfig: baseline-cluster-rbac  annotation  unchanged, same value
+#            source-kind: GroupConfig                 label   NEW — which CRD owns it
+#
+# THE source-{namespace,group}config ANNOTATIONS ARE UNCHANGED AND STILL PRESENT. They and the label now
+# carry the SAME value, and that duplication is deliberate: the label is what you SELECT on, the
+# annotation is what you READ in `oc get -o yaml` / `oc describe`, and its key name says which CRD owns
+# the object. group-pattern is likewise untouched on the two GroupConfig policies.
+#
+# It also defangs a trap this repo hit before: `oc -l` matches labels only, so selecting on the
+# source-*config annotation returns nothing. That is still true — but the label beside it now holds the
+# identical value and does work, so the mistake costs a retry rather than a wrong answer.
+#
+# source-kind is NEW: NamespaceConfig or GroupConfig, as a LABEL so one query covers either kind
+# (`-l rbac.ocp.io/source-kind=GroupConfig`). The annotation key names already implied it; this makes it
+# selectable.
+#
+# THE MIGRATION MATTERS, and skipping it is dangerous. This changes a label VALUE on 36 of 42 objects,
+# and metadata does not propagate (GOTCHA 9) — so after a plain `helm upgrade` every existing object
+# still carries the OLD value, which matches no CR name. The orphan sweeper reads exactly that key and
+# would see all 36 as orphaned. Verified on the test cluster: it found exactly 36 and REFUSED, because
+# orphanSweeper.limit is 25:
+#
+#   ERROR: refusing to delete 36 objects, which exceeds orphanSweeper.limit=25
+#
+# That guard turned a mass revocation into a failed sync, which is the outcome it exists for. Do NOT
+# raise the limit to work around it.
+#
+# THE PROCEDURE — rebuild the objects as part of the upgrade so the interim state never exists:
+#   oc delete namespaceconfig --all && oc delete groupconfig --all   # operator ALIVE; revokes cleanly
+#   helm upgrade ... -f <your values>                                # recreates CRs; objects built fresh
+# Under ArgoCD the policy CRs sit at a higher sync-wave than the Subscription precisely so reverse-order
+# deletion runs their finalizers while the operator is still up.
+#
+# THE SWEEPER now reads the config-source LABEL instead of the two annotations — one field instead of two
+# concatenated, and the same key a human selects on, so the sweeper and the runbook cannot disagree.
+#
+# The configSource values keys are gone from every stanza: the value is the CR name, so there is nothing
+# left to configure.
+#
+# 0.15.0, MINOR: oudGroup policy `name` and `configSource` are DERIVED FROM THE MAP KEY when left empty.
+#
+#   policies:
+#     abc:
+#       name: ''            -> abc-oud-group-rbac
+#       configSource: ''    -> abc-oud-group-rbac
+#
+# The key becomes the single place a policy's identity is written, so the key and the name cannot drift
+# apart. Setting either explicitly still overrides the derivation — the escape hatch for a policy that
+# must keep a name a cluster already has (verified: name: legacy-name-i-must-keep renders exactly that).
+#
+# THE CR NAME IS UNCHANGED for the shipped policy: key `abc` derives abc-oud-group-rbac, which is what it
+# was already called. No rename, so no revocation.
+#
+# THE config-source LABEL DOES CHANGE, oud-group-rbac -> abc-oud-group-rbac, and that is metadata, so
+# GOTCHA 9 applies: the 6 existing objects keep the OLD value until they are deleted and rebuilt. Until
+# then `-l rbac.ocp.io/config-source=abc-oud-group-rbac` finds nothing and the old value still works.
+# Deleting the CR and letting Helm recreate it is the fix, and is what was done on the test cluster.
+#
+# KNOW WHAT DERIVING COSTS: the CR name is cluster identity and Helm treats a renamed resource as
+# delete-plus-create, so renaming a KEY now revokes and rebuilds that policy's objects (~4s out, ~50s
+# back). That is a deliberate trade for having one source of truth — rename keys on purpose, not while
+# tidying values.
+#
+# The name/configSource "must not be empty" guards are gone, since empty is now the normal case. The
+# other guards remain: labelKey, roleName and rules are still required, and two policies may not share a
+# labelKey.
+#
+# 0.14.0, MINOR and A BREAKING VALUES CHANGE: namespaceConfigPolicy.oudGroup becomes a MAP OF POLICIES.
+#
+# It was a single stanza, so exactly one oud-group policy could ever exist — adding a second name had
+# nowhere to go. It now mirrors namespaceConfigPolicy.baseline.policies: a map, one NamespaceConfig per
+# entry, each with its own labelKey, Role, rules and config-source.
+#
+#   BEFORE                                  AFTER
+#   oudGroup:                               oudGroup:
+#     enabled: true                           enabled: true
+#     name: abc-oud-group-rbac                policies:
+#     labelKey: company.net/oud-group           abc:
+#     roleName: ...                               enabled: true
+#     rules: [...]                                name: abc-oud-group-rbac
+#                                                 labelKey: company.net/oud-group
+#                                                 roleName: ...
+#                                                 rules: [...]
+#
+# An old values file does NOT silently half-work: the template fails with "oudGroup.policies is empty"
+# rather than rendering nothing. Migration is re-indenting the existing keys under policies.<name>.
+#
+# NOT an `entries` list like customGroupConfig uses, and the distinction matters. entries renders several
+# objectTemplates inside ONE CR sharing ONE labelSelector; these policies each select on their own
+# labelKey, so they need separate CRs. Two policies on the same labelKey are REFUSED — both would match
+# the same namespaces and create the same RoleBinding name with different roles, and the operator would
+# rewrite one over the other every reconcile.
+#
+# Six per-policy guards: name, labelKey, roleName, configSource and rules must be set, and labelKey must
+# be unique. A policy with enabled: false is skipped, not failed.
+#
 # 0.13.0, MINOR: closes the ArgoCD pruning hazard. With 0.12.0's CSV self-heal, this completes the
 # one-shot story — a sync repairs itself rather than leaving RBAC behind.
 #
@@ -189,7 +422,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.13.0
+version: 0.19.1
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:

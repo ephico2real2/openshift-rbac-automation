@@ -20,21 +20,47 @@
 # single-node cluster, and operatorImage pointing at the quay build.
 
 namespaceConfigPolicy:
-  # The master switch. Already true in the chart defaults as of 0.9.0, but stated explicitly because
-  # this file is the record of what this cluster runs — a reader should not have to open values.yaml to
-  # know whether policies are on.
+  # The master switch, stated explicitly because this file is the record of what this cluster runs — a
+  # reader should not have to open values.yaml to know whether policies are on.
   enabled: true
 
-  # Namespace RBAC keyed on company.net/oud-group. Renamed twice: 0.9.0 gave it the abc- prefix
-  # (abc-oud-group-namespaceconfig-rbac), 0.11.0 shortened it to abc-oud-group-rbac. Each rename deleted
-  # and rebuilt its 6 objects, because Helm treats a rename as delete-plus-create.
+  # Namespace RBAC keyed on company.net/oud-group.
+  #
+  # The MASTER switch is on here; the individual policy is enabled below. values.yaml ships every policy
+  # off, so this file is the record of what THIS cluster actually grants.
   oudGroup:
     enabled: true
+    policies:
+      # bdp is off in values.yaml. Turning it on is a per-cluster decision, so it lives here.
+      #
+      # Its CR name and config-source are DERIVED from this key: `bdp` gives bdp-oud-group-rbac for both.
+      # So renaming the key renames the CR, and Helm treats that as delete-plus-create — the finalizer
+      # revokes this policy's objects and rebuilds them. Rename deliberately, not while tidying.
+      bdp:
+        enabled: true
+
+        # THE LABEL THIS POLICY KEYS ON, stated explicitly for the same reason the baseline's two keys
+        # are below: this file is the record of what the cluster grants, and a reader should not have to
+        # open values.yaml to learn which label decides it.
+        #
+        # It is deliberately NOT the baseline's mnemonic label. This policy selects on its own key and
+        # reads the GROUP NAME from that label's value, so one namespace can be in the baseline's world
+        # and this one at the same time without the two grants colliding.
+        labelKey: company.net/oud-group
 
   # The baseline every team receives. As of 0.9.0 nonprod grants developer + audit (admin removed) and
   # prod grants audit only (developer removed).
   baseline:
     enabled: true
+
+    # THE TWO LABELS THIS CLUSTER KEYS ON, stated explicitly rather than inherited from values.yaml.
+    # They are not decoration: mnemonicLabelKey both SELECTS the namespaces and supplies the mnemonic that
+    # names the bound group, and environmentLabelKey is what partitions nonprod from prod. Get either
+    # wrong and the policy either matches nothing or lets a prod namespace collect the nonprod grants — so
+    # a per-cluster values file should say out loud which labels it depends on. The template refuses to
+    # render if either is empty.
+    mnemonicLabelKey: company.net/mnemonic
+    environmentLabelKey: company.net/app-environment
 
 # The cluster-wide tiers.
 clusterRbac:

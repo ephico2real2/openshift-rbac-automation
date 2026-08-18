@@ -93,6 +93,35 @@ Not a script — an LDIF fixture that adds RBAC groups missing from the test LDA
 ldapadd -x -D "<bind-dn>" -W -f scripts/add-missing-rbac-groups.ldif
 ```
 
+### 7. `check-ordering.py`
+**The only script here that needs no cluster** — it renders the chart and asserts its ordering, and CI
+runs it on every PR. Everything above operates on a live cluster; this one is a validator.
+
+It proves four things about the rendered chart:
+
+- policy CRs are at a **higher** sync-wave than the Subscription, because ArgoCD **deletes in reverse
+  wave order** — take the operator away first and the CR's finalizer never revokes its RBAC
+- the sweeper **Job** is applied after the CRs it inspects, and its ServiceAccount, ConfigMap and RBAC
+  before it, since those two constraints pull in opposite directions
+- **every** resource declares an explicit wave — a missing one is not neutral, ArgoCD reads it as
+  wave 0, which is the Subscription's own wave
+- no two Helm hooks share a `hook-weight`, since Helm then falls back to name order and the sequence
+  becomes accidental
+
+**Usage:**
+```bash
+working-sessions/scripts/check-ordering.py            # every chart, every values overlay
+working-sessions/scripts/check-ordering.py --quiet    # verdict only, no inventory
+```
+
+**It is built not to go stale**, which is the reason it is a script rather than inline CI. It
+*discovers* what to check — charts and values overlays by glob, policy CRs by API group
+(`redhatcop.redhat.io`) rather than by a list of kinds — so adding a template, a new redhat-cop kind,
+or a new cluster overlay brings it under the check with no edit to the script and none to the
+workflow. Every selector also asserts it matched something, so renaming a component fails loudly
+instead of turning the check into a no-op that keeps reporting success. Its header documents all
+three rules; all seven failure modes above were verified by deliberately breaking a copy of the chart.
+
 ## 🔍 RBAC Verification Commands
 
 ### Check Security Model Compliance

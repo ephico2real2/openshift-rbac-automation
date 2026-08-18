@@ -42,9 +42,17 @@ metadata:
 rules:
   # The objects being swept. list to find them, delete to remove them. No create, no update — the
   # sweeper never makes or edits a grant, which is what keeps it auditable.
+  #
+  # `get` IS REQUIRED AND WAS THE BUG. The dangling-Role sweep asks "does this roleRef target exist?"
+  # with `oc get role <name> -n <ns>`, which needs get on the named resource — list is not enough.
+  # Without it the API returned Forbidden, the script read that as "the Role is gone", and it deleted
+  # three healthy RoleBindings on a no-op upgrade. Measured: deleted 06:10:36-40, rebuilt 06:10:37-42,
+  # so counts matched afterwards and the churn was invisible in `oc get`. The script now separates
+  # absent from forbidden and refuses to delete on any error, but this verb is what makes the question
+  # answerable in the first place.
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["rolebindings", "clusterrolebindings", "roles"]
-    verbs: ["list", "delete"]
+    verbs: ["get", "list", "delete"]
   # Read-only, and it is the whole basis of the decision: an object is an orphan only because the CR
   # named in its provenance annotation is absent from this list.
   - apiGroups: ["redhatcop.redhat.io"]
