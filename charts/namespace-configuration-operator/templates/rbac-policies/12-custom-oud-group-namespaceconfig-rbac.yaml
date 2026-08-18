@@ -1,11 +1,25 @@
 {{- if and .Values.namespaceConfigPolicy.enabled .Values.namespaceConfigPolicy.oudGroup.enabled }}
-{{- $p := .Values.namespaceConfigPolicy.oudGroup }}
-{{- if not $p.labelKey }}
-{{- fail "namespaceConfigPolicy.oudGroup.labelKey is empty. It is the label the NamespaceConfig selects on AND the label whose VALUE becomes the bound group, so empty would render a config that selects EVERY namespace and binds a group called \"\". Set it, or disable the policy." }}
+{{- $og := .Values.namespaceConfigPolicy.oudGroup }}
+{{- if not $og.policies }}
+{{- fail "namespaceConfigPolicy.oudGroup.policies is empty, so this would render nothing while the flag is on — a silent no-op. Give it at least one policy, or disable oudGroup." }}
 {{- end }}
 # =============================================================================
-# NamespaceConfig — company.net/oud-group
+# NamespaceConfig — oud-group families, ONE CR PER POLICY
 # =============================================================================
+# Ranges over namespaceConfigPolicy.oudGroup.policies and renders a separate NamespaceConfig for each,
+# exactly as 10-baseline- does for nonprod/prod. Until 0.14.0 this bound a single values stanza directly,
+# which meant exactly one oud-group policy could ever exist — a second family had nowhere to go.
+#
+# WHY A MAP OF POLICIES AND NOT AN `entries` LIST, which is what 13-custom-groupconfig- uses. An entries
+# list renders multiple objectTemplates INSIDE ONE CR, and they all share that CR's single labelSelector.
+# These policies each select on their OWN labelKey and define their OWN Role, so they cannot share a CR.
+# Different selector -> different CR. That is also why two policies on the same labelKey are refused
+# below: both would match the same namespaces and create the same RoleBinding name with different roles,
+# and the operator would rewrite one over the other on every reconcile.
+#
+# CONTEXT INSIDE THE RANGE: `.` is the POLICY, not the chart root, so the shared label block is included
+# as `$` — `include "nco.labels" $`. Using `.` there fails with "nil pointer evaluating interface
+# {}.Name", which is how this was caught the first time.
 # Converted from working-sessions/policies/oud-group-namespaceconfig.yaml, which STAYS in the repo as
 # the readable reference and the record of why this access model exists. This file is the deployable
 # form; that file is the explanation. Neither replaces the other.
@@ -46,13 +60,43 @@
 # The operator's own expressions, as strings. printf takes the quote characters as ARGUMENTS, because
 # a literal escaped quote written inside a Helm action would be escaped again into the output.
 {{- $ns := "{{ .Name }}" }}
+{{- $seenLabel := dict }}
+{{- range $key, $p := $og.policies }}
+{{- if not $p.enabled }}
+{{- else }}
+{{- if not $p.name }}
+{{- fail (printf "namespaceConfigPolicy.oudGroup.policies.%s has no name. It names the CR and is written into every generated object's provenance annotation, so it cannot be empty." $key) }}
+{{- end }}
+{{- if not $p.labelKey }}
+{{- fail (printf "namespaceConfigPolicy.oudGroup.policies.%s has no labelKey. It is the label the NamespaceConfig selects on AND the label whose VALUE becomes the bound group, so empty would select EVERY namespace and bind a group called \"\"." $key) }}
+{{- end }}
+{{- if not $p.roleName }}
+{{- fail (printf "namespaceConfigPolicy.oudGroup.policies.%s has no roleName. The RoleBinding's roleRef names it, and a RoleBinding pointing at a Role that does not exist is created successfully, reports healthy, and grants NOTHING." $key) }}
+{{- end }}
+{{- if not $p.configSource }}
+{{- fail (printf "namespaceConfigPolicy.oudGroup.policies.%s has no configSource. It is the rbac.ocp.io/config-source label, and the ONLY label that reliably selects this policy's objects for the delete-and-rebuild a metadata change needs." $key) }}
+{{- end }}
+{{- if not $p.rules }}
+{{- fail (printf "namespaceConfigPolicy.oudGroup.policies.%s has no rules, so it would create an empty Role that grants nothing while looking configured." $key) }}
+{{- end }}
+{{- /*
+  TWO POLICIES ON THE SAME labelKey WOULD FIGHT. Each renders its own NamespaceConfig selecting
+  `labelKey Exists`, so both would match the same namespaces and both would create a RoleBinding named
+  <group>-rb there — same name, different Role. The operator would rewrite one over the other on every
+  reconcile, and which one wins is a race. Refused here rather than left to be debugged on a cluster.
+*/ -}}
+{{- if hasKey $seenLabel $p.labelKey }}
+{{- fail (printf "namespaceConfigPolicy.oudGroup.policies.%s reuses labelKey %q, already used by %q. Both CRs would select the same namespaces and create the same RoleBinding name with different roles, and the operator would rewrite one over the other every reconcile. Give each policy its own label." $key $p.labelKey (index $seenLabel $p.labelKey)) }}
+{{- end }}
+{{- $seenLabel = set $seenLabel $p.labelKey $key }}
 {{- $group := printf "{{ index .Labels %s%s%s }}" "\"" $p.labelKey "\"" }}
+---
 apiVersion: redhatcop.redhat.io/v1alpha1
 kind: NamespaceConfig
 metadata:
   name: {{ $p.name }}
   labels:
-    {{- include "nco.labels" . | nindent 4 }}
+    {{- include "nco.labels" $ | nindent 4 }}
     app.kubernetes.io/component: rbac-automation
     rbac.ocp.io/scope: namespace-scoped
     rbac.ocp.io/kind: NamespaceConfig
@@ -143,4 +187,6 @@ spec:
           apiGroup: rbac.authorization.k8s.io
           kind: Role
           name: {{ $p.roleName }}
+{{- end }}
+{{- end }}
 {{- end }}

@@ -304,89 +304,127 @@ namespaceConfigPolicy:
   # somewhere else, so it lives in Kyverno — working-sessions/policies/kyverno-namespace-oud-group.yaml
   # — where it is visible and auditable rather than buried in an objectTemplate.
   oudGroup:
+    # Master switch for EVERY policy below.
     enabled: true
 
-    # The CR's name, and the value written into every generated object's
-    # rbac.ocp.io/source-namespaceconfig ANNOTATION — so a generated Role can be traced back to what
-    # made it. Annotation, not a label: `oc -l` will not match it, so use
-    # rbac.ocp.io/config-source below to select this policy's objects.
+    # A MAP OF POLICIES, one CR each — the same shape as namespaceConfigPolicy.baseline.policies, and
+    # for the same reason. This was a single stanza until 0.14.0, which meant exactly one oud-group
+    # policy could ever exist: adding a second name had nowhere to go.
     #
-    # CHANGING THIS IS A REVOCATION, not an orphaning. Helm treats a renamed resource as a delete plus
-    # a create: the old CR is deleted, its namespaceconfig-controller finalizer revokes every object it
-    # made, and the new CR then rebuilds them under the new name. Measured on this cluster: 6 objects
-    # (3 Roles + 3 RoleBindings) gone in ~4s and back within ~50s. Nothing is left behind — an earlier
-    # version of this comment claimed objects would be orphaned, which is the opposite of what happens
-    # and would have led someone to hunt for stale objects instead of planning a window.
-    name: abc-oud-group-rbac
-
-    # THE LABEL, and it does two jobs: the CR selects namespaces that HAVE it, and the template binds
-    # whatever its VALUE says. Both, from one key — which is why the template refuses to render when
-    # it is empty rather than selecting every namespace and binding a group called "".
-    labelKey: company.net/oud-group
-
-    # The policy's short name, written to rbac.ocp.io/config-source on every object this policy creates.
-    # That label is the ONE reliable way to select a policy's objects — which a metadata change needs,
-    # since it requires deleting and rebuilding them. See working-sessions/docs/labels-and-annotations.md
-    # §6. Keep it short and distinct from every other policy's.
-    configSource: oud-group-rbac
-
-    # The Role the RoleBinding points at. One Role per namespace, created by the first template.
-    roleName: oud-group-submitter-role
-
-    # The TIER, written to rbac.ocp.io/role-type on both the Role and the RoleBinding — the same key
-    # every policy uses, so one query finds every tier across all of them. Descriptive only: it grants
-    # nothing, `rules` below is the grant.
-    roleType: spark-job-submitter
-
-    # Paths the operator IGNORES when comparing what it would create against what exists, so a
-    # cluster-assigned field does not read as drift and cause a rewrite every reconcile.
-    excludedPaths:
-      - .metadata
-      - .status
-
-    # THE ACTUAL PERMISSIONS. Namespace-scoped, so nothing here can grant cluster-wide access — a
-    # Role bound by a RoleBinding in one namespace.
+    # WHY A MAP AND NOT AN `entries` LIST like customGroupConfig uses. An entries list renders multiple
+    # objectTemplates INSIDE ONE CR, sharing that CR's single labelSelector. These policies each select
+    # on their OWN labelKey and define their OWN Role, so they cannot share a CR — they are separate
+    # NamespaceConfigs. The template refuses two policies on the same labelKey for the same reason: both
+    # would match the same namespaces and create the same RoleBinding name with different roles, and the
+    # operator would rewrite one over the other every reconcile.
     #
-    # `deletecollection` is the one worth noticing: it lets the holder delete every pod in the
-    # namespace in one call. That is intended for a workload submitter cleaning up a run, and it is
-    # also the verb to remove first if this is ever narrowed.
-    #
-    # pods/log is a separate rule because it is a SUBRESOURCE — listing it beside `pods` in the same
-    # rule would grant get/list/create/delete on it too, and `oc auth can-i get pods/log` answers
-    # `no` even on a correct grant because it reads pods/log as a resource NAME. Use
-    # --subresource=log to check it.
-    rules:
-      - apiGroups: [""]
-        resources:
-          - pods
-          - services
-          - configmaps
-          - persistentvolumeclaims
-        verbs:
-          - create
-          - get
-          - list
-          - watch
-          - delete
-          - deletecollection
-          - patch
-          - update
-      - apiGroups: [""]
-        resources:
-          - secrets
-        verbs:
-          - create
-          - get
-          - watch
-          - delete
-          - update
-          - patch
-      - apiGroups: [""]
-        resources:
-          - pods/log
-        verbs:
-          - get
-          - list
+    # Each policy renders: one namespace-scoped Role from its `rules`, plus one RoleBinding whose subject
+    # is the VALUE of its labelKey, used verbatim.
+    policies:
+      # ---- the original oud-group family ----
+      abc:
+        enabled: true
+
+        # The CR's name, and the value written into every generated object's
+        # rbac.ocp.io/source-namespaceconfig ANNOTATION — so a generated Role can be traced back to what
+        # made it. Annotation, not a label: `oc -l` will not match it, so use
+        # rbac.ocp.io/config-source below to select this policy's objects.
+        #
+        # CHANGING THIS IS A REVOCATION, not an orphaning. Helm treats a renamed resource as a delete plus
+        # a create: the old CR is deleted, its namespaceconfig-controller finalizer revokes every object it
+        # made, and the new CR then rebuilds them under the new name. Measured on this cluster: 6 objects
+        # (3 Roles + 3 RoleBindings) gone in ~4s and back within ~50s. Nothing is left behind — an earlier
+        # version of this comment claimed objects would be orphaned, which is the opposite of what happens
+        # and would have led someone to hunt for stale objects instead of planning a window.
+        name: abc-oud-group-rbac
+
+        # THE LABEL, and it does two jobs: the CR selects namespaces that HAVE it, and the template binds
+        # whatever its VALUE says. Both, from one key — which is why the template refuses to render when
+        # it is empty rather than selecting every namespace and binding a group called "".
+        labelKey: company.net/oud-group
+
+        # The policy's short name, written to rbac.ocp.io/config-source on every object this policy creates.
+        # That label is the ONE reliable way to select a policy's objects — which a metadata change needs,
+        # since it requires deleting and rebuilding them. See working-sessions/docs/labels-and-annotations.md
+        # §6. Keep it short and distinct from every other policy's.
+        configSource: oud-group-rbac
+
+        # The Role the RoleBinding points at. One Role per namespace, created by the first template.
+        roleName: oud-group-submitter-role
+
+        # The TIER, written to rbac.ocp.io/role-type on both the Role and the RoleBinding — the same key
+        # every policy uses, so one query finds every tier across all of them. Descriptive only: it grants
+        # nothing, `rules` below is the grant.
+        roleType: spark-job-submitter
+
+        # Paths the operator IGNORES when comparing what it would create against what exists, so a
+        # cluster-assigned field does not read as drift and cause a rewrite every reconcile.
+        excludedPaths:
+          - .metadata
+          - .status
+
+        # THE ACTUAL PERMISSIONS. Namespace-scoped, so nothing here can grant cluster-wide access — a
+        # Role bound by a RoleBinding in one namespace.
+        #
+        # `deletecollection` is the one worth noticing: it lets the holder delete every pod in the
+        # namespace in one call. That is intended for a workload submitter cleaning up a run, and it is
+        # also the verb to remove first if this is ever narrowed.
+        #
+        # pods/log is a separate rule because it is a SUBRESOURCE — listing it beside `pods` in the same
+        # rule would grant get/list/create/delete on it too, and `oc auth can-i get pods/log` answers
+        # `no` even on a correct grant because it reads pods/log as a resource NAME. Use
+        # --subresource=log to check it.
+        rules:
+          - apiGroups: [""]
+            resources:
+              - pods
+              - services
+              - configmaps
+              - persistentvolumeclaims
+            verbs:
+              - create
+              - get
+              - list
+              - watch
+              - delete
+              - deletecollection
+              - patch
+              - update
+          - apiGroups: [""]
+            resources:
+              - secrets
+            verbs:
+              - create
+              - get
+              - watch
+              - delete
+              - update
+              - patch
+          - apiGroups: [""]
+            resources:
+              - pods/log
+            verbs:
+              - get
+              - list
+
+
+      # ---- a second family, showing the shape. Commented out, so nothing new is granted by upgrading;
+      # uncomment and give it a real labelKey to use it. ----
+      # xyz:
+      #   enabled: true
+      #   name: xyz-oud-group-rbac
+      #   # MUST DIFFER from every other policy's labelKey — the template refuses a duplicate.
+      #   labelKey: company.net/xyz-oud-group
+      #   configSource: xyz-oud-group-rbac
+      #   roleName: xyz-submitter-role
+      #   roleType: xyz-job-submitter
+      #   excludedPaths:
+      #     - .metadata
+      #     - .status
+      #   rules:
+      #     - apiGroups: [""]
+      #       resources: ["pods", "pods/log"]
+      #       verbs: ["get", "list", "watch"]
 
   # -------- the BASELINE: mnemonic + environment --------
   # THIS IS WHAT EVERY TEAM GETS. A namespace that declares a mnemonic and an environment receives the

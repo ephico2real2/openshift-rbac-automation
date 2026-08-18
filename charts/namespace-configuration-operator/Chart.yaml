@@ -30,6 +30,35 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.14.0, MINOR and A BREAKING VALUES CHANGE: namespaceConfigPolicy.oudGroup becomes a MAP OF POLICIES.
+#
+# It was a single stanza, so exactly one oud-group policy could ever exist — adding a second name had
+# nowhere to go. It now mirrors namespaceConfigPolicy.baseline.policies: a map, one NamespaceConfig per
+# entry, each with its own labelKey, Role, rules and config-source.
+#
+#   BEFORE                                  AFTER
+#   oudGroup:                               oudGroup:
+#     enabled: true                           enabled: true
+#     name: abc-oud-group-rbac                policies:
+#     labelKey: company.net/oud-group           abc:
+#     roleName: ...                               enabled: true
+#     rules: [...]                                name: abc-oud-group-rbac
+#                                                 labelKey: company.net/oud-group
+#                                                 roleName: ...
+#                                                 rules: [...]
+#
+# An old values file does NOT silently half-work: the template fails with "oudGroup.policies is empty"
+# rather than rendering nothing. Migration is re-indenting the existing keys under policies.<name>.
+#
+# NOT an `entries` list like customGroupConfig uses, and the distinction matters. entries renders several
+# objectTemplates inside ONE CR sharing ONE labelSelector; these policies each select on their own
+# labelKey, so they need separate CRs. Two policies on the same labelKey are REFUSED — both would match
+# the same namespaces and create the same RoleBinding name with different roles, and the operator would
+# rewrite one over the other every reconcile.
+#
+# Six per-policy guards: name, labelKey, roleName, configSource and rules must be set, and labelKey must
+# be unique. A policy with enabled: false is skipped, not failed.
+#
 # 0.13.0, MINOR: closes the ArgoCD pruning hazard. With 0.12.0's CSV self-heal, this completes the
 # one-shot story — a sync repairs itself rather than leaving RBAC behind.
 #
@@ -189,7 +218,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.13.0
+version: 0.14.0
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:
