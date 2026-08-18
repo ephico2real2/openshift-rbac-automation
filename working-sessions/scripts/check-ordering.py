@@ -90,7 +90,11 @@ def check_template_sources(chart, verbose=True):
             if not re.search(r"(?m)^kind:\s*\S", chunk):
                 continue
             docs_seen += 1
-            if WAVE not in chunk:
+            # An annotation LINE, not a substring. `WAVE in chunk` was satisfied by the key merely
+            # appearing in a comment — so commenting the annotation out passed this check, and for a
+            # gated template no render exists to catch it. Anchored to line start plus indentation,
+            # which a `#` before the key cannot match.
+            if not re.search(r"(?m)^\s*%s\s*:" % re.escape(WAVE), chunk):
                 kind = re.search(r"(?m)^kind:\s*(\S+)", chunk).group(1)
                 errors.append("%s (document %d, kind %s) declares no %s. ArgoCD would read it as "
                               "wave 0 — the Subscription's wave — so it could be deleted after the "
@@ -174,7 +178,8 @@ def check(chart, values, verbose=True):
             if raw_weight is None:
                 errors.append("%s: %s/%s is a Helm hook with no %s" % (label, kind, name, WEIGHT))
             else:
-                hook_weights.setdefault(int(raw_weight), []).append("%s/%s" % (kind, name))
+                hook_weights.setdefault(int(raw_weight), []).append(
+                    ("%s/%s" % (kind, name), labels(doc).get(COMPONENT) == SWEEPER, ann[HOOK]))
 
     if unwaved:
         errors.append("%s: %d resource(s) carry no %s, which ArgoCD reads as wave 0 — the "
@@ -224,7 +229,31 @@ def check(chart, values, verbose=True):
     for weight, holders in sorted(hook_weights.items()):
         if len(holders) > 1:
             errors.append("%s: hooks share %s=%d, so Helm falls back to name order and their "
-                          "sequence is accidental: %s" % (label, WEIGHT, weight, ", ".join(holders)))
+                          "sequence is accidental: %s" % (label, WEIGHT, weight,
+                                                          ", ".join(h for h, _, _ in holders)))
+
+    # Uniqueness above cannot see DIRECTION. Under plain Helm the hooks run in weight order, and the
+    # sweep inspects the state every other hook produces — the operator install included — so it must
+    # be the LAST hook of its event. Weighted below the InstallPlan approver it would run before the
+    # policy CRDs exist: `oc get namespaceconfig` fails, the Job fails, and the install fails with it.
+    # Only hooks sharing one of the sweeper's events are compared; a pre-install hook is a different
+    # queue and its weight is not on this axis.
+    sweeper_weight, sweeper_events = None, set()
+    for weight, holders in hook_weights.items():
+        for _, is_sweeper, events in holders:
+            if is_sweeper:
+                sweeper_weight = weight
+                sweeper_events = set(events.replace(" ", "").split(","))
+    if sweeper_weight is not None:
+        for weight, holders in sorted(hook_weights.items()):
+            for holder, is_sweeper, events in holders:
+                if is_sweeper or not (set(events.replace(" ", "").split(",")) & sweeper_events):
+                    continue
+                if weight >= sweeper_weight:
+                    errors.append("%s: hook %s has %s=%d, at or above the sweeper's (%d). The sweep "
+                                  "must run after every hook that installs or configures the operator, "
+                                  "or it inspects a cluster where the policy CRDs do not exist yet."
+                                  % (label, holder, WEIGHT, weight, sweeper_weight))
 
     if verbose and subscription:
         print("    Subscription wave=%d; policy CRs at %s; hook weights %s"

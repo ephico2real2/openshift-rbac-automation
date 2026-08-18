@@ -1,8 +1,8 @@
 # Labels and annotations — the contract
 
 The canonical definition of every label and annotation this project sets, on the policy CRs and on the
-objects they create. Chart 0.8.0. Every value below was taken from `oc get -o json` against the running
-cluster — 5 CRs and the 55 objects they created — not from reading the templates.
+objects they create. Chart 0.19.1. Every value below was re-verified against the running cluster —
+5 CRs and the 42 objects they created — not from reading the templates.
 
 If you are adding a policy or a key, this file is the spec. If a key is not here, we do not set it.
 
@@ -31,10 +31,10 @@ and Role it creates.
 | key | values on the cluster today | meaning |
 |---|---|---|
 | `app.kubernetes.io/managed-by` | `namespace-configuration-operator` | the operator created this; hand-made RBAC has no such label |
-| `rbac.ocp.io/config-source` | `baseline-nonprod-rbac` `baseline-prod-rbac` `baseline-cluster-rbac` `custom-cluster-rbac` `abc-oud-group-rbac` | **the NAME OF THE CR that created it** — the one provenance key, and the selector for a delete-and-rebuild |
+| `rbac.ocp.io/config-source` | `baseline-nonprod-rbac` `baseline-prod-rbac` `baseline-cluster-rbac` `custom-cluster-rbac` `bdp-oud-group-rbac` | **the NAME OF THE CR that created it** — the one provenance key, and the selector for a delete-and-rebuild |
 | `rbac.ocp.io/source-kind` | `NamespaceConfig` `GroupConfig` | which CRD owns it, so the pair is self-describing without a lookup |
-| `rbac.ocp.io/role-type` | `ns-admin` `ns-developer` `ns-audit` `cluster-admin` `cluster-developer` `cluster-audit` `database-admin` `submitter` | the **tier** — the promise being made |
-| `rbac.ocp.io/bound-role` | `admin` `edit` `view` `database-admin` `oud-group-submitter-role` | the role **actually referenced** by `roleRef` — the effective permission |
+| `rbac.ocp.io/role-type` | `ns-developer` `ns-audit` `cluster-admin` `cluster-developer` `cluster-audit` `database-admin` `spark-job-submitter` | the **tier** — the promise being made |
+| `rbac.ocp.io/bound-role` | `admin` `edit` `view` `database-admin` `spark-job-submitter-role` | the role **actually referenced** by `roleRef` — the effective permission |
 | `rbac.ocp.io/scope` | `namespace-scoped` `cluster-wide` | whether it applies in one namespace or all of them |
 | `rbac.ocp.io/group-name` | e.g. `app-ocp-rbac-beta-ns-admin` | the Group in `subjects` — one key for this on every policy |
 | `rbac.ocp.io/mnemonic` | e.g. `beta` `demo` `jeff` | the team, from the namespace label — **namespace-keyed policies only** |
@@ -42,10 +42,10 @@ and Role it creates.
 
 ### Why `role-type` and `bound-role` are both kept
 
-The mapping is 1:1 today, verified across all six baseline tiers:
+The mapping is 1:1 today, verified across all five baseline tiers:
 
 ```
-role-type=cluster-admin      → bound-role=admin      role-type=ns-admin      → bound-role=admin
+role-type=cluster-admin      → bound-role=admin
 role-type=cluster-audit      → bound-role=view       role-type=ns-audit      → bound-role=view
 role-type=cluster-developer  → bound-role=edit       role-type=ns-developer  → bound-role=edit
 ```
@@ -67,7 +67,7 @@ oc get rolebinding,clusterrolebinding -A -l rbac.ocp.io/bound-role=view    # all
 
 | key | values | meaning |
 |---|---|---|
-| `rbac.ocp.io/source-namespaceconfig` | `baseline-nonprod-rbac` `baseline-prod-rbac` `abc-oud-group-rbac` | the NamespaceConfig that owns it |
+| `rbac.ocp.io/source-namespaceconfig` | `baseline-nonprod-rbac` `baseline-prod-rbac` `bdp-oud-group-rbac` | the NamespaceConfig that owns it |
 | `rbac.ocp.io/source-groupconfig` | `baseline-cluster-rbac` `custom-cluster-rbac` | the GroupConfig that owns it |
 | `rbac.ocp.io/group-pattern` | `app-ocp-rbac-*-cluster-admin`, `app-ocp-rbac-*-database-admin` | the wildcard the operator matched groups against |
 
@@ -149,8 +149,8 @@ LDAP-backed; they do not all name groups the same way. One key covering both wou
 | **A** `source-groupconfig` | — | — | ✓ | ✓ | — | — |
 | **A** `group-pattern` | — | — | ✓ | ✓ | — | — |
 
-Four keys are on all 55 objects; `bound-role` and `group-name` are on all 52 bindings. Every remaining
-gap is structural, not an oversight:
+Four keys are on all 42 objects; `bound-role` and `group-name` are on all 39 bindings (26 RoleBindings
++ 13 ClusterRoleBindings). Every remaining gap is structural, not an oversight:
 
 - **The Role has no `bound-role` or `group-name`.** It *is* the role rather than referencing one, and it
   is created once per **namespace** with a fixed name, not once per group — so naming a single group on
@@ -202,7 +202,7 @@ oc get rolebinding,clusterrolebinding,role -A \
 oc get rolebinding,clusterrolebinding -A -l rbac.ocp.io/bound-role=view
 
 # Everything one policy produced — use this for delete-and-rebuild
-oc get rolebinding -A -l rbac.ocp.io/config-source=nonprod-rbac
+oc get rolebinding -A -l rbac.ocp.io/config-source=baseline-nonprod-rbac
 
 # Everything granted to one group, across all policies
 oc get rolebinding,clusterrolebinding -A -l rbac.ocp.io/group-name=app-ocp-rbac-beta-ns-admin

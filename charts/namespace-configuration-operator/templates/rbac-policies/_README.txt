@@ -9,7 +9,7 @@ runs. Touching these changes **who has access to what**.
 |---|---|---|---|---|
 | `10-baseline-namespaceconfig-rbac.yaml` | NamespaceConfig | the baseline every team gets, per namespace — nonprod and prod | RoleBindings | `baseline-nonprod-rbac`, `baseline-prod-rbac` |
 | `11-baseline-groupconfig-rbac.yaml` | GroupConfig | the baseline cluster-wide tiers | ClusterRoleBindings | `baseline-cluster-rbac` |
-| `12-custom-oud-group-namespaceconfig-rbac.yaml` | NamespaceConfig | a bespoke submitter Role, per namespace | Role + RoleBinding | `abc-oud-group-rbac` |
+| `12-custom-oud-group-namespaceconfig-rbac.yaml` | NamespaceConfig | a bespoke submitter Role, per namespace | Role + RoleBinding | `bdp-oud-group-rbac` |
 | `13-custom-groupconfig-rbac.yaml` | GroupConfig | ClusterRoles we define, bound by group-name suffix | ClusterRoleBindings or RoleBindings | `custom-cluster-rbac` |
 
 ## The FILENAME names the CRD. The CR NAME names the family and scope.
@@ -24,14 +24,17 @@ Two different jobs, deliberately not the same string:
 - **The CR name drops it**, because `kind:` on the object and the `rbac.ocp.io/kind` label already state
   it. What a CR name has to answer is *which policy is this* while you are looking at a binding's
   provenance on a cluster — hence `<family>-<scope>-rbac`, which lines up with the
-  `rbac.ocp.io/config-source` label values (`nonprod-rbac`, `prod-rbac`, `cluster-rbac`, …).
+  `rbac.ocp.io/config-source` label values (`baseline-nonprod-rbac`, `baseline-prod-rbac`,
+  `baseline-cluster-rbac`, …) — that label carries the CR NAME, so a selector and a CR name are the
+  same string.
 
 So renaming a CR is a values change and never touches these filenames. Helm ignores template filenames
 entirely; the numbering is a reading order for humans and nothing more.
 
-**As of 0.9.0 these ship ENABLED** — `namespaceConfigPolicy`, its `baseline` and `oudGroup` children, and
-`clusterRbac` all default to true; only `customGroupConfig` is still off. Installing this chart therefore
-writes RBAC against any namespace or group matching the selectors. For the operator alone, set
+**THESE SHIP ENABLED** — `namespaceConfigPolicy`, its `baseline` and `oudGroup` children, and
+`clusterRbac` all default to true. TWO policies still default to false: `customGroupConfig`, and the
+`oudGroup.policies.bdp` policy itself — its parent switch is on, the policy is not. Installing this chart
+therefore writes RBAC against any namespace or group matching the baseline selectors. For the operator alone, set
 `namespaceConfigPolicy.enabled=false` and `clusterRbac.enabled=false` explicitly.
 
 ## Helm renders subdirectories — this folder is not special to Helm
