@@ -135,6 +135,34 @@ operatorImage:
   # Always, so a moving ":latest" tag is re-pulled on every pod start.
   pullPolicy: Always
 
+  # SELF-HEAL AN ORPHANED CSV. Leave this ON if anything automated manages the release.
+  #
+  # `helm uninstall` deletes the Subscription and OLM leaves the CSV behind with no ownerReferences, so
+  # nothing collects it. The next install cannot resolve — "clusterserviceversion ... exists and is not
+  # referenced by a subscription" — and with installPlanApproval: Manual the symptom is the image-override
+  # hook burning its full waitSeconds and then blaming InstallPlan approval, which is not the cause.
+  #
+  # ArgoCD is the reason this defaults to true: a declarative sync has no human to run
+  # `oc delete csv`, so a Subscription stuck on ResolutionFailed fails every sync forever. With this on,
+  # the hook reclaims the orphan and OLM re-resolves by itself — install and re-install are one shot.
+  #
+  # It deletes something the chart does not own, so it is fenced by six conditions checked together:
+  # our Subscription reports ResolutionFailed, the CSV is in the install namespace, its name matches the
+  # package, it has no ownerReferences, no Subscription reports it installed, and it is NOT an OLM copy.
+  # That last one is load-bearing — AllNamespaces mode copies this CSV into every namespace (104 of them
+  # on the test cluster) and every copy looks unowned and unreferenced. Only the source blocks resolution.
+  #
+  # Set false to make the hook fail loudly instead, leaving the orphan for a human to remove:
+  #   oc delete csv -n <namespace> <package>.vX.Y.Z
+  reclaimOrphanedCSV: true
+
+  # How long the reclaim hook waits for OLM to publish a verdict on the Subscription — either an
+  # installed CSV (healthy, nothing to do) or ResolutionFailed (act). Straight after a sync neither is
+  # set yet, so it has to poll; sampling once is how this silently became dependent on the reconcile
+  # CronJob firing. Measured: a healthy upgrade resolves on the first poll and the hook exits in ~1s,
+  # so this ceiling only applies when something is actually wrong.
+  reclaimWaitSeconds: 90
+
   # Safety guard. The patch is applied only when the CSV's current image either sits in the
   # `repository` above (a tag bump — always in policy) or matches this pattern. Anything else
   # is refused rather than silently overwritten, which is what makes the unattended reconcile

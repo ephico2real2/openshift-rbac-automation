@@ -30,6 +30,34 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.12.0, MINOR: the chart now SELF-HEALS an orphaned CSV, so install and re-install are one shot.
+#
+# WHY: ArgoCD will manage this release. `helm uninstall` deletes the Subscription and OLM leaves the CSV
+# behind with no ownerReferences, so nothing collects it — and the next install cannot resolve
+# ("clusterserviceversion ... exists and is not referenced by a subscription"). A declarative sync has
+# nobody to run `oc delete csv`, so that state would fail every sync forever.
+#
+# NEW HOOK: templates/06a-csv-reclaim-job.yaml at hook-weight 0, ahead of the InstallPlan approver (5)
+# and the image-override job (10). The weight is the point. With the reclaim living in the
+# image-override job at weight 10, the approver ran FIRST and waited for an InstallPlan that a failed
+# resolution can never produce — measured 03:26:53 to 03:30:29 — and the install only recovered because
+# the reconcile CronJob happened to fire at 03:30:00 and clean up. That was luck, not a mechanism.
+#
+# Proven with the CronJob SUSPENDED so only the hook could act:
+#   one-shot install over an orphaned CSV   80s   (was 240s and CronJob-dependent)
+#   reclaim at 03:35:50, OLM re-resolved, 5 CRs and 42 objects back, operator 2/2
+#
+# UPGRADE IMPACT, measured on a healthy cluster: +5s for one extra Job, and the hook decides in ~1s
+# ("reclaim-only mode: done") because installedCSV is already set. CSV uid unchanged, object count
+# unchanged. It cannot touch a healthy CSV: the delete is gated on ResolutionFailed=True.
+#
+# SIX CONDITIONS before anything is deleted — ResolutionFailed on our Subscription, CSV in the install
+# namespace, name matches the package, no ownerReferences, unreferenced by any Subscription, and NOT an
+# OLM copy. That last one is load-bearing: AllNamespaces mode copies this CSV into every namespace (104
+# on the test cluster) and every copy looks unowned and unreferenced. Only the source blocks resolution.
+#
+# Set operatorImage.reclaimOrphanedCSV=false to disable and have the hook fail loudly instead.
+#
 # 0.11.0, MINOR: shortens every policy CR name to <family>-<scope>-rbac.
 #
 #   nonprod-namespaceconfig-rbac         -> baseline-nonprod-rbac
@@ -128,7 +156,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.11.0
+version: 0.12.0
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:

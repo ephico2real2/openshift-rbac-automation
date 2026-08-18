@@ -33,7 +33,11 @@ rules:
   # The patch target itself.
   - apiGroups: ["operators.coreos.com"]
     resources: ["clusterserviceversions"]
-    verbs: ["get", "list", "patch"]
+    # DELETE is here for one narrow job: reclaiming a CSV orphaned by a previous `helm uninstall`,
+    # which otherwise blocks OLM resolution forever and would fail every ArgoCD sync. The script
+    # applies six conditions before deleting anything — see section 0 of patch-csv-image.sh — and a
+    # healthy cluster never reaches that code because it is gated on ResolutionFailed=True.
+    verbs: ["get", "list", "patch", "delete"]
   # get/list/watch: verify OLM propagated the patch and follow the rollout.
   # patch: roll the Deployment back if the new image never becomes ready. Reverting the CSV
   # alone cannot recover a wedged install — OLM stops re-applying the Deployment once the
