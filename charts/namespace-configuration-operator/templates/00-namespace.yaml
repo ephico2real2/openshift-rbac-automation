@@ -13,8 +13,28 @@ metadata:
     pod-security.kubernetes.io/warn: {{ . }}
     {{- end }}
   annotations:
-    # Create the namespace before the OperatorGroup and Subscription.
+    # Wave -2: before the OperatorGroup (-1) and the Subscription (0).
     argocd.argoproj.io/sync-wave: "-2"
-    helm.sh/hook: pre-install
-    helm.sh/hook-weight: "-10"
+    # NOT A HELM HOOK, deliberately. It used to be a pre-install one, and that was wrong.
+    #
+    # Helm CREATES hook resources rather than applying them, and never records them in the release. Three
+    # consequences, all wrong for a namespace:
+    #   - installing with createNamespace=true against an EXISTING namespace failed outright with
+    #     "namespaces ... already exists" rather than adopting it. That is why createNamespace defaults to
+    #     false with a comment saying to flip it only for a genuinely new namespace: a default working
+    #     around the hook, rather than the hook being right.
+    #   - `helm upgrade` never reconciled the labels above, so changing podSecurity did nothing to a
+    #     namespace that already existed.
+    #   - `helm uninstall` left the namespace behind, untracked, because it was never in the stored manifest.
+    #
+    # As an ordinary resource Helm applies it, reconciles those labels on upgrade, and deletes it on
+    # uninstall. The ordering the hook weight provided is not needed: Helm installs by KIND, and Namespace
+    # sorts ahead of OperatorGroup, Subscription and everything else here. Under ArgoCD the wave above does
+    # it.
+    #
+    # ADOPTING a namespace this chart did not create still needs its ownership metadata, or Helm refuses with
+    # "invalid ownership metadata". Either leave createNamespace=false — still the right answer for
+    # openshift-operators or a namespace managed elsewhere — or stamp it once:
+    #   oc label ns <ns> app.kubernetes.io/managed-by=Helm
+    #   oc annotate ns <ns> meta.helm.sh/release-name=<release> meta.helm.sh/release-namespace=<ns>
 {{- end }}

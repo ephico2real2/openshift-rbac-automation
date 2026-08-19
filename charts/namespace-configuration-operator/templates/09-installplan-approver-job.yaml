@@ -6,6 +6,31 @@
 # Approves the pinned InstallPlan so a Manual-approval Subscription can still install
 # unattended. Runs at a LOWER hook weight than the image-override Job (10), because that Job
 # waits on .status.installedCSV, which never appears until this approval happens.
+#
+# THE SAME SYNC-WAVE AS THE SUBSCRIPTION (0), AND `hook: Sync` NOT `PostSync`. Both were wrong, and each
+# deadlocked a first ArgoCD sync on its own. ArgoCD advances to the next wave only when the current wave is
+# HEALTHY, and this Subscription is the thing that cannot become healthy until this Job runs:
+#
+#   installPlanApproval defaults to Manual, so on a FIRST install OLM leaves the InstallPlan unapproved and
+#   sets InstallPlanPending/RequiresApproval with .status.state=UpgradePending. ArgoCD's built-in health check
+#   for operators.coreos.com/Subscription forgives exactly that pair — but ONLY when .status.installedCSV is
+#   already set, which marks it as an upgrade awaiting approval:
+#
+#       if condition.type == "InstallPlanPending" and condition.reason == "RequiresApproval" then
+#         if obj.status.installedCSV ~= nil then isManualApprovalPending = true end
+#
+#   On a first install installedCSV is nil, so the forgiveness does not apply and the condition is counted:
+#   numPending > 0, and the Subscription reports Progressing forever. At wave 1 this Job would wait on a wave
+#   that is waiting on this Job. `PostSync` is the same trap one level up: it runs only after the whole sync
+#   succeeds, and the sync cannot succeed while the Subscription is Progressing.
+#
+# Same wave as the Subscription means ArgoCD applies both together and this Job clears the condition, so the
+# wave goes healthy and the later waves — the readiness wait (2) and the policy CRs (3) — proceed.
+#
+# Under plain Helm the wave is inert and the ordering comes from the hook weight. Nothing to match there: the
+# Subscription is an ordinary resource, and Helm applies every ordinary resource before any post-install hook,
+# so the Subscription always exists by the time this runs. The weight only orders this against the other
+# hooks — after the CSV reclaim (0), before the readiness wait (6) and the image override (10).
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -15,8 +40,9 @@ metadata:
     {{- include "nco.labels" . | nindent 4 }}
     app.kubernetes.io/component: installplan-approver
   annotations:
-    argocd.argoproj.io/sync-wave: "1"
-    argocd.argoproj.io/hook: PostSync
+    # Wave 0 — the Subscription's own wave. See the header: any later wave deadlocks a first sync.
+    argocd.argoproj.io/sync-wave: "0"
+    argocd.argoproj.io/hook: Sync
     # See 05-image-override-job.yaml: a Job's spec.template is immutable, so the previous run
     # must be deleted before this one is created or the next sync fails.
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
