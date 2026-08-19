@@ -8,7 +8,10 @@ metadata:
     {{- include "nco.labels" . | nindent 4 }}
     app.kubernetes.io/component: installplan-approver
   annotations:
-    argocd.argoproj.io/sync-wave: "1"
+    # Wave 0, with the Job that mounts it and the Subscription it unblocks. See the header of
+    # 09-installplan-approver-job.yaml: the Job cannot be in a later wave, and a script the Job
+    # mounts cannot arrive in a later wave than the Job.
+    argocd.argoproj.io/sync-wave: "0"
 data:
   approve-installplan.sh: |
     #!/bin/bash

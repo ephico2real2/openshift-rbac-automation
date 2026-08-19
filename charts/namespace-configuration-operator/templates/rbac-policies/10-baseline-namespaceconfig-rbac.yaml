@@ -103,6 +103,21 @@ metadata:
     # deadlocks: the CRs sit in Terminating with a finalizer no controller is left to run, and their
     # objects are stranded. ci.yaml asserts the ordering so this cannot regress unnoticed.
     argocd.argoproj.io/sync-wave: "3"
+    # ArgoCD dry-runs every resource BEFORE applying it, and a dry-run against a kind the cluster does not
+    # serve yet fails with "the server could not find the requested resource" — which fails THE WHOLE SYNC,
+    # not just this document. That is the exact shape of a first sync here: this CRD is not in the manifest
+    # (it belongs to the operator's OLM bundle) and arrives mid-sync, when OLM installs the CSV in wave 0.
+    # The ArgoCD docs call out this case explicitly — "the CRD is not part of the sync, but it could be
+    # created in another way, e.g. by a controller in the cluster".
+    #
+    # It does NOT weaken validation once the operator is installed: "The dry run will still be executed if
+    # the CRD is already present in the cluster." So on every sync after the first, this document is
+    # dry-run exactly as before, and a malformed spec is still caught here rather than at apply time.
+    #
+    # It does NOT help plain `helm install`, which resolves every kind against API discovery before applying
+    # anything and has no equivalent escape. That path still needs the two-step first install documented at
+    # namespaceConfigPolicy.enabled in values.yaml.
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   labelSelector:
     matchExpressions:

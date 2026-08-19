@@ -67,6 +67,22 @@ POLICY_GROUP = "redhatcop.redhat.io"
 # LABEL rather than the resource name, which is release-name dependent.
 SWEEPER = "orphan-sweeper"
 
+# The approver, which must share the Subscription's wave, and the readiness wait, which must sit
+# between the Subscription and the policy CRs. Both matched on the component label for the same
+# reason as the sweeper.
+APPROVER = "installplan-approver"
+WAIT = "operator-wait"
+
+ARGO_HOOK = "argocd.argoproj.io/hook"
+SYNC_OPTIONS = "argocd.argoproj.io/sync-options"
+
+# Every policy CR must carry this. ArgoCD dry-runs each resource before applying, and a dry-run against a
+# kind the cluster does not serve yet fails the ENTIRE sync — and these CRDs are not in the manifest at all,
+# they arrive mid-sync when OLM installs the CSV. Derived from the API group like the CRs themselves, so a new
+# redhat-cop kind is covered the day it is added. Per the ArgoCD docs the dry run still runs once the CRD is
+# present, so this costs no validation on any sync after the first.
+SKIP_DRY_RUN = "SkipDryRunOnMissingResource=true"
+
 
 def check_template_sources(chart, verbose=True):
     """Every document in every template file must declare a wave, WHATEVER the values say.
@@ -149,6 +165,10 @@ def check(chart, values, verbose=True):
     # conflates the two — which is how the first version of this script "found" four failures in a
     # chart that was correct.
     sweeper_job, sweeper_prereqs = [], []
+    # Same split, same reason, for the two components whose Jobs are ordered against the Subscription
+    # rather than against the policy CRs.
+    approver_job, approver_prereqs = [], []
+    wait_job, wait_prereqs = [], []
 
     for doc in docs:
         kind = doc["kind"]
@@ -168,10 +188,21 @@ def check(chart, values, verbose=True):
 
         if group_of(doc) == POLICY_GROUP:
             policies.append((kind, name, wave))
+            if SKIP_DRY_RUN not in (ann.get(SYNC_OPTIONS) or ""):
+                errors.append("%s: %s/%s carries no %s=%s. ArgoCD dry-runs every resource before applying, "
+                              "and this CRD is not in the manifest — it arrives mid-sync when OLM installs "
+                              "the CSV. Without this, the first sync fails with 'the server could not find "
+                              "the requested resource', and it fails the WHOLE sync, not just this document."
+                              % (label, kind, name, SYNC_OPTIONS, SKIP_DRY_RUN))
         if kind == "Subscription":
             subscription = (name, wave)
-        if labels(doc).get(COMPONENT) == SWEEPER:
+        component = labels(doc).get(COMPONENT)
+        if component == SWEEPER:
             (sweeper_job if kind == "Job" else sweeper_prereqs).append((kind, name, wave))
+        if component == APPROVER:
+            (approver_job if kind == "Job" else approver_prereqs).append((kind, name, wave, ann.get(ARGO_HOOK)))
+        if component == WAIT:
+            (wait_job if kind == "Job" else wait_prereqs).append((kind, name, wave))
         # Helm orders hooks by weight, then falls back to NAME. Two hooks sharing a weight are
         # therefore ordered by accident, and this chart's hooks depend on each other in sequence.
         if HOOK in ann:
@@ -204,6 +235,62 @@ def check(chart, values, verbose=True):
                               "ArgoCD deletes in reverse wave order, so the operator would be removed "
                               "before this CR's finalizer could revoke its RBAC — leaving live grants "
                               "with no policy behind them." % (label, kind, name, wave, sub_name, sub_wave))
+
+    # THE APPROVER MUST SHARE THE SUBSCRIPTION'S WAVE, and must not be a PostSync hook. ArgoCD advances
+    # to the next wave only when the current one is HEALTHY, and a Manual-approval Subscription cannot
+    # become healthy until this Job approves its InstallPlan. ArgoCD's built-in health check for
+    # operators.coreos.com/Subscription forgives InstallPlanPending/RequiresApproval only when
+    # .status.installedCSV is already set — an UPGRADE awaiting approval. On a first install it is nil,
+    # so the Subscription reports Progressing and any later wave waits on the wave that is waiting on it.
+    # PostSync is the same deadlock one level up: it runs only after the whole sync succeeds.
+    if approver_job and subscription:
+        sub_name, sub_wave = subscription
+        for kind, name, wave, argo_hook in approver_job:
+            if wave != sub_wave:
+                errors.append("%s: approver %s/%s is at wave %d but the Subscription (%s) is at wave %d. "
+                              "A Manual-approval Subscription reports Progressing until this Job runs, so "
+                              "ArgoCD would never reach wave %d — the sync deadlocks on a first install."
+                              % (label, kind, name, wave, sub_name, sub_wave, wave))
+            if argo_hook == "PostSync":
+                errors.append("%s: approver %s/%s is an ArgoCD %s=PostSync hook, which runs only after the "
+                              "whole sync succeeds. The sync cannot succeed while the Subscription is "
+                              "Progressing for want of this very approval. Use Sync."
+                              % (label, kind, name, ARGO_HOOK))
+    if approver_job and approver_prereqs:
+        job_wave = min(w for _, _, w, _ in approver_job)
+        for kind, name, wave, _ in approver_prereqs:
+            if wave > job_wave:
+                errors.append("%s: approver prerequisite %s/%s is at wave %d, AFTER the approver Job "
+                              "(wave %d) — the Job cannot mount or authenticate with something that does "
+                              "not exist yet."
+                              % (label, kind, name, wave, job_wave))
+
+    # THE READINESS WAIT SITS BETWEEN THEM. After the Subscription, because it has nothing to wait for
+    # until OLM has been asked to install; strictly before the policy CRs, because those CRs ARE the
+    # kinds it is waiting for the apiserver to serve. Its own RBAC must not arrive later than it does.
+    if wait_job and subscription:
+        sub_name, sub_wave = subscription
+        for kind, name, wave in wait_job:
+            if wave <= sub_wave:
+                errors.append("%s: readiness wait %s/%s is at wave %d, at or below the Subscription "
+                              "(%s, wave %d) — it would start before OLM has been asked to install "
+                              "anything and burn its whole budget." % (label, kind, name, wave, sub_name, sub_wave))
+    if wait_job and policies:
+        oldest_policy = min(w for _, _, w in policies)
+        for kind, name, wave in wait_job:
+            if wave >= oldest_policy:
+                errors.append("%s: readiness wait %s/%s is at wave %d, not before the first policy CR "
+                              "(wave %d). The CRs are the kinds it waits for, so applied in the same wave "
+                              "or later they can be attempted against an apiserver that does not serve "
+                              "them yet — which is the failure this Job exists to prevent."
+                              % (label, kind, name, wave, oldest_policy))
+    if wait_job and wait_prereqs:
+        job_wave = min(w for _, _, w in wait_job)
+        for kind, name, wave in wait_prereqs:
+            if wave > job_wave:
+                errors.append("%s: readiness-wait prerequisite %s/%s is at wave %d, AFTER the Job "
+                              "(wave %d) — the Job cannot authenticate with RBAC that does not exist yet."
+                              % (label, kind, name, wave, job_wave))
 
     # The sweep cleans up what pruning leaves behind, so the JOB has to be applied after the CRs it
     # inspects. Skipped, with a note, when the sweeper is switched off in this combination.
@@ -260,7 +347,7 @@ def check(chart, values, verbose=True):
               % (subscription[1], sorted({w for _, _, w in policies}) or "none",
                  sorted(hook_weights) or "none"))
 
-    return errors, bool(sweeper_job)
+    return errors, {SWEEPER: bool(sweeper_job), APPROVER: bool(approver_job), WAIT: bool(wait_job)}
 
 
 def main():
@@ -275,7 +362,7 @@ def main():
     if not charts:
         sys.exit("::error::no charts found under charts/*/Chart.yaml")
 
-    errors, sweeper_seen_anywhere = [], False
+    errors, seen_anywhere = [], {SWEEPER: False, APPROVER: False, WAIT: False}
     for chart in charts:
         if not args.quiet:
             print("\n=== %s — template sources" % os.path.basename(chart))
@@ -288,14 +375,17 @@ def main():
         for values in [[]] + [[o] for o in overlays]:
             errs, saw = check(chart, values, verbose=not args.quiet)
             errors += errs
-            sweeper_seen_anywhere |= saw
+            for component, present in saw.items():
+                seen_anywhere[component] |= present
 
-    # RULE 3 again, across every combination: if no render anywhere produced a sweeper resource, the
-    # component label was renamed and that assertion has become dead code.
-    if not sweeper_seen_anywhere:
-        errors.append("no Job labelled %s=%s in ANY combination — either the sweeper is disabled "
-                      "everywhere or the label was renamed, and the sweeper ordering assertions have "
-                      "become dead code that will keep reporting success" % (COMPONENT, SWEEPER))
+    # RULE 3 again, across every combination: a component whose Job never appears in ANY render means
+    # either it is switched off everywhere or its label was renamed — and in both cases the assertions
+    # above have become dead code that will keep reporting success.
+    for component, present in sorted(seen_anywhere.items()):
+        if not present:
+            errors.append("no Job labelled %s=%s in ANY combination — either it is disabled everywhere "
+                          "or the label was renamed, and its ordering assertions have become dead code "
+                          "that will keep reporting success" % (COMPONENT, component))
 
     print()
     if errors:
@@ -303,8 +393,11 @@ def main():
             print("::error::%s" % e)
         print("\nFAILED: %d ordering problem(s)" % len(errors))
         return 1
-    print("OK: every template document declares a wave, policy CRs are deleted before the "
-          "Subscription, the sweep runs after them, and no two hooks share a weight.")
+    print("OK: every template document declares a wave; the approver shares the Subscription's wave and "
+          "is not a PostSync hook; the readiness wait sits between the Subscription and the policy CRs; "
+          "policy CRs skip the dry run while their CRD is missing and are deleted before the Subscription; "
+          "the sweep runs after them; every Job's own RBAC arrives no later than the Job; and no two hooks "
+          "share a weight.")
     return 0
 
 

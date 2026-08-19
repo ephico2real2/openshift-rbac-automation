@@ -40,7 +40,17 @@ metadata:
     # A Job's spec.template is immutable, so the previous run must be deleted before the next is created or
     # the sync fails with "field is immutable". HookSucceeded keeps a failed run for its log.
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
-    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,Replace=true
+    # NO sync-options here, deliberately, though the sibling group-sync chart carries
+    # `SkipDryRunOnMissingResource=true,Replace=true` on its equivalent Job. Both are valid options and
+    # neither does anything for THIS resource, checked against the ArgoCD docs rather than copied:
+    #   SkipDryRunOnMissingResource  exists for "new custom resource types" — a dry-run against a CRD
+    #                                that is not installed fails the whole sync. This is a batch/v1 Job,
+    #                                a built-in kind that is always present, so there is nothing to skip.
+    #   Replace                      makes ArgoCD use `kubectl replace`/`create` instead of `apply`, to
+    #                                get past a Job's immutable spec.template. BeforeHookCreation above
+    #                                already deletes the previous hook before creating this one, so the
+    #                                immutable-field case cannot arise — and the docs warn Replace "has
+    #                                the potential to be destructive".
     helm.sh/hook: post-install,post-upgrade
     helm.sh/hook-weight: "6"
     helm.sh/hook-delete-policy: before-hook-creation
@@ -84,9 +94,14 @@ spec:
               # use than an exit code.
               set -uo pipefail
 
-              NAMESPACE="{{ .Values.namespace }}"
-              SUBSCRIPTION="{{ .Values.subscription.name }}"
-              DEPLOYMENT="{{ .Values.operatorImage.csvDeploymentName }}"
+              # `required` rather than a plain lookup on both of these. A misspelled values key renders as an
+              # EMPTY string, and an empty identifier does not fail — it makes every query match nothing, so
+              # the Job runs its full budget and then reports "no CSV reached Succeeded", which reads as an OLM
+              # or InstallPlan problem. That is a five-minute wait and a wrong diagnosis for a typo. `required`
+              # turns the same mistake into a render-time error naming the key.
+              NAMESPACE="{{ required "operatorWait: .Values.namespace must be set" .Values.namespace }}"
+              SUBSCRIPTION="{{ required "operatorWait: .Values.subscription.packageName must be set" .Values.subscription.packageName }}"
+              DEPLOYMENT="{{ required "operatorWait: .Values.operatorImage.csvDeploymentName must be set" .Values.operatorImage.csvDeploymentName }}"
               # Both kinds this chart's policies use. Waiting on only one would let a GroupConfig be applied
               # against an apiserver that does not serve it yet.
               CRDS="namespaceconfigs.redhatcop.redhat.io groupconfigs.redhatcop.redhat.io"
@@ -107,11 +122,18 @@ spec:
               log()  { printf '%s  [operator-wait] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
               fail() { printf '[operator-wait] FAILED: %s\n' "$*" >&2; exit 1; }
 
-              # Prefix match, because the CSV name carries the operator version.
+              # Ask the Subscription which CSV it installed rather than matching CSV names by prefix. OLM sets
+              # .status.installedCSV to the exact name, so this survives every version bump without the chart
+              # knowing the version — the same reason 03-image-override-rbac.yaml reads it to find its patch
+              # target. A prefix match would also have to assume the CSV name begins with the package name,
+              # which is true for this operator but is not a rule OLM enforces.
+              installed_csv() {
+                oc get subscription "$SUBSCRIPTION" -n "$NAMESPACE" --ignore-not-found=true \
+                   -o jsonpath='{.status.installedCSV}' 2>/dev/null
+              }
               csv_phase() {
-                oc get csv -n "$NAMESPACE" --ignore-not-found=true \
-                   -o jsonpath='{range .items[*]}{.metadata.name}{"|"}{.status.phase}{"\n"}{end}' \
-                  2>/dev/null | grep "^${SUBSCRIPTION}\." | head -1
+                oc get csv "$1" -n "$NAMESPACE" --ignore-not-found=true \
+                   -o jsonpath='{.status.phase}' 2>/dev/null
               }
               deploy_ready() {
                 oc get deploy "$DEPLOYMENT" -n "$NAMESPACE" --ignore-not-found=true \
@@ -125,19 +147,30 @@ spec:
               log "namespace=${NAMESPACE} subscription=${SUBSCRIPTION} budget={{ .Values.operatorWait.waitSeconds }}s"
 
               # --- 1. the CSV ---------------------------------------------------------------------------
-              echo "=== Waiting for the ${SUBSCRIPTION} CSV to reach Succeeded ==="
-              PHASE=""
+              # Both halves in ONE loop, because they are the same wait from a user's point of view and
+              # splitting them would let each consume the shared budget in turn. installedCSV appearing is the
+              # step that blocks on InstallPlan approval; the phase reaching Succeeded is the step that blocks
+              # on the install itself. The log line names which of the two we are still on, so a stall is
+              # diagnosable from the log alone.
+              echo "=== Waiting for the ${SUBSCRIPTION} Subscription to report a Succeeded CSV ==="
+              CSV=""; PHASE=""
               for i in $(seq 1 "$ATTEMPTS"); do
-                PHASE="$(csv_phase)"; PHASE="${PHASE#*|}"
-                [ "$PHASE" = "Succeeded" ] && { log "csv phase=Succeeded"; break; }
-                log "attempt ${i}/${ATTEMPTS}: csv phase=${PHASE:-<not present yet>}"
+                CSV="$(installed_csv)"
+                if [ -n "$CSV" ]; then
+                  PHASE="$(csv_phase "$CSV")"
+                  [ "$PHASE" = "Succeeded" ] && { log "csv=${CSV} phase=Succeeded"; break; }
+                  log "attempt ${i}/${ATTEMPTS}: csv=${CSV} phase=${PHASE:-<no phase yet>}"
+                else
+                  log "attempt ${i}/${ATTEMPTS}: subscription has no .status.installedCSV yet"
+                fi
                 out_of_time && break
                 sleep "$INTERVAL"
               done
-              [ "$PHASE" = "Succeeded" ] || fail "no ${SUBSCRIPTION}.* CSV reached Succeeded.
+              [ "$PHASE" = "Succeeded" ] || fail "the ${SUBSCRIPTION} Subscription has no Succeeded CSV (installedCSV='${CSV:-<empty>}', phase='${PHASE:-<none>}').
                 Inspect: oc get csv,subscription,installplan -n ${NAMESPACE}
-                installPlanApproval: Manual with the approver disabled leaves the InstallPlan unapproved and
-                hangs here — check subscription.autoApproveInstallPlan.enabled."
+                An empty installedCSV points at the InstallPlan, not the install: installPlanApproval Manual
+                with the approver disabled leaves it unapproved forever — check
+                subscription.autoApproveInstallPlan.enabled."
 
               # --- 2. a ready replica ------------------------------------------------------------------
               # A Succeeded CSV is not enough: the pod can be in CrashLoopBackOff while the CSV still says
@@ -173,12 +206,28 @@ spec:
                   A Succeeded CSV that did not create this CRD usually means the wrong package is installed."
               done
 
-              # Informational: on a first install the CRs may not be applied yet, which is why this is a
-              # count and not a check.
-              FOUND="$(oc get namespaceconfig,groupconfig --no-headers --ignore-not-found=true 2>/dev/null | wc -l | tr -d ' ')"
-              log "operator is serving; ${FOUND:-0} policy CR(s) currently present"
-              log "policies:      oc get namespaceconfig,groupconfig"
-              log "what they made: oc get rolebinding,clusterrolebinding -A -l app.kubernetes.io/managed-by=namespace-configuration-operator"
+              # A CLOSING LINE THAT SAYS IT FINISHED, then commands labelled as commands.
+              #
+              # These are NOT run here and their output is NOT shown, deliberately. This SA cannot read either
+              # kind — it is scoped to the CSV, the Subscription, the operator Deployment and two CRDs by name,
+              # because waiting is all it does. And `oc get ... 2>/dev/null | wc -l` renders a Forbidden as `0`,
+              # so a count printed here would read "0 policy CR(s) present" on a cluster holding five (measured
+              # exactly that: 5 as cluster-admin, 0 as this SA). A log line indistinguishable from a permissions
+              # error is worse than no line at all — it is the same conflation that let 0.19.1's sweeper treat
+              # Forbidden as not-found and delete every RoleBinding it managed.
+              #
+              # The earlier version printed the two commands as bare trailing log lines, which made a successful
+              # run look like a log that had been cut off mid-write. Hence the explicit terminal banner and the
+              # "run these yourself" framing: the last thing in the log now states the outcome.
+              ELAPSED=$(( $(date +%s) - (DEADLINE - {{ .Values.operatorWait.waitSeconds }}) ))
+              echo "=== operator-wait: SUCCESS — CSV Succeeded, ${DEPLOYMENT} ready, both CRDs Established (${ELAPSED}s) ==="
+              echo "    The policy CRs can now be applied. Nothing further runs in this Job."
+              echo
+              echo "    To see what the operator does with them, run these yourself — this Job has no"
+              echo "    permission to read either kind, so it prints the commands rather than a count it"
+              echo "    cannot actually measure:"
+              echo "      oc get namespaceconfig,groupconfig"
+              echo "      oc get rolebinding,clusterrolebinding -A -l app.kubernetes.io/managed-by=namespace-configuration-operator"
           resources:
             {{- toYaml .Values.operatorWait.resources | nindent 12 }}
 {{- end }}

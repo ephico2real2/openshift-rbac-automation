@@ -3,6 +3,12 @@
 # RBAC for the scoped InstallPlan approver. Separate ServiceAccount from the image-override
 # Job on purpose: approving InstallPlans is the authority to install operator code, and the
 # image-patch Job has no business holding it.
+#
+# Wave 0, the same wave as the approver Job it serves and as the Subscription. See the header of
+# 09-installplan-approver-job.yaml for why that Job cannot be in a later wave: a Manual-approval
+# Subscription reports Progressing until the InstallPlan is approved, so anything gated on the
+# Subscription being healthy is gated on this Job. These must be applied in the same wave or the hook
+# has no ServiceAccount to run as.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -12,7 +18,7 @@ metadata:
     {{- include "nco.labels" . | nindent 4 }}
     app.kubernetes.io/component: installplan-approver
   annotations:
-    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-wave: "0"
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -23,7 +29,7 @@ metadata:
     {{- include "nco.labels" . | nindent 4 }}
     app.kubernetes.io/component: installplan-approver
   annotations:
-    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-wave: "0"
 rules:
   # Read pending InstallPlans and approve the one matching the pinned CSV.
   - apiGroups: ["operators.coreos.com"]
@@ -43,7 +49,7 @@ metadata:
     {{- include "nco.labels" . | nindent 4 }}
     app.kubernetes.io/component: installplan-approver
   annotations:
-    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-wave: "0"
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
