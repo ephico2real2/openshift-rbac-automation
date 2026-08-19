@@ -11,10 +11,16 @@ namespace: namespace-configuration-operator
 # Set to false if the namespace already exists or is managed elsewhere
 # (e.g. installing into the built-in "openshift-operators" namespace).
 #
-# FALSE here because this namespace predates the chart (created 234d ago, already carries the
-# privileged audit/warn PSA labels). The namespace template is a pre-install HOOK, and Helm
-# creates hook resources rather than applying them — so with this true, `helm install` fails
-# with "namespaces already exists". Flip to true only for a genuinely new namespace.
+# FALSE here because this namespace predates the chart and is not Helm-owned. As of 0.19.3 the
+# template is an ORDINARY RESOURCE rather than a pre-install hook, so Helm applies it, reconciles
+# the PSA labels on upgrade, and removes it on uninstall — but adopting a namespace it did not
+# create still needs that namespace stamped with the release's ownership metadata, or Helm refuses
+# with "invalid ownership metadata". Leaving this false is the simpler answer for an existing
+# namespace, and the only answer for openshift-operators or anything managed elsewhere.
+#
+# Set it true for a genuinely new namespace, or to adopt an existing one after stamping it:
+#   oc label ns <ns> app.kubernetes.io/managed-by=Helm
+#   oc annotate ns <ns> meta.helm.sh/release-name=<release> meta.helm.sh/release-namespace=<ns>
 createNamespace: false
 
 # -------------------- OperatorGroup --------------------
@@ -127,6 +133,44 @@ subscription:
 # ever deleted if it carries app.kubernetes.io/managed-by=namespace-configuration-operator AND names a
 # policy CR in its rbac.ocp.io/config-source LABEL that does not exist. Objects without that label are
 # counted and left alone.
+# -------------------- Operator readiness wait --------------------
+# Blocks the install until the operator can actually SERVE NamespaceConfig and GroupConfig: the CSV
+# Succeeded, the operator Deployment has a ready replica, and both CRDs report Established.
+#
+# WHY IT IS NOT OPTIONAL IN PRACTICE. The Subscription is an ordinary resource, so Helm creates it and moves
+# on while OLM installs the operator asynchronously. Everything after that assumes the operator is serving —
+# the policy CRs are those kinds, and the orphan sweeper LISTS those kinds to decide what to delete. Against
+# an apiserver that does not serve them yet it would see nothing and act on that.
+#
+# It carries BOTH ordering mechanisms because they are not interchangeable:
+#   helm.sh/hook-weight 6   after the InstallPlan approver (5), before the image override (10) and the
+#                           sweeper (20). The only ordering plain Helm has.
+#   argocd sync-wave 2      after the Subscription (0) and approver (1), BEFORE the policy CRs (3). ArgoCD
+#                           waits for a wave to be healthy before starting the next, so a failed wait stops
+#                           the CRs being applied at all — which hook weights cannot do.
+#
+# It does NOT fix a first install on a cluster with no operator: Helm resolves every kind against API
+# discovery before applying anything, earlier than any hook. See namespaceConfigPolicy.enabled for those two
+# commands — this Job is what makes the first of them trustworthy, by not returning until the CRDs exist.
+operatorWait:
+  enabled: true
+
+  # One budget for all three checks, not per check. activeDeadlineSeconds is this + 120, so the script's own
+  # message is the one you see rather than the kubelet killing the pod silently.
+  waitSeconds: 300
+
+  # 0: every check is a poll against the same state, so a retry re-waits from zero and turns a 5-minute
+  # failure into a 10-minute one with no new information.
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 300
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
 orphanSweeper:
   # OFF removes the Job, the ConfigMap and the ClusterRole entirely — nothing is left holding the
   # permission. The trade-off is that an orphaned grant then survives until somebody runs the query in
@@ -283,6 +327,26 @@ podSecurity:
 # and the record of why each access model exists; this stanza is the deployable form. A policy is
 # converted one at a time, each behind its own flag, so a chart upgrade cannot adopt a policy the
 # operator did not ask for.
+#
+# FIRST INSTALL ON A CLUSTER WITHOUT THE OPERATOR NEEDS TWO STEPS. These flags being on means the
+# manifest contains NamespaceConfig and GroupConfig objects, and Helm resolves every kind against API
+# discovery BEFORE it applies anything — so on a cluster where the operator (and therefore its CRDs)
+# does not exist yet, the install fails outright:
+#
+#   Error: INSTALLATION FAILED: unable to build kubernetes objects from release manifest:
+#     resource mapping not found for name: "baseline-nonprod-rbac" ... no matches for kind
+#     "NamespaceConfig" in version "redhatcop.redhat.io/v1alpha1" ensure CRDs are installed first
+#
+# No hook weight or sync-wave can fix that: both annotations are read long after the failure. So install
+# the operator first, then turn the policies on:
+#
+#   helm install nco charts/namespace-configuration-operator -n namespace-configuration-operator \
+#     --set namespaceConfigPolicy.enabled=false --set clusterRbac.enabled=false
+#   helm upgrade nco charts/namespace-configuration-operator -n namespace-configuration-operator \
+#     -f charts/namespace-configuration-operator/<cluster>-values.yaml
+#
+# The second command needs nothing special — by then OLM has installed the CSV and its CRDs exist. An
+# upgrade of an EXISTING release is unaffected either way, which is why this only bites once.
 #
 # ON BY DEFAULT — a deliberate choice, with CI asserting "defaults render what values declares"
 # rather than "defaults render nothing". A plain `helm install` with stock values therefore

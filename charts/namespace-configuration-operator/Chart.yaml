@@ -31,6 +31,53 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.19.3, PATCH: three install-time corrections, all found by trying a fresh install.
+#
+# AN OPERATOR-READINESS WAIT JOB, which this chart had none of. The Subscription is an ordinary resource, so
+# Helm creates it and moves on while OLM installs the operator asynchronously — and everything after that
+# assumes the operator is serving. The policy CRs ARE NamespaceConfig/GroupConfig objects, and the orphan
+# sweeper LISTS those kinds to decide what to delete, so against an apiserver that does not serve them yet it
+# would see nothing and act on that. The new Job blocks until the CSV is Succeeded, the operator Deployment
+# has a ready replica, and BOTH CRDs report Established.
+#
+# It carries both ordering mechanisms, because they are not interchangeable: helm.sh/hook-weight 6 places it
+# after the InstallPlan approver (5) and before the image override (10) and the sweeper (20), which is the
+# only ordering plain Helm has; argocd sync-wave 2 places it after the Subscription (0) and approver (1) and
+# BEFORE the policy CRs (3), and ArgoCD waits for a wave to be healthy before starting the next — so a failed
+# wait stops the CRs being applied at all, which no hook weight can do. Same shape as the sibling group-sync
+# chart, whose approver sits at weight -1 / wave 1 and whose wait sits at weight 0 / wave 2.
+#
+# Its RBAC is read-only and split by scope: a Role for the CSV, Subscription and Deployment in the install
+# namespace, and a ClusterRole for the two CRDs, which are cluster-scoped and pinned by resourceNames.
+#
+# FIRST INSTALL ON A CLUSTER WITHOUT THE OPERATOR IS DOCUMENTED, and needs two steps. Since 0.18.0 the
+# policy flags default to ON, so the manifest contains NamespaceConfig and GroupConfig objects — and Helm
+# resolves every kind against API discovery BEFORE applying anything, so on a cluster whose CRDs do not
+# exist yet the install fails with "no matches for kind NamespaceConfig ... ensure CRDs are installed
+# first". No hook weight or sync-wave can fix it: both are read long after the failure. The fix is the
+# ordering, now written down beside the flag — install with the policies off, then upgrade with them on.
+# Shipping the CRDs in crds/ would also work and is deliberately NOT done: they belong to the operator's
+# own bundle, and a chart carrying a second copy of somebody else's CRD is a copy that goes stale.
+#
+# THE INSTALL-NAMESPACE TEMPLATE IS AN ORDINARY RESOURCE, not a pre-install hook.
+#
+# Helm CREATES hook resources rather than applying them, and never records them in the release. That gave the
+# namespace three behaviours that are all wrong for a namespace:
+#   - createNamespace=true against an EXISTING namespace failed with "namespaces ... already exists" instead
+#     of adopting it. The false default and its "flip to true only for a genuinely new namespace" comment were
+#     working around the hook rather than the hook being right.
+#   - `helm upgrade` never reconciled the labels, so changing podSecurity.audit/warn did nothing to a
+#     namespace that already existed.
+#   - `helm uninstall` left the namespace behind, untracked and unmanaged.
+#
+# The ordering the hook-weight provided is not lost: Helm installs by KIND, and Namespace sorts ahead of
+# OperatorGroup, Subscription and everything else in this chart. Under ArgoCD sync-wave -2 does it, as before.
+#
+# createNamespace still defaults to false, because adopting a namespace Helm did not create needs that
+# namespace stamped with the release's ownership metadata first — the values comment now gives the two
+# commands instead of implying the hook made it impossible. The sibling group-sync chart has always shipped
+# its namespace as an ordinary resource; this brings the two into line.
+
 # 0.19.2, PATCH: applies the accepted findings of the 0.19.1 adversarial review
 # (working-sessions/docs/REVIEW_chart_0.19.1.md — 19 accepted, 2 rejected, 3 amended). Two behaviour
 # changes; everything else corrects comments and docs to say what the chart actually ships.
@@ -471,7 +518,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.19.2
+version: 0.19.3
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:

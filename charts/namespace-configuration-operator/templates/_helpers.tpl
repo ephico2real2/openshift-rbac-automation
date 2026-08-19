@@ -31,6 +31,12 @@ pattern as the two above so the whole unit is greppable and deletable together.
 {{- printf "%s-orphan-sweeper" .Values.subscription.packageName | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
+# The operator-wait Job and its RBAC. Same shape as the other component helpers so the objects are
+# recognisably one component in `oc get all -l app.kubernetes.io/component=operator-wait`.
+{{- define "nco.operatorWait.name" -}}
+{{- printf "%s-wait" (include "nco.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- end }}
+
 {{/*
 Fully-qualified operator image the CSV should be patched to.
 */}}

@@ -1,0 +1,184 @@
+{{- if .Values.operatorWait.enabled }}
+# Blocks until the operator can actually serve NamespaceConfig and GroupConfig, so nothing downstream acts
+# on a cluster where the CRDs are not yet established.
+#
+# WHY THIS EXISTS. The Subscription is an ordinary resource, so Helm creates it and moves on — OLM then
+# resolves it, approves or waits for an InstallPlan, installs the CSV and starts the operator, all
+# asynchronously. Everything after that point in this chart assumes the operator is serving:
+#
+#   the policy CRs        are NamespaceConfig/GroupConfig objects, and the apiserver only serves those kinds
+#                         once their CRDs report Established
+#   the orphan sweeper    lists those same kinds to decide what to delete; against a cluster where they are
+#                         not served yet it would see nothing and draw conclusions from it
+#
+# TWO ORDERING MECHANISMS, both required, because they solve the same problem in different tools:
+#
+#   helm.sh/hook-weight: 6     runs after the InstallPlan approver (5), which is what lets OLM install the
+#                              CSV in the first place, and before the image override (10) and the sweeper
+#                              (20). Under plain Helm this is the only ordering that exists.
+#   argocd sync-wave: 2        after the Subscription (0) and the approver (1), BEFORE the policy CRs (3).
+#                              ArgoCD waits for each wave to be healthy before starting the next, so a
+#                              failing wait here stops the CRs being applied at all — which is the
+#                              behaviour a declarative sync needs and hook weights cannot provide.
+#
+# WHAT IT DOES NOT FIX, so nobody looks for it here: a FIRST install on a cluster with no operator still
+# needs the policy flags off, because Helm resolves every kind against API discovery before applying
+# anything — earlier than any hook, at any weight. See namespaceConfigPolicy.enabled in values.yaml for the
+# two commands. This Job is what makes that first step trustworthy: it does not return until the CRDs are
+# established, so the second command cannot race it.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "nco.operatorWait.name" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: operator-wait
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/hook: Sync
+    # A Job's spec.template is immutable, so the previous run must be deleted before the next is created or
+    # the sync fails with "field is immutable". HookSucceeded keeps a failed run for its log.
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true,Replace=true
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "6"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: {{ .Values.operatorWait.backoffLimit }}
+  # Bounds the whole Job rather than one attempt, so a cluster that never converges fails visibly instead of
+  # retrying until the Helm hook times out with no explanation of its own. Just above the script's own
+  # budget, so the script's message is the one you see.
+  activeDeadlineSeconds: {{ add .Values.operatorWait.waitSeconds 120 }}
+  ttlSecondsAfterFinished: {{ .Values.operatorWait.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "nco.labels" . | nindent 8 }}
+        app.kubernetes.io/component: operator-wait
+    spec:
+      serviceAccountName: {{ include "nco.operatorWait.name" . }}
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: wait-for-operator
+          image: {{ .Values.operatorImage.job.image | quote }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            # oc writes a cache under $HOME and the root filesystem is read-only.
+            - name: HOME
+              value: /tmp
+          command:
+            - /bin/bash
+            - -c
+            - |
+              # No `set -e`: each check reports its own failure with the command to run next, which is more
+              # use than an exit code.
+              set -uo pipefail
+
+              NAMESPACE="{{ .Values.namespace }}"
+              SUBSCRIPTION="{{ .Values.subscription.name }}"
+              DEPLOYMENT="{{ .Values.operatorImage.csvDeploymentName }}"
+              # Both kinds this chart's policies use. Waiting on only one would let a GroupConfig be applied
+              # against an apiserver that does not serve it yet.
+              CRDS="namespaceconfigs.redhatcop.redhat.io groupconfigs.redhatcop.redhat.io"
+
+              # max 1: integer division makes any waitSeconds below 5 render 0 attempts, and `seq 1 0` is
+              # empty — every loop would be skipped and the Job would fail instantly, blaming OLM for a
+              # values typo. The wall-clock deadline still caps the total, so a floor of one is safe.
+              ATTEMPTS={{ max 1 (div .Values.operatorWait.waitSeconds 5) }}
+              INTERVAL=5
+
+              # ONE budget shared by every check, which is what waitSeconds promises. ATTEMPTS is computed
+              # once and used by three loops, so without this each check could take the full budget and the
+              # total could reach 3x the documented number — at which point activeDeadlineSeconds kills the
+              # pod part-way with no message of its own.
+              DEADLINE=$(( $(date +%s) + {{ .Values.operatorWait.waitSeconds }} ))
+              out_of_time() { [ "$(date +%s)" -ge "$DEADLINE" ]; }
+
+              log()  { printf '%s  [operator-wait] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
+              fail() { printf '[operator-wait] FAILED: %s\n' "$*" >&2; exit 1; }
+
+              # Prefix match, because the CSV name carries the operator version.
+              csv_phase() {
+                oc get csv -n "$NAMESPACE" --ignore-not-found=true \
+                   -o jsonpath='{range .items[*]}{.metadata.name}{"|"}{.status.phase}{"\n"}{end}' \
+                  2>/dev/null | grep "^${SUBSCRIPTION}\." | head -1
+              }
+              deploy_ready() {
+                oc get deploy "$DEPLOYMENT" -n "$NAMESPACE" --ignore-not-found=true \
+                   -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo 0
+              }
+              crd_established() {
+                oc get crd "$1" --ignore-not-found=true \
+                   -o jsonpath='{.status.conditions[?(@.type=="Established")].status}' 2>/dev/null || echo "False"
+              }
+
+              log "namespace=${NAMESPACE} subscription=${SUBSCRIPTION} budget={{ .Values.operatorWait.waitSeconds }}s"
+
+              # --- 1. the CSV ---------------------------------------------------------------------------
+              echo "=== Waiting for the ${SUBSCRIPTION} CSV to reach Succeeded ==="
+              PHASE=""
+              for i in $(seq 1 "$ATTEMPTS"); do
+                PHASE="$(csv_phase)"; PHASE="${PHASE#*|}"
+                [ "$PHASE" = "Succeeded" ] && { log "csv phase=Succeeded"; break; }
+                log "attempt ${i}/${ATTEMPTS}: csv phase=${PHASE:-<not present yet>}"
+                out_of_time && break
+                sleep "$INTERVAL"
+              done
+              [ "$PHASE" = "Succeeded" ] || fail "no ${SUBSCRIPTION}.* CSV reached Succeeded.
+                Inspect: oc get csv,subscription,installplan -n ${NAMESPACE}
+                installPlanApproval: Manual with the approver disabled leaves the InstallPlan unapproved and
+                hangs here — check subscription.autoApproveInstallPlan.enabled."
+
+              # --- 2. a ready replica ------------------------------------------------------------------
+              # A Succeeded CSV is not enough: the pod can be in CrashLoopBackOff while the CSV still says
+              # Succeeded, which is exactly the state an image override can produce.
+              echo "=== Waiting for ${DEPLOYMENT} to have a ready replica ==="
+              READY=0
+              for i in $(seq 1 "$ATTEMPTS"); do
+                READY="$(deploy_ready)"
+                [ "${READY:-0}" -ge 1 ] 2>/dev/null && { log "${DEPLOYMENT} ready=${READY}"; break; }
+                log "attempt ${i}/${ATTEMPTS}: ready=${READY:-0}"
+                out_of_time && break
+                sleep "$INTERVAL"
+              done
+              [ "${READY:-0}" -ge 1 ] 2>/dev/null || fail "${DEPLOYMENT} has no ready replica.
+                Inspect: oc get pods -n ${NAMESPACE}
+                         oc logs -n ${NAMESPACE} deploy/${DEPLOYMENT} -c manager --tail=100"
+
+              # --- 3. the CRDs --------------------------------------------------------------------------
+              # Established is the condition that says the apiserver serves the kind. Anything applying a
+              # NamespaceConfig or GroupConfig before this is true fails on discovery.
+              for crd in $CRDS; do
+                echo "=== Waiting for CRD ${crd} to be Established ==="
+                EST="False"
+                for i in $(seq 1 "$ATTEMPTS"); do
+                  EST="$(crd_established "$crd")"
+                  [ "$EST" = "True" ] && { log "${crd} Established"; break; }
+                  log "attempt ${i}/${ATTEMPTS}: ${crd} Established=${EST:-<not present yet>}"
+                  out_of_time && break
+                  sleep "$INTERVAL"
+                done
+                [ "$EST" = "True" ] || fail "CRD ${crd} is not Established.
+                  Inspect: oc get crd ${crd} -o yaml
+                  A Succeeded CSV that did not create this CRD usually means the wrong package is installed."
+              done
+
+              # Informational: on a first install the CRs may not be applied yet, which is why this is a
+              # count and not a check.
+              FOUND="$(oc get namespaceconfig,groupconfig --no-headers --ignore-not-found=true 2>/dev/null | wc -l | tr -d ' ')"
+              log "operator is serving; ${FOUND:-0} policy CR(s) currently present"
+              log "policies:      oc get namespaceconfig,groupconfig"
+              log "what they made: oc get rolebinding,clusterrolebinding -A -l app.kubernetes.io/managed-by=namespace-configuration-operator"
+          resources:
+            {{- toYaml .Values.operatorWait.resources | nindent 12 }}
+{{- end }}

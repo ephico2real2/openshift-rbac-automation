@@ -1,0 +1,103 @@
+{{- if .Values.operatorWait.enabled }}
+{{- $name := include "nco.operatorWait.name" . }}
+# RBAC for the operator-wait Job.
+#
+# Ordinary resources, not hooks — only the Job is a hook. Hook resources are untracked by the release and
+# survive `helm uninstall`, so a hooked ServiceAccount and its bindings would accumulate.
+#
+# SPLIT BETWEEN A ROLE AND A CLUSTERROLE, because the two things it reads live at different scopes. The CSV,
+# the Subscription and the operator Deployment are all in the install namespace, so a Role covers them. A
+# CustomResourceDefinition is cluster-scoped and cannot be read by any Role — and reading the CRD is the
+# whole point of this Job, because `Established` is the condition that says the apiserver will serve the
+# kind. Everything is read-only: this Job waits, it never changes anything.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: operator-wait
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: operator-wait
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+rules:
+  # The CSV's phase, and the Subscription that names it. `list` as well as `get`, because the CSV name
+  # carries the operator version and is matched by prefix rather than known up front.
+  - apiGroups: ["operators.coreos.com"]
+    resources: ["clusterserviceversions", "subscriptions"]
+    verbs: ["get", "list"]
+  # readyReplicas on the operator's own Deployment. A Succeeded CSV is not enough — the pod can be in
+  # CrashLoopBackOff while the CSV still reports Succeeded.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: operator-wait
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Values.namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  # Namespace in the name: a cluster-scoped name built from the release name alone collides when the same
+  # release is installed twice, into two namespaces.
+  name: {{ $name }}-{{ .Release.Namespace }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: operator-wait
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+rules:
+  # Read-only, and pinned to the two CRDs this chart's policies need. resourceNames works here because both
+  # are read BY NAME — unlike `list`, which RBAC cannot narrow by name at all.
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get"]
+    resourceNames:
+      - namespaceconfigs.redhatcop.redhat.io
+      - groupconfigs.redhatcop.redhat.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}-{{ .Release.Namespace }}
+  labels:
+    {{- include "nco.labels" . | nindent 4 }}
+    app.kubernetes.io/component: operator-wait
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}-{{ .Release.Namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Values.namespace }}
+{{- end }}
