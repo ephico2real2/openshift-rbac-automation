@@ -31,6 +31,21 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.19.4, PATCH: the InstallPlan approver treated an EMPTY read of .spec.installPlanApproval as
+# "Automatic", so a Subscription that was missing or unreadable produced the log line "approval mode is
+# '<none>', not Manual — OLM approves its own InstallPlans. Nothing to do." and exit 0. A false success:
+# the operator never installs and the log points away from the cause. Observed against a Subscription that
+# plainly said Manual. `2>/dev/null || true` was the mechanism — the same Forbidden-as-not-found conflation
+# that let 0.19.1's sweeper delete every RoleBinding it managed. Now the exit status is kept and branched
+# on: NotFound and read failures fail loudly with the command to run, while a genuinely absent field still
+# reports "Automatic (field absent)" and exits 0.
+#
+# AND A PENDING UPGRADE IS NO LONGER SILENT. When the pinned CSV is already installed the hook returns
+# early, before the search loop that was the only place logging a non-matching InstallPlan. In the steady
+# state — installed at the pin, a channel upgrade waiting — a deliberate refusal therefore looked like an
+# approver that had not noticed. It now reports the pending plan, that it will NOT approve it, and that the
+# way to adopt it is bumping subscription.startingCSV in git.
+#
 # 0.19.3, PATCH: three install-time corrections, all found by trying a fresh install.
 #
 # AN OPERATOR-READINESS WAIT JOB, which this chart had none of. The Subscription is an ordinary resource, so
@@ -539,7 +554,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.19.3
+version: 0.19.4
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:
