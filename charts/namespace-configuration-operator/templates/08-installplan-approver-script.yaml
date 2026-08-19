@@ -48,7 +48,20 @@ data:
     # "approval mode is '<none>', not Manual" while the Subscription on the cluster plainly said Manual.
     # Same conflation that let 0.19.1's sweeper read Forbidden as not-found and delete every RoleBinding it
     # managed, so it is separated here the same way: keep the exit status, and branch on it.
-    if ! APPROVAL_MODE="$(oc get subscription "$SUBSCRIPTION" -n "$NAMESPACE" \
+    #
+    # AND EVERY OLM RESOURCE IS NAMED IN FULL — subscriptions.operators.coreos.com, never `subscription`.
+    # That is what the empty read turned out to be. Once the failure was surfaced instead of swallowed, it
+    # said:
+    #
+    #     Error from server (Forbidden): subscriptions.messaging.knative.dev "…" is forbidden:
+    #     … cannot get resource "subscriptions" in API group "messaging.knative.dev"
+    #
+    # `subscriptions` is not a unique resource name. Whatever else on the cluster serves that plural — Knative
+    # Eventing here — competes for the short name, and which one `oc` binds is decided by API discovery, which
+    # changes as CRDs come and go. The container has HOME=/tmp and a cold discovery cache on every run, so the
+    # binding is not even stable between two runs of the same Job. A fully qualified name cannot be
+    # misrouted, and it makes a Forbidden mean what it says: this ServiceAccount lacks the verb in THAT group.
+    if ! APPROVAL_MODE="$(oc get subscriptions.operators.coreos.com "$SUBSCRIPTION" -n "$NAMESPACE" \
                             -o jsonpath='{.spec.installPlanApproval}' 2>&1)"; then
       case "$APPROVAL_MODE" in
         *NotFound*|*"not found"*)
@@ -56,11 +69,14 @@ data:
       This hook runs at helm.sh/hook-weight 5 and ArgoCD sync-wave 0, both of which are AFTER the
       Subscription is applied — so if it is missing, either subscription.packageName does not match the
       Subscription this chart creates, or the release was applied with the Subscription template disabled.
-      Inspect: oc get subscription -n ${NAMESPACE}" ;;
+      Inspect: oc get subscriptions.operators.coreos.com -n ${NAMESPACE}" ;;
         *)
           fail "could not read Subscription ${SUBSCRIPTION} in ${NAMESPACE}: ${APPROVAL_MODE}
-      A Forbidden here means the approver's Role is missing 'get' on subscriptions.
-      Inspect: oc auth can-i get subscriptions -n ${NAMESPACE} \\
+      The resource is named in full, so a Forbidden here means exactly what it says: this ServiceAccount
+      lacks 'get' on subscriptions in the operators.coreos.com group. (Before the name was qualified, this
+      same failure was a MISROUTED request — `subscription` resolved to messaging.knative.dev, where the
+      Role grants nothing — and it was swallowed into an empty string that read as "Automatic".)
+      Inspect: oc auth can-i get subscriptions.operators.coreos.com -n ${NAMESPACE} \\
                  --as=system:serviceaccount:${NAMESPACE}:\$(oc get sa -n ${NAMESPACE} -o name | grep approver | cut -d/ -f2)" ;;
       esac
     fi
@@ -74,7 +90,7 @@ data:
     # pending upgrade that nothing mentions looks exactly like an approver that failed to notice it.
     report_unapproved_others() {
       local found=0 ip owner csvs approved
-      for ip in $(oc get installplan -n "$NAMESPACE" -o name 2>/dev/null || true); do
+      for ip in $(oc get installplans.operators.coreos.com -n "$NAMESPACE" -o name 2>/dev/null || true); do
         owner="$(oc get "$ip" -n "$NAMESPACE" \
                   -o jsonpath='{.metadata.ownerReferences[?(@.kind=="Subscription")].name}' 2>/dev/null || true)"
         case " $owner " in *" $SUBSCRIPTION "*) ;; *) continue ;; esac
@@ -97,7 +113,7 @@ data:
 
     # Already installed at the pinned version? Then there is nothing to approve, and saying so
     # is better than waiting out the timeout on every re-sync.
-    INSTALLED="$(oc get subscription "$SUBSCRIPTION" -n "$NAMESPACE" \
+    INSTALLED="$(oc get subscriptions.operators.coreos.com "$SUBSCRIPTION" -n "$NAMESPACE" \
                   -o jsonpath='{.status.installedCSV}' 2>/dev/null || true)"
     if [ "$INSTALLED" = "$APPROVE_CSV" ]; then
       log "already installed at ${APPROVE_CSV}; no InstallPlan to approve"
@@ -114,7 +130,7 @@ data:
     deadline=$(( $(date +%s) + WAIT_SECONDS ))
     TARGET=""
     while [ "$(date +%s)" -lt "$deadline" ]; do
-      for ip in $(oc get installplan -n "$NAMESPACE" -o name 2>/dev/null || true); do
+      for ip in $(oc get installplans.operators.coreos.com -n "$NAMESPACE" -o name 2>/dev/null || true); do
         OWNER="$(oc get "$ip" -n "$NAMESPACE" \
                   -o jsonpath='{.metadata.ownerReferences[?(@.kind=="Subscription")].name}' 2>/dev/null || true)"
         case " $OWNER " in *" $SUBSCRIPTION "*) ;; *) continue ;; esac

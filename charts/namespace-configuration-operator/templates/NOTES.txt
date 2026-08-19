@@ -15,8 +15,8 @@ OLM now resolves the InstallPlan and installs the operator CSV. This takes a min
 VERIFY
 ======
 1. InstallPlan + CSV reach "Complete" / "Succeeded":
-   $ oc get installplan -n {{ .Values.namespace }}
-   $ oc get csv -n {{ .Values.namespace }} | grep namespace-configuration-operator
+   $ oc get installplans.operators.coreos.com -n {{ .Values.namespace }}
+   $ oc get clusterserviceversions.operators.coreos.com -n {{ .Values.namespace }} | grep namespace-configuration-operator
 
 2. The controller is running:
    $ oc get pods -n {{ .Values.namespace }}
@@ -37,7 +37,7 @@ so they are NOT part of this Helm chart):
 TROUBLESHOOTING
 ===============
 - Stuck InstallPlan:
-    $ oc describe installplan -n {{ .Values.namespace }}
+    $ oc describe installplans.operators.coreos.com -n {{ .Values.namespace }}
 - If you installed into a namespace that already had a global OperatorGroup, set
   createOperatorGroup=false — two global OperatorGroups in one namespace conflict.
 - Operator logs:

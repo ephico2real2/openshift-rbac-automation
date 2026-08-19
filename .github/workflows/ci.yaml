@@ -139,6 +139,13 @@ jobs:
       # locally, and it DISCOVERS what to check — charts by glob, overlays by glob, policy CRs by API
       # group — so adding a template or a cluster overlay needs no edit to this workflow and none to
       # the script. Its own header documents the three rules that keep it from going stale.
+      - name: Every oc call names its resource in full
+        # A short name can bind to a DIFFERENT API GROUP. Measured on a live cluster: `oc get subscription`
+        # resolved to subscriptions.messaging.knative.dev and returned Forbidden, and because that read
+        # discarded stderr the approver reported a successful no-op. These scripts run with HOME=/tmp and a
+        # cold discovery cache every time, so the binding is not stable between two runs of the same Job.
+        run: working-sessions/scripts/check-qualified-resources.py
+
       - name: Ordering is declared, not accidental
         run: working-sessions/scripts/check-ordering.py
 

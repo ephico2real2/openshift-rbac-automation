@@ -1,6 +1,6 @@
 {{- if and .Values.operatorImage.enabled .Values.operatorImage.reclaimOrphanedCSV }}
 # Clears a CSV orphaned by a previous `helm uninstall`, so this chart installs in ONE SHOT with no
-# human step. Required for ArgoCD, which syncs declaratively and has nobody to run `oc delete csv`.
+# human step. Required for ArgoCD, which syncs declaratively and has nobody to run `oc delete clusterserviceversions.operators.coreos.com`.
 #
 # WHY THIS IS ITS OWN HOOK RATHER THAN PART OF THE IMAGE-OVERRIDE JOB
 # hook-weight 0, which puts it AHEAD of the InstallPlan approver (5) and the image-override job (10).

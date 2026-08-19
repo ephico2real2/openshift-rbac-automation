@@ -31,6 +31,29 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.19.5, PATCH: EVERY `oc` CALL NOW NAMES ITS RESOURCE IN FULL. 0.19.4 stopped the approver swallowing a
+# failed read, and the very next run showed what that read had been hiding:
+#
+#     Error from server (Forbidden): subscriptions.messaging.knative.dev "namespace-configuration-operator"
+#     is forbidden: ... cannot get resource "subscriptions" in API group "messaging.knative.dev"
+#
+# `oc get subscription` had bound to the WRONG API GROUP. `subscriptions` is not a unique plural — Knative
+# Eventing serves one, OLM serves one — and which one a short name resolves to is decided by API discovery,
+# so it changes as CRDs are installed and removed. These scripts run with HOME=/tmp and therefore a COLD
+# discovery cache on every run, so the binding is not stable even between two runs of the same Job. Two
+# independent defects were stacked: an ambiguous name, and an error discarded into an empty string that read
+# as "Automatic". 0.19.4 fixed the second and made the first visible.
+#
+# 36 call sites across four scripts and NOTES.txt are now fully qualified. THE MOST IMPORTANT IS THE ORPHAN
+# SWEEPER: it lists namespaceconfigs and groupconfigs to decide which managed RoleBindings still have a
+# policy behind them, and everything NOT in those lists is deleted. A misrouted list returns NOTHING rather
+# than failing, which would make all 42 managed objects look orphaned — the 0.19.1 mass deletion, reachable
+# again through a name collision instead of a missing verb.
+#
+# check-qualified-resources.py asserts it, in the RENDER so scripts inside ConfigMap values are covered like
+# files, and it is wired into CI. It found 5 sites the first sweep missed, including `oc describe installplan`
+# in NOTES.txt, which an operator copy-pastes.
+#
 # 0.19.4, PATCH: the InstallPlan approver treated an EMPTY read of .spec.installPlanApproval as
 # "Automatic", so a Subscription that was missing or unreadable produced the log line "approval mode is
 # '<none>', not Manual — OLM approves its own InstallPlans. Nothing to do." and exit 0. A false success:
@@ -554,7 +577,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.19.4
+version: 0.19.5
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:

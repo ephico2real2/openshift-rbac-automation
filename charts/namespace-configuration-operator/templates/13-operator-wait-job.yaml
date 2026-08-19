@@ -122,17 +122,24 @@ spec:
               log()  { printf '%s  [operator-wait] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
               fail() { printf '[operator-wait] FAILED: %s\n' "$*" >&2; exit 1; }
 
+              # OLM resources are named IN FULL here, never by short name. `subscription` is not unique —
+              # anything else on the cluster serving that plural (Knative Eventing, for one) competes for it,
+              # and which one `oc` binds is decided by API discovery, which changes as CRDs come and go. This
+              # container runs with HOME=/tmp and therefore a cold discovery cache every time, so the binding
+              # is not stable even between two runs of the same Job. Measured: the approver Job hit
+              # `subscriptions.messaging.knative.dev … forbidden` on exactly this call shape.
+              #
               # Ask the Subscription which CSV it installed rather than matching CSV names by prefix. OLM sets
               # .status.installedCSV to the exact name, so this survives every version bump without the chart
               # knowing the version — the same reason 03-image-override-rbac.yaml reads it to find its patch
               # target. A prefix match would also have to assume the CSV name begins with the package name,
               # which is true for this operator but is not a rule OLM enforces.
               installed_csv() {
-                oc get subscription "$SUBSCRIPTION" -n "$NAMESPACE" --ignore-not-found=true \
+                oc get subscriptions.operators.coreos.com "$SUBSCRIPTION" -n "$NAMESPACE" --ignore-not-found=true \
                    -o jsonpath='{.status.installedCSV}' 2>/dev/null
               }
               csv_phase() {
-                oc get csv "$1" -n "$NAMESPACE" --ignore-not-found=true \
+                oc get clusterserviceversions.operators.coreos.com "$1" -n "$NAMESPACE" --ignore-not-found=true \
                    -o jsonpath='{.status.phase}' 2>/dev/null
               }
               deploy_ready() {
@@ -167,7 +174,7 @@ spec:
                 sleep "$INTERVAL"
               done
               [ "$PHASE" = "Succeeded" ] || fail "the ${SUBSCRIPTION} Subscription has no Succeeded CSV (installedCSV='${CSV:-<empty>}', phase='${PHASE:-<none>}').
-                Inspect: oc get csv,subscription,installplan -n ${NAMESPACE}
+                Inspect: oc get clusterserviceversions.operators.coreos.com,subscriptions.operators.coreos.com,installplans.operators.coreos.com -n ${NAMESPACE}
                 An empty installedCSV points at the InstallPlan, not the install: installPlanApproval Manual
                 with the approver disabled leaves it unapproved forever — check
                 subscription.autoApproveInstallPlan.enabled."
