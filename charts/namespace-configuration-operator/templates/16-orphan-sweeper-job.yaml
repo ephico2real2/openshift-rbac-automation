@@ -55,6 +55,12 @@ spec:
             # which is the guard against a failed CR lookup cascading into revoking everything.
             - name: ORPHAN_LIMIT
               value: {{ .Values.orphanSweeper.limit | quote }}
+            - name: PAUSE_SECONDS
+              value: {{ .Values.orphanSweeper.pauseSeconds | quote }}
+            - name: RETRIES
+              value: {{ .Values.orphanSweeper.retries | quote }}
+            - name: RETRY_DELAY
+              value: {{ .Values.orphanSweeper.retryDelaySeconds | quote }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

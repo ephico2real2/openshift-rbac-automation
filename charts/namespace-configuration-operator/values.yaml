@@ -182,18 +182,36 @@ orphanSweeper:
   # ArgoCD reports a healthy sync while the dangling grants remain.
   dryRun: false
 
-  # Abort a run that would delete more than this many objects in one go. 0 disables the cap.
+  # NO CAP BY DEFAULT. A real sweep is however big it is, and refusing to finish leaves live grants behind
+  # a policy that no longer exists — which is the thing this Job exists to prevent. Set a non-zero value to
+  # turn the circuit breaker back on; 0 disables it.
   #
-  # THIS IS A BLAST-RADIUS GUARD, not a tuning knob. Since 0.19.1 a FAILED lookup aborts before this
-  # cap is consulted; what the cap still guards is the rc=0 catastrophe — every policy switched off by
-  # a bad -f upgrade, or a label-value migration whose existing objects match no CR (measured at
-  # 0.16.0: 36 stale objects, and this cap turned the mass revocation into a failed sync). 25 is above
-  # the largest legitimate sweep seen here (20) and well below the full object count (42), so such a
-  # state aborts loudly instead of revoking the cluster.
-  limit: 25
+  # WHY A COUNT IS NOT THE GUARD. The blast radius is bounded by the LABEL CONTRACT, not by a number. The
+  # sweep only ever considers an object carrying BOTH app.kubernetes.io/managed-by=<this chart> AND
+  # rbac.ocp.io/config-source=<the CR that should own it>, and an object with no config-source is counted as
+  # kept and left alone — "not ours to reason about". That contract is why one provenance KEY as a LABEL
+  # (0.16.0) replaced two concatenated annotations: the sweeper and a human runbook select on the same field,
+  # so they cannot disagree about what owns an object.
+  #
+  # The failure mode a cap once caught has not gone away — at 0.16.0 a label-value migration left 36 objects
+  # whose config-source named no CR. It is now surfaced rather than blocked: the candidate count and the live
+  # CR list are logged before anything is deleted, so "429 orphaned against 5 live policies" is visible in the
+  # log as the contradiction it is. Deletes are paced and retried instead of refused.
+  limit: 0
+
+  # Between individual deletes, not around the batch. Each delete revokes access, and a burst of hundreds
+  # competes with the operator's own reconcile of the same objects.
+  pauseSeconds: 1
+  # A conflict or timeout mid-reconcile is worth retrying; only the last attempt keeps stderr, so a genuine
+  # failure is explained once instead of three times. A delete that never succeeds FAILS the run — reporting
+  # a clean sweep while a grant is still live is worse than failing.
+  retries: 3
+  retryDelaySeconds: 2
 
   backoffLimit: 2
-  activeDeadlineSeconds: 300
+  # Was 300, which capped the sweep at five minutes — fine for a handful of orphans, not for an uncapped run
+  # pacing itself at pauseSeconds per delete. Matches the sibling group-sync relabel Job's 1800.
+  activeDeadlineSeconds: 1800
   ttlSecondsAfterFinished: 3600
   resources:
     requests:
