@@ -31,6 +31,30 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.19.7, PATCH: THE ORPHAN SWEEPER'S LOG NOW SAYS WHAT IT IS DOING WHILE IT DOES IT. The old log printed
+# a one-line header, the candidate list, then went SILENT for the entire sweep — 74 seconds for 30 objects —
+# and finished with a single summary. That is indistinguishable from a hung Job, and it is why a run that was
+# deleting correctly was read as "it only lists them, nothing deletes them".
+#
+# Four named phases, each stating what it decides and why, plus a header listing every setting that changes
+# the outcome (dry run, circuit breaker, pacing) so a log read after the fact does not require guessing how
+# the Job was configured:
+#   1  DISCOVER LIVE POLICY CRs   per kind, with every CR named — an incomplete list here becomes a mass
+#                                 deletion downstream, so it is shown rather than summarised
+#   2  SCAN MANAGED OBJECTS       per kind: scanned / owned / no-provenance / ORPHANED, so a surprising
+#                                 total can be attributed to a kind instead of guessed at
+#   3  DELETE ORPHANS             [n/total] per object with its outcome, and delete_one now logs each
+#                                 retry, so a pause is visibly a retry rather than a stall
+#   4  BINDINGS WHOSE ROLE IS GONE  named as its own phase, since it runs even when nothing was orphaned
+#
+# AND A BUG IN THAT NEW LOGGING, caught by reading its output instead of trusting it: phase 1 reported 4 live
+# CRs against a cluster with 5, omitting one from each list. Command substitution strips trailing newlines, so
+# `printf '%s' "$NCS"` yields "a\nb\nc" — `wc -l` counts SEPARATORS and returns one fewer, and `while read`
+# exits before the body runs for the final line. The sweep itself was correct throughout, because `grep -qxF`
+# does not care; only the display was wrong. A count that is quietly one short is worse than no count in a log
+# whose whole purpose is to be believed. Fixed with `printf '%s\n'`, and every other count in the script was
+# audited for the same shape.
+#
 # 0.19.6, PATCH: THE ORPHAN SWEEPER NO LONGER REFUSES TO FINISH. orphanSweeper.limit defaulted to 25, so a
 # sweep of 429 objects aborted with "refusing to delete 429 objects" — and in an enterprise the refusal IS
 # the hazard: the policy CR is gone, the grants it created are still live, and the one job that would revoke
@@ -605,7 +629,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.19.6
+version: 0.19.7
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:

@@ -66,6 +66,7 @@ data:
         else
           oc delete "$_k" "$_n" --ignore-not-found >/dev/null 2>&1 && return 0
         fi
+        log "        attempt ${_attempt}/${RETRIES} failed, retrying in ${RETRY_DELAY}s"
         _attempt=$((_attempt+1))
         sleep "$RETRY_DELAY"
       done
@@ -78,8 +79,27 @@ data:
     : "${MANAGED_BY:?}" "${DRY_RUN:?}" "${ORPHAN_LIMIT:?}" "${PAUSE_SECONDS:?}" "${RETRIES:?}" "${RETRY_DELAY:?}"
     case "$ORPHAN_LIMIT" in ''|*[!0-9]*) fail "ORPHAN_LIMIT must be a whole number (0 disables the cap), got '${ORPHAN_LIMIT}' — refusing to run without a working blast-radius guard";; esac
 
-    log "sweeping objects labelled app.kubernetes.io/managed-by=${MANAGED_BY} whose owning CR is gone"
-    [ "$DRY_RUN" = "true" ] && log "DRY RUN: nothing will be deleted"
+    # A HEADER THAT STATES WHAT THIS RUN WILL DO, before it does any of it. Reading a sweeper log after the
+    # fact, the first question is always "what was it configured to do" — a cap that silently refused, or a
+    # dry run that explains why nothing was deleted, are both invisible unless the settings are printed.
+    log "=========================================================================="
+    log "ORPHAN SWEEPER"
+    log "  selects       objects labelled app.kubernetes.io/managed-by=${MANAGED_BY}"
+    log "                AND carrying rbac.ocp.io/config-source=<the CR that should own it>"
+    log "  deletes       only those whose named CR does not exist"
+    log "  leaves        anything with no config-source label — not ours to reason about"
+    if [ "$DRY_RUN" = "true" ]; then
+      log "  mode          DRY RUN — nothing will be deleted"
+    else
+      log "  mode          LIVE — orphans will be deleted"
+    fi
+    if [ "$ORPHAN_LIMIT" -gt 0 ]; then
+      log "  circuit break refuse the run if more than ${ORPHAN_LIMIT} orphans are found (orphanSweeper.limit)"
+    else
+      log "  circuit break none (orphanSweeper.limit=0) — the sweep completes however large it is"
+    fi
+    log "  pacing        ${PAUSE_SECONDS}s between deletes, up to ${RETRIES} attempts each, ${RETRY_DELAY}s apart"
+    log "=========================================================================="
 
     # Which policy CRs currently exist, in ANY state. A CR mid-deletion still counts as existing: its
     # finalizer is running and revoking its own objects, so sweeping underneath it would be racing the
@@ -106,7 +126,23 @@ data:
     GCS="$(oc get groupconfigs.redhatcop.redhat.io -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')" \
       || fail "cannot list groupconfigs, so which CRs are alive is unknown and NOTHING will be swept — the API's error is printed above"
     EXISTING="$(printf '%s\n%s\n' "$NCS" "$GCS" | sed '/^$/d')"
-    log "live policy CRs: $(printf '%s' "$EXISTING" | tr '\n' ' ')"
+    log ""
+    log "--- PHASE 1/4: DISCOVER LIVE POLICY CRs ----------------------------------"
+    log "  These are the owners. Any managed object naming something NOT in this list is an orphan,"
+    log "  so an incomplete list here becomes a mass deletion downstream — which is why a failed"
+    log "  lookup aborts above instead of reading as 'no CRs exist'."
+    # `printf '%s\n'`, NOT `printf '%s'`. Command substitution strips every trailing newline, so $NCS is
+    # "a\nb\nc" with nothing after the last entry — `wc -l` then counts SEPARATORS and reports one fewer,
+    # and `while read` exits before the body runs for the final line. Measured: 5 live CRs displayed as "4"
+    # with one missing from each list, while the sweep itself was correct because grep -qxF does not care.
+    # A count that is quietly one short is worse than no count, in a log whose whole job is to be believed.
+    NC_COUNT="$(printf '%s\n' "$NCS" | sed '/^$/d' | wc -l | tr -d ' ')"
+    GC_COUNT="$(printf '%s\n' "$GCS" | sed '/^$/d' | wc -l | tr -d ' ')"
+    log "  namespaceconfigs.redhatcop.redhat.io : ${NC_COUNT}"
+    printf '%s\n' "$NCS" | sed '/^$/d' | while read -r c; do log "      ${c}"; done
+    log "  groupconfigs.redhatcop.redhat.io     : ${GC_COUNT}"
+    printf '%s\n' "$GCS" | sed '/^$/d' | while read -r c; do log "      ${c}"; done
+    log "  live policy CRs total: $(printf '%s\n' "$EXISTING" | sed '/^$/d' | wc -l | tr -d ' ')"
 
     # The cap below guards against a run whose CR list is legitimately EMPTY or legitimately WRONG for
     # the objects on the cluster — every flag switched off by a bad -f upgrade, or a label-value
@@ -119,6 +155,10 @@ data:
     # as "could not find expected ':'". Lines are split with parameter expansion instead, which also
     # keeps the loop in the current shell so the counters below actually accumulate (a `... | while read`
     # pipeline would run in a subshell and lose them).
+    log ""
+    log "--- PHASE 2/4: SCAN MANAGED OBJECTS -------------------------------------"
+    log "  Every object is put in exactly one bucket: owned (its CR is live), no-provenance (no"
+    log "  config-source label, left alone by design), or ORPHANED (its named CR is gone)."
     KEPT=0; CANDIDATES=""
     # $'\n' rather than a literal two-line string: a closing quote at column 0 would end the YAML block
     # scalar this script lives in, which is the same trap the heredoc hit.
@@ -141,10 +181,12 @@ data:
       RAW="$(oc get "$kind" $scope -l "app.kubernetes.io/managed-by=${MANAGED_BY}" \
                -o jsonpath="{range .items[*]}{.metadata.namespace}|{.metadata.name}|{.metadata.labels.rbac\.ocp\.io/config-source}{'\n'}{end}")" \
         || fail "cannot list ${kind}, so this sweep would report a clean run without having checked — the API's error is printed above"
+      K_SCANNED=0; K_OWNED=0; K_NOPROV=0; K_ORPHAN=0
       OLDIFS="$IFS"; IFS="$NL"
       for line in $RAW; do
         IFS="$OLDIFS"
         [ -z "$line" ] && { IFS="$NL"; continue; }
+        K_SCANNED=$((K_SCANNED+1))
         ns="${line%%|*}"
         rest="${line#*|}"
         name="${rest%%|*}"
@@ -152,14 +194,19 @@ data:
         if [ -z "$name" ]; then IFS="$NL"; continue; fi
         # No config-source label: not ours to reason about, left alone deliberately. The sweeper only
         # ever acts on an object that NAMES the policy which should own it.
-        if [ -z "$owner" ]; then KEPT=$((KEPT+1)); IFS="$NL"; continue; fi
-        if printf '%s\n' "$EXISTING" | grep -qxF "$owner"; then
-          KEPT=$((KEPT+1)); IFS="$NL"; continue
+        if [ -z "$owner" ]; then
+          KEPT=$((KEPT+1)); K_NOPROV=$((K_NOPROV+1)); IFS="$NL"; continue
         fi
+        if printf '%s\n' "$EXISTING" | grep -qxF "$owner"; then
+          KEPT=$((KEPT+1)); K_OWNED=$((K_OWNED+1)); IFS="$NL"; continue
+        fi
+        K_ORPHAN=$((K_ORPHAN+1))
         CANDIDATES="${CANDIDATES}${kind}|${ns}|${name}|${owner}${NL}"
         IFS="$NL"
       done
       IFS="$OLDIFS"
+      # Per kind, so a surprising total can be attributed rather than guessed at.
+      log "  ${kind%%.*}: scanned=${K_SCANNED} owned=${K_OWNED} no-provenance=${K_NOPROV} ORPHANED=${K_ORPHAN}"
     done
 
     COUNT="$(printf '%s' "$CANDIDATES" | sed '/^$/d' | wc -l | tr -d ' ')"
@@ -167,7 +214,9 @@ data:
     # every object has a live owner — a roleName change leaves bindings dangling while their CR is
     # perfectly healthy, so an `exit 0` on "no orphans" would skip exactly the case it needs to catch.
     if [ "$COUNT" -eq 0 ]; then
-      log "no orphans found (${KEPT} objects checked, all owned by a live CR)"
+      log ""
+      log "--- PHASE 3/4: DELETE ORPHANS -------------------------------------------"
+      log "  nothing to delete — all ${KEPT} managed object(s) are owned by a live CR"
     fi
 
     # ORPHAN_LIMIT IS OFF BY DEFAULT (0). It is an opt-in circuit breaker, not a size limit: a real sweep
@@ -185,9 +234,13 @@ data:
     fi
 
     if [ "$COUNT" -gt 0 ]; then
-    log "found ${COUNT} orphaned object(s); their owning CR does not exist:"
+    log ""
+    log "--- PHASE 3/4: DELETE ORPHANS -------------------------------------------"
+    log "  ${COUNT} object(s) name a CR that does not exist. Each one is a live grant with no policy"
+    log "  behind it, which is what this Job exists to revoke."
+    log "  candidates:"
     printf '%s' "$CANDIDATES" | sed '/^$/d' | while IFS='|' read -r kind ns name owner; do
-      log "  ${kind} ${ns:-<cluster>}/${name}  ->  missing CR '${owner}'"
+      log "      ${kind} ${ns:-<cluster>}/${name}  ->  missing CR '${owner}'"
     done
 
     if [ "$DRY_RUN" = "true" ]; then
@@ -203,18 +256,26 @@ data:
     # a burst of hundreds of deletes competes with the operator's own reconcile for the same objects.
     # RETRIES covers the transient half of that — a conflict or a timeout is worth retrying, and only the
     # LAST attempt keeps stderr, so a genuine failure is explained once instead of three times.
-    SWEPT=0; FAILED=0
+    SWEPT=0; FAILED=0; INDEX=0
+    log "  deleting, ${PAUSE_SECONDS}s apart:"
     OLDIFS="$IFS"; IFS="$NL"
     for line in $(printf '%s' "$CANDIDATES" | sed '/^$/d'); do
       IFS="$OLDIFS"
       kind="${line%%|*}"; rest="${line#*|}"
       ns="${rest%%|*}";   rest="${rest#*|}"
       name="${rest%%|*}"
+      INDEX=$((INDEX+1))
+      # PROGRESS PER OBJECT, not one summary at the end. The previous version printed the candidate list,
+      # then went silent for the whole sweep — 74 seconds for 30 objects — and printed one line when it
+      # finished. That is indistinguishable from a hung Job, and it is why a run that WAS deleting was read
+      # as "it only lists them, nothing deletes".
+      log "  [${INDEX}/${COUNT}] ${kind%%.*} ${ns:-<cluster>}/${name}"
       if delete_one "$kind" "$name" "$ns"; then
         SWEPT=$((SWEPT+1))
+        log "        deleted"
       else
         FAILED=$((FAILED+1))
-        log "  FAILED after ${RETRIES} attempts: ${kind} ${ns:-<cluster>}/${name}"
+        log "        FAILED after ${RETRIES} attempts — this grant is STILL LIVE"
       fi
       # Between writes, not around the batch. Hundreds of revocations in a burst compete with the
       # operator's own reconcile for the same objects.
@@ -222,7 +283,7 @@ data:
       IFS="$NL"
     done
     IFS="$OLDIFS"
-    log "swept ${SWEPT} of ${COUNT} orphaned object(s); ${KEPT} left in place under a live CR"
+    log "  deleted ${SWEPT} of ${COUNT}; failed ${FAILED}"
     [ "$FAILED" -gt 0 ] && fail "${FAILED} of ${COUNT} object(s) could not be deleted after ${RETRIES} attempts each; access they grant is still live. The per-object errors are above."
     fi
     fi
@@ -256,6 +317,12 @@ data:
     # STDOUT ONLY, like every capture above: oc warnings arrive on stderr with rc=0, and one captured
     # here would make an absent Role read as present — the sweep would keep the dangling binding and
     # report a clean run, silently un-fixing the roleName self-heal.
+    log ""
+    log "--- PHASE 4/4: BINDINGS WHOSE ROLE IS GONE ------------------------------"
+    log "  Independent of phase 3 and it runs even when nothing was orphaned: roleRef is immutable, so a"
+    log "  renamed roleName leaves the binding pointing at a Role that no longer exists while its CR stays"
+    log "  perfectly healthy. Deleting the binding lets the operator rebuild it with the right roleRef."
+    log "  Scoped to roleRef kind=Role — a missing ClusterRole may be external and legitimately absent."
     DANGLING=0
     # Same no-heredoc rule as the sweep above: a terminator at column 0 would end this YAML block scalar.
     RAWRB="$(oc get rolebinding -A -l "app.kubernetes.io/managed-by=${MANAGED_BY}" \
@@ -288,9 +355,9 @@ data:
     done
     IFS="$OLDIFS"
     if [ "$DANGLING" -gt 0 ]; then
-      log "found ${DANGLING} rolebinding(s) pointing at a missing Role$([ "$DRY_RUN" = "true" ] && echo ' (dry run: left in place)')"
+      log "  found ${DANGLING} rolebinding(s) pointing at a missing Role$([ "$DRY_RUN" = "true" ] && echo ' (dry run: left in place)')"
     else
-      log "no rolebinding points at a missing Role"
+      log "  no rolebinding points at a missing Role"
     fi
 
 {{- end }}
