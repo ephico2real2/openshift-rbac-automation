@@ -35,12 +35,65 @@ data:
 
     log "namespace=${NAMESPACE} subscription=${SUBSCRIPTION} approving-only=${APPROVE_CSV}"
 
-    APPROVAL_MODE="$(oc get subscription "$SUBSCRIPTION" -n "$NAMESPACE" \
-                      -o jsonpath='{.spec.installPlanApproval}' 2>/dev/null || true)"
+    # AN EMPTY READ IS NOT THE SAME AS "Automatic". `-o jsonpath ... 2>/dev/null || true` collapses three
+    # very different states into one empty string:
+    #
+    #   the field is genuinely absent   OLM defaults to Automatic and approves its own plans — nothing to do
+    #   the Subscription is not there   this hook ran before the resource it depends on
+    #   the read failed                 Forbidden, an API timeout, a wrong namespace
+    #
+    # Only the first is "nothing to do". The other two are failures, and reporting them as
+    # "OLM approves its own InstallPlans. Nothing to do." and exiting 0 is a FALSE SUCCESS — the operator
+    # never installs, and the log actively points away from the cause. Observed exactly that: a run logging
+    # "approval mode is '<none>', not Manual" while the Subscription on the cluster plainly said Manual.
+    # Same conflation that let 0.19.1's sweeper read Forbidden as not-found and delete every RoleBinding it
+    # managed, so it is separated here the same way: keep the exit status, and branch on it.
+    if ! APPROVAL_MODE="$(oc get subscription "$SUBSCRIPTION" -n "$NAMESPACE" \
+                            -o jsonpath='{.spec.installPlanApproval}' 2>&1)"; then
+      case "$APPROVAL_MODE" in
+        *NotFound*|*"not found"*)
+          fail "Subscription ${SUBSCRIPTION} does not exist in ${NAMESPACE}.
+      This hook runs at helm.sh/hook-weight 5 and ArgoCD sync-wave 0, both of which are AFTER the
+      Subscription is applied — so if it is missing, either subscription.packageName does not match the
+      Subscription this chart creates, or the release was applied with the Subscription template disabled.
+      Inspect: oc get subscription -n ${NAMESPACE}" ;;
+        *)
+          fail "could not read Subscription ${SUBSCRIPTION} in ${NAMESPACE}: ${APPROVAL_MODE}
+      A Forbidden here means the approver's Role is missing 'get' on subscriptions.
+      Inspect: oc auth can-i get subscriptions -n ${NAMESPACE} \\
+                 --as=system:serviceaccount:${NAMESPACE}:\$(oc get sa -n ${NAMESPACE} -o name | grep approver | cut -d/ -f2)" ;;
+      esac
+    fi
     if [ "$APPROVAL_MODE" != "Manual" ]; then
-      log "Subscription approval mode is '${APPROVAL_MODE:-<none>}', not Manual — OLM approves its own InstallPlans. Nothing to do."
+      log "Subscription approval mode is '${APPROVAL_MODE:-Automatic (field absent)}', not Manual — OLM approves its own InstallPlans. Nothing to do."
       exit 0
     fi
+
+    # Report an unapproved InstallPlan that this hook will NOT approve, and why. Deliberately not silent:
+    # the pin is the approval authority, so a plan for any other version is left for a human — but a
+    # pending upgrade that nothing mentions looks exactly like an approver that failed to notice it.
+    report_unapproved_others() {
+      local found=0 ip owner csvs approved
+      for ip in $(oc get installplan -n "$NAMESPACE" -o name 2>/dev/null || true); do
+        owner="$(oc get "$ip" -n "$NAMESPACE" \
+                  -o jsonpath='{.metadata.ownerReferences[?(@.kind=="Subscription")].name}' 2>/dev/null || true)"
+        case " $owner " in *" $SUBSCRIPTION "*) ;; *) continue ;; esac
+        approved="$(oc get "$ip" -n "$NAMESPACE" -o jsonpath='{.spec.approved}' 2>/dev/null || true)"
+        [ "$approved" = "true" ] && continue
+        csvs="$(oc get "$ip" -n "$NAMESPACE" -o jsonpath='{.spec.clusterServiceVersionNames[*]}' 2>/dev/null || true)"
+        case " $csvs " in
+          *" $APPROVE_CSV "*) ;;
+          *) found=1
+             log "PENDING UPGRADE, deliberately NOT approved: ${ip} installs [${csvs}]."
+             log "  The pin is the approval authority — this hook only ever approves ${APPROVE_CSV}, so a"
+             log "  channel upgrade cannot install itself. To adopt it, bump subscription.startingCSV in"
+             log "  values to the version above and re-run; that is a reviewable change in git rather than"
+             log "  an InstallPlan approved by hand on a cluster." ;;
+        esac
+      done
+      [ "$found" = 0 ] && log "no other unapproved InstallPlans are waiting"
+      return 0
+    }
 
     # Already installed at the pinned version? Then there is nothing to approve, and saying so
     # is better than waiting out the timeout on every re-sync.
@@ -48,6 +101,10 @@ data:
                   -o jsonpath='{.status.installedCSV}' 2>/dev/null || true)"
     if [ "$INSTALLED" = "$APPROVE_CSV" ]; then
       log "already installed at ${APPROVE_CSV}; no InstallPlan to approve"
+      # This early exit is why a pending upgrade used to go unmentioned: it returns before the search loop
+      # below, which is the only place that logged a non-matching plan. In the steady state — installed at
+      # the pin, an upgrade waiting in the channel — that made a deliberate refusal look like an oversight.
+      report_unapproved_others
       exit 0
     fi
 
