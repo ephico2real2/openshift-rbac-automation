@@ -148,9 +148,20 @@ def labels(doc):
     return (doc.get("metadata") or {}).get("labels") or {}
 
 
+def crd_kinds_shipped(chart):
+    """The kinds declared by the CRDs vendored in crds/. Empty set if the chart has no crds/ at all."""
+    kinds = set()
+    for path in sorted(glob.glob(os.path.join(chart, "crds", "*.y*ml"))):
+        for doc in yaml.safe_load_all(open(path).read()):
+            if doc and doc.get("kind") == "CustomResourceDefinition":
+                kinds.add(doc["spec"]["names"]["kind"])
+    return kinds
+
+
 def check(chart, values, verbose=True):
     """Return (errors, saw_sweeper) for one rendered combination."""
     docs = render(chart, values)
+    shipped_crd_kinds = crd_kinds_shipped(chart)
     label = "%s [%s]" % (os.path.basename(chart), ", ".join(os.path.basename(v) for v in values) or "defaults")
     errors = []
 
@@ -225,6 +236,23 @@ def check(chart, values, verbose=True):
         errors.append("%s: no %s resources rendered. If every policy is genuinely disabled this "
                       "combination should not be checked; otherwise the API group above is stale"
                       % (label, POLICY_GROUP))
+
+    # EVERY POLICY KIND THE CHART RENDERS MUST HAVE ITS CRD IN crds/. Helm resolves every kind against
+    # API discovery BEFORE applying anything, so a manifest containing a kind the cluster does not serve
+    # fails at build time and no annotation can help — measured in a sandbox chart: as a post-install hook
+    # at weight 99 it fails "unable to build kubernetes object for deleting hook", as an ordinary resource
+    # it fails "unable to build kubernetes objects from release manifest", and only crds/ works. Derived
+    # from what actually renders, so adding a new redhat-cop policy kind without vendoring its CRD fails
+    # here rather than on somebody's first install.
+    if policies and shipped_crd_kinds:
+        for kind in sorted({k for k, _, _ in policies}):
+            if kind not in shipped_crd_kinds:
+                errors.append("%s: the chart renders %s objects but crds/ ships no CRD for that kind "
+                              "(it ships %s). Helm resolves kinds before applying anything, so a first "
+                              "install onto a cluster without the operator would fail at build time with "
+                              "'no matches for kind \"%s\"'. Regenerate with "
+                              "working-sessions/scripts/refresh-vendored-crds.sh."
+                              % (label, kind, ", ".join(sorted(shipped_crd_kinds)) or "nothing", kind))
 
     # THE ASSERTION THIS SCRIPT EXISTS FOR. Higher wave = deleted earlier.
     if subscription and policies:
@@ -395,7 +423,8 @@ def main():
         return 1
     print("OK: every template document declares a wave; the approver shares the Subscription's wave and "
           "is not a PostSync hook; the readiness wait sits between the Subscription and the policy CRs; "
-          "policy CRs skip the dry run while their CRD is missing and are deleted before the Subscription; "
+          "every policy kind has its CRD vendored in crds/; policy CRs skip the dry run while their CRD "
+          "is missing and are deleted before the Subscription; "
           "the sweep runs after them; every Job's own RBAC arrives no later than the Job; and no two hooks "
           "share a weight.")
     return 0

@@ -328,25 +328,27 @@ podSecurity:
 # converted one at a time, each behind its own flag, so a chart upgrade cannot adopt a policy the
 # operator did not ask for.
 #
-# FIRST INSTALL ON A CLUSTER WITHOUT THE OPERATOR NEEDS TWO STEPS. These flags being on means the
-# manifest contains NamespaceConfig and GroupConfig objects, and Helm resolves every kind against API
-# discovery BEFORE it applies anything — so on a cluster where the operator (and therefore its CRDs)
-# does not exist yet, the install fails outright:
+# A FIRST INSTALL ON A BARE CLUSTER IS ONE COMMAND. No two-step, no pre-applied CRD, no flags to flip
+# and flip back — for `helm install` and for an ArgoCD sync alike. Two mechanisms make that true, and
+# they are not interchangeable:
 #
-#   Error: INSTALLATION FAILED: unable to build kubernetes objects from release manifest:
-#     resource mapping not found for name: "baseline-nonprod-rbac" ... no matches for kind
-#     "NamespaceConfig" in version "redhatcop.redhat.io/v1alpha1" ensure CRDs are installed first
+#   crds/                  These flags being on means the manifest contains NamespaceConfig and
+#                          GroupConfig objects, and Helm resolves every kind against API discovery
+#                          BEFORE it applies anything — so on a cluster with no operator the install
+#                          would fail outright with `no matches for kind "NamespaceConfig" ... ensure
+#                          CRDs are installed first`. No hook weight and no sync-wave can fix that:
+#                          both are read long after the failure. Helm applies crds/ before it renders
+#                          templates, which is early enough, and it is the only mechanism Helm offers.
+#                          See charts/namespace-configuration-operator/crds/ for the measured proof and
+#                          for why OLM, not Helm, still owns those CRDs at runtime.
+#   operatorWait           The CRDs existing is not the operator being able to serve them. The wait Job
+#                          blocks until the CSV is Succeeded, the operator has a ready replica and both
+#                          CRDs report Established. Measured on a bare-cluster install: its first poll
+#                          saw the CSV still `Installing`, so it is doing real work, not decorating.
 #
-# No hook weight or sync-wave can fix that: both annotations are read long after the failure. So install
-# the operator first, then turn the policies on:
-#
-#   helm install nco charts/namespace-configuration-operator -n namespace-configuration-operator \
-#     --set namespaceConfigPolicy.enabled=false --set clusterRbac.enabled=false
-#   helm upgrade nco charts/namespace-configuration-operator -n namespace-configuration-operator \
-#     -f charts/namespace-configuration-operator/<cluster>-values.yaml
-#
-# The second command needs nothing special — by then OLM has installed the CSV and its CRDs exist. An
-# upgrade of an EXISTING release is unaffected either way, which is why this only bites once.
+# Verified end to end on a bare cluster (every NCO CRD, CSV and policy CR deleted first): one
+# `helm install` → revision 1 deployed in 3m21s, 2/2 CRDs, CSV Succeeded, operator ready, 5/5 policy
+# CRs, and the 42 operator-managed RBAC objects rebuilt.
 #
 # ON BY DEFAULT — a deliberate choice, with CI asserting "defaults render what values declares"
 # rather than "defaults render nothing". A plain `helm install` with stock values therefore

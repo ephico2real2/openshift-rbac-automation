@@ -50,14 +50,35 @@ type: application
 # Its RBAC is read-only and split by scope: a Role for the CSV, Subscription and Deployment in the install
 # namespace, and a ClusterRole for the two CRDs, which are cluster-scoped and pinned by resourceNames.
 #
-# FIRST INSTALL ON A CLUSTER WITHOUT THE OPERATOR IS DOCUMENTED, and needs two steps. Since 0.18.0 the
-# policy flags default to ON, so the manifest contains NamespaceConfig and GroupConfig objects — and Helm
-# resolves every kind against API discovery BEFORE applying anything, so on a cluster whose CRDs do not
-# exist yet the install fails with "no matches for kind NamespaceConfig ... ensure CRDs are installed
-# first". No hook weight or sync-wave can fix it: both are read long after the failure. The fix is the
-# ordering, now written down beside the flag — install with the policies off, then upgrade with them on.
-# Shipping the CRDs in crds/ would also work and is deliberately NOT done: they belong to the operator's
-# own bundle, and a chart carrying a second copy of somebody else's CRD is a copy that goes stale.
+# A FIRST INSTALL ON A BARE CLUSTER IS NOW ONE COMMAND, for `helm install` and for an ArgoCD sync alike.
+# Since 0.18.0 the policy flags default to ON, so the manifest contains NamespaceConfig and GroupConfig
+# objects — and Helm resolves every kind against API discovery BEFORE applying anything, so on a cluster
+# whose CRDs do not exist yet the install failed with "no matches for kind NamespaceConfig ... ensure CRDs
+# are installed first". No hook weight and no sync-wave can fix that: both are read long after the failure.
+#
+# An earlier draft of 0.19.3 answered this with a documented two-step install — policies off, then upgrade
+# with them on. That is not hands-free, so it is gone. The two CRDs are now vendored in crds/, which Helm
+# applies before it renders templates. Measured in an isolated sandbox chart: as a post-install hook at
+# weight 99 the CR fails "unable to build kubernetes object for deleting hook"; as an ordinary resource it
+# fails "unable to build kubernetes objects from release manifest"; in crds/ one `helm install` works. It is
+# the only mechanism Helm offers, and it is why the sibling group-sync chart carries one.
+#
+# The staleness objection to vendoring is real but self-correcting, and was measured rather than assumed: on
+# a cluster that already has the CRD, Helm SKIPS it — an `olm.managed=true` label survived a `helm upgrade`
+# untouched — and on a bare cluster Helm creates the copy first, then OLM reconciles the CRD to the bundle's
+# own version moments later. After the bare-cluster install both CRDs carried `olm.managed=true` and NO
+# `meta.helm.sh/release-name`, so OLM owns them and Helm never claimed them. `helm uninstall` also never
+# deletes anything in crds/, so removing the release cannot cascade-delete a policy CR or the RBAC its
+# finalizer is responsible for. refresh-vendored-crds.sh regenerates them from the pinned CSV, and
+# check-ordering.py asserts every policy kind the chart renders has its CRD vendored.
+#
+# Under ArgoCD set `skipCrds: true` on the Application: Argo renders with `helm template --include-crds`, so
+# it would otherwise manage and possibly prune a CRD that OLM owns. Argo does not need the file — the
+# readiness wait (wave 2) plus SkipDryRunOnMissingResource on the policy CRs (wave 3) cover the ordering.
+#
+# Verified end to end on a bare cluster, every NCO CRD, CSV and policy CR deleted first: one `helm install`
+# → revision 1 deployed in 3m21s, 2/2 CRDs, CSV Succeeded, operator ready, 5/5 policy CRs, 42 managed RBAC
+# objects rebuilt. The wait Job's first poll saw the CSV still `Installing`, so it is load-bearing.
 #
 # THE INSTALL-NAMESPACE TEMPLATE IS AN ORDINARY RESOURCE, not a pre-install hook.
 #
