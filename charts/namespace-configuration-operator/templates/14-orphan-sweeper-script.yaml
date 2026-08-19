@@ -37,11 +37,45 @@ data:
     log()  { printf '%s  %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
     fail() { log "ERROR: $*"; exit 1; }
 
+    # DELETE ONE OBJECT, WITH RETRIES AND A PAUSE. Shared by both sweeps below so the pacing cannot drift
+    # between them — the first revokes grants whose policy is gone, the second revokes bindings whose Role
+    # is gone, and both are writes against the same apiserver the operator is reconciling.
+    #
+    # Only the LAST attempt keeps stderr. An earlier failure is usually a conflict with the operator's own
+    # reconcile of the same object and is expected to succeed on retry; printing it three times would make a
+    # healthy run look broken, while discarding the last one would hide a real failure.
+    #
+    # Returns non-zero when every attempt failed, so the CALLER counts it. There is no global counter in
+    # here on purpose: this used to be inlined in a `printf | while read` pipeline, which runs in a SUBSHELL
+    # where an incremented counter is discarded — every delete could fail and the run would still report
+    # success.
+    delete_one() {   # $1 kind (fully qualified)  $2 name  $3 namespace, empty for cluster-scoped
+      _k="$1"; _n="$2"; _ns="${3:-}"
+      _attempt=1
+      while :; do
+        if [ "$_attempt" -ge "$RETRIES" ]; then
+          if [ -n "$_ns" ]; then
+            oc delete "$_k" "$_n" -n "$_ns" --ignore-not-found 2>&1 | sed 's/^/    /' && return 0
+          else
+            oc delete "$_k" "$_n" --ignore-not-found 2>&1 | sed 's/^/    /' && return 0
+          fi
+          return 1
+        fi
+        if [ -n "$_ns" ]; then
+          oc delete "$_k" "$_n" -n "$_ns" --ignore-not-found >/dev/null 2>&1 && return 0
+        else
+          oc delete "$_k" "$_n" --ignore-not-found >/dev/null 2>&1 && return 0
+        fi
+        _attempt=$((_attempt+1))
+        sleep "$RETRY_DELAY"
+      done
+    }
+
     # ORPHAN_LIMIT is required alongside the other two: an UNSET limit used to default to 0, which means
     # "no cap" — so running this script outside the Job (a runbook, a debug pod) silently discarded the
     # blast-radius guard values.yaml promises. Required-and-numeric makes 0 an explicit choice, never an
     # accident of a missing env var or a typo'd value.
-    : "${MANAGED_BY:?}" "${DRY_RUN:?}" "${ORPHAN_LIMIT:?}"
+    : "${MANAGED_BY:?}" "${DRY_RUN:?}" "${ORPHAN_LIMIT:?}" "${PAUSE_SECONDS:?}" "${RETRIES:?}" "${RETRY_DELAY:?}"
     case "$ORPHAN_LIMIT" in ''|*[!0-9]*) fail "ORPHAN_LIMIT must be a whole number (0 disables the cap), got '${ORPHAN_LIMIT}' — refusing to run without a working blast-radius guard";; esac
 
     log "sweeping objects labelled app.kubernetes.io/managed-by=${MANAGED_BY} whose owning CR is gone"
@@ -89,9 +123,14 @@ data:
     # $'\n' rather than a literal two-line string: a closing quote at column 0 would end the YAML block
     # scalar this script lives in, which is the same trap the heredoc hit.
     NL=$'\n'
-    for kind in rolebinding clusterrolebinding role; do
+    # FULLY QUALIFIED, like every other resource in this chart. These are held in a variable, so the CI
+    # guard that checks literal `oc` arguments cannot see them — which is exactly why they are worth
+    # spelling out by hand: rbac.authorization.k8s.io is not a reserved plural either.
+    for kind in rolebindings.rbac.authorization.k8s.io \
+                clusterrolebindings.rbac.authorization.k8s.io \
+                roles.rbac.authorization.k8s.io; do
       # -A is invalid for a cluster-scoped kind, so the flag is chosen per kind.
-      scope="-A"; [ "$kind" = "clusterrolebinding" ] && scope=""
+      scope="-A"; [ "${kind%%.*}" = "clusterrolebindings" ] && scope=""
       # READS THE config-source LABEL, not the old source-{namespace,group}config annotations. As of
       # 0.16.0 there is ONE provenance key and it is a label, so this is a single field lookup instead of
       # two concatenated annotations — and it is the same key a human would select on, so the sweeper and
@@ -131,10 +170,18 @@ data:
       log "no orphans found (${KEPT} objects checked, all owned by a live CR)"
     fi
 
+    # ORPHAN_LIMIT IS OFF BY DEFAULT (0). It is an opt-in circuit breaker, not a size limit: a real sweep
+    # is however big it is, and the work below paces itself rather than refusing. Anyone who wants the
+    # circuit breaker back sets orphanSweeper.limit; anyone who does not is not asked to keep raising a
+    # number as their cluster grows. The reason a cap existed at all is worth keeping in view — at 0.16.0 a
+    # label-value migration left 36 objects whose config-source named no CR, and the cap turned a mass
+    # revocation into a failed sync. That failure mode has not gone away, so the count and the live CR list
+    # are always logged before anything is deleted: a run that reports "429 orphaned" against five live
+    # policies is telling you the list is wrong, whether or not a cap stops it.
     if [ "$COUNT" -gt 0 ] && [ "$ORPHAN_LIMIT" -gt 0 ] && [ "$COUNT" -gt "$ORPHAN_LIMIT" ]; then
       log "found ${COUNT} orphan candidates:"
       printf '%s' "$CANDIDATES" | sed '/^$/d' | sed 's/^/    /'
-      fail "refusing to delete ${COUNT} objects, which exceeds orphanSweeper.limit=${ORPHAN_LIMIT}. That many at once usually means the policy-CR list is wrong for what is on the cluster — every policy switched off by a bad upgrade, or a label-value migration — rather than the objects genuinely being orphaned, and deleting them would revoke everything this chart grants. Check 'oc get namespaceconfigs.redhatcop.redhat.io,groupconfigs.redhatcop.redhat.io' returns your policies, then re-run or raise the limit."
+      fail "refusing to delete ${COUNT} objects, which exceeds the circuit breaker orphanSweeper.limit=${ORPHAN_LIMIT} (0 disables it, and 0 is the default). Confirm 'oc get namespaceconfigs.redhatcop.redhat.io,groupconfigs.redhatcop.redhat.io' lists the policies you expect — if it does not, the objects are not orphaned and the list is wrong."
     fi
 
     if [ "$COUNT" -gt 0 ]; then
@@ -147,14 +194,36 @@ data:
       log "DRY RUN: leaving all ${COUNT} in place"
     else
 
-    printf '%s' "$CANDIDATES" | sed '/^$/d' | while IFS='|' read -r kind ns name owner; do
-      if [ -n "$ns" ]; then
-        oc delete "$kind" "$name" -n "$ns" --ignore-not-found 2>&1 | sed 's/^/    /'
+    # DELETES ONE AT A TIME, WITH A PAUSE AND RETRIES, and NOT in a pipeline. The previous version was
+    # `printf ... | while read`, which runs the loop in a SUBSHELL: a failure counter incremented there is
+    # lost when the pipeline ends, so every delete could fail and the run would still report success. Same
+    # trap the candidate loop above documents. Split with parameter expansion instead so the counter is real.
+    #
+    # PAUSE_SECONDS between writes rather than a batch: the apiserver is being asked to revoke access, and
+    # a burst of hundreds of deletes competes with the operator's own reconcile for the same objects.
+    # RETRIES covers the transient half of that — a conflict or a timeout is worth retrying, and only the
+    # LAST attempt keeps stderr, so a genuine failure is explained once instead of three times.
+    SWEPT=0; FAILED=0
+    OLDIFS="$IFS"; IFS="$NL"
+    for line in $(printf '%s' "$CANDIDATES" | sed '/^$/d'); do
+      IFS="$OLDIFS"
+      kind="${line%%|*}"; rest="${line#*|}"
+      ns="${rest%%|*}";   rest="${rest#*|}"
+      name="${rest%%|*}"
+      if delete_one "$kind" "$name" "$ns"; then
+        SWEPT=$((SWEPT+1))
       else
-        oc delete "$kind" "$name" --ignore-not-found 2>&1 | sed 's/^/    /'
+        FAILED=$((FAILED+1))
+        log "  FAILED after ${RETRIES} attempts: ${kind} ${ns:-<cluster>}/${name}"
       fi
+      # Between writes, not around the batch. Hundreds of revocations in a burst compete with the
+      # operator's own reconcile for the same objects.
+      sleep "$PAUSE_SECONDS"
+      IFS="$NL"
     done
-    log "swept ${COUNT} orphaned object(s); ${KEPT} left in place under a live CR"
+    IFS="$OLDIFS"
+    log "swept ${SWEPT} of ${COUNT} orphaned object(s); ${KEPT} left in place under a live CR"
+    [ "$FAILED" -gt 0 ] && fail "${FAILED} of ${COUNT} object(s) could not be deleted after ${RETRIES} attempts each; access they grant is still live. The per-object errors are above."
     fi
     fi
     # --- SECOND SWEEP: RoleBindings whose Role no longer exists -----------------------------
@@ -204,7 +273,9 @@ data:
                 log "  rolebinding ${dns}/${dname} -> Role/${drole} does not exist; would delete so the operator rebuilds it"
               else
                 log "  rolebinding ${dns}/${dname} -> Role/${drole} does not exist; deleting so the operator rebuilds it"
-                oc delete rolebinding "$dname" -n "$dns" --ignore-not-found 2>&1 | sed 's/^/    /'
+                delete_one rolebindings.rbac.authorization.k8s.io "$dname" "$dns" \
+                  || fail "could not delete dangling rolebinding ${dns}/${dname} after ${RETRIES} attempts; it still grants a role that does not exist. The error is above."
+                sleep "$PAUSE_SECONDS"
               fi
               DANGLING=$((DANGLING+1))
             fi

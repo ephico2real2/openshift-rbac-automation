@@ -31,6 +31,34 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.19.6, PATCH: THE ORPHAN SWEEPER NO LONGER REFUSES TO FINISH. orphanSweeper.limit defaulted to 25, so a
+# sweep of 429 objects aborted with "refusing to delete 429 objects" — and in an enterprise the refusal IS
+# the hazard: the policy CR is gone, the grants it created are still live, and the one job that would revoke
+# them declines. limit now defaults to 0 (no cap) and is an opt-in circuit breaker rather than a size limit.
+#
+# THE BLAST RADIUS WAS NEVER THE COUNT — it is the LABEL CONTRACT. The sweep only ever considers an object
+# carrying BOTH app.kubernetes.io/managed-by=<this chart> AND rbac.ocp.io/config-source=<the CR that should
+# own it>, and an object with no config-source is counted as kept and left alone. That is what makes an
+# uncapped run safe, and it is why one provenance KEY as a LABEL (0.16.0) replaced two concatenated
+# annotations: the sweeper and a human runbook select on the same field and cannot disagree about ownership.
+#
+# Deletes are now PACED AND RETRIED instead of refused — pauseSeconds between each write (a burst of
+# revocations competes with the operator's own reconcile of the same objects), retries for the transient half
+# of that, and only the last attempt keeps stderr so a genuine failure is explained once. A delete that never
+# succeeds FAILS the run: reporting a clean sweep while a grant is still live is the one outcome worse than
+# failing. activeDeadlineSeconds goes 300 -> 1800, because 300 capped an uncapped sweep at five minutes.
+#
+# One shared delete_one() serves both sweeps so their pacing cannot drift, and it fixed a real bug on the way
+# in: the delete loop was `printf ... | while read`, which runs in a SUBSHELL, so a failure counter
+# incremented there was discarded — every delete could have failed and the run would still have reported
+# success. The kind loop is fully qualified too (rolebindings.rbac.authorization.k8s.io); those live in a
+# variable, so the CI guard cannot see them, which is precisely why they were spelled out by hand.
+#
+# Verified on a live cluster with 30 fixture orphans, above the old cap of 25:
+#   swept 18 of 18 orphaned object(s); 42 left in place under a live CR   (exit 0, no refusal)
+# and the 42 real managed objects came out UID-identical to the pre-test snapshot. Compared as UIDs, not
+# counts, because a delete-and-recreate leaves counts identical.
+#
 # 0.19.5, PATCH: EVERY `oc` CALL NOW NAMES ITS RESOURCE IN FULL. 0.19.4 stopped the approver swallowing a
 # failed read, and the very next run showed what that read had been hiding:
 #
@@ -577,7 +605,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.19.5
+version: 0.19.6
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:
