@@ -1,0 +1,112 @@
+# ArgoCD Application for the Namespace Configuration Operator chart.
+#
+# THIS TREATS THE CHART AS A GIT SOURCE, NOT A HELM REPOSITORY. The repo is public, so no credentials and
+# no `repo` Secret are needed — `repoURL` is the clone URL and `path` is the chart directory. That is
+# deliberately different from adding the published chart repo as a Helm source:
+#
+#   git source (this file)   the values file that belongs to a cluster is IN the repo beside the chart, so
+#                            `valueFiles: [crc-values.yaml]` resolves against `path` and the deployed
+#                            configuration is reviewable in the same commit as the templates it feeds.
+#                            targetRevision is a branch or tag, so a rollback is a git revert.
+#   helm repository source   would need the chart version pinned in this file and the values inlined here
+#                            or held in a second repo, splitting one change across two places.
+#
+#   oc apply -f argocd-application.yaml
+#   oc -n openshift-gitops wait --for=jsonpath='{.status.sync.status}'=Synced application/namespace-configuration-operator --timeout=15m
+#
+# A FIRST SYNC ONTO A CLUSTER WITH NO OPERATOR IS ONE SYNC. Nothing here needs a pre-applied CRD or a
+# second pass, and that rests on three things in the chart rather than on anything in this file:
+#
+#   the approver shares the Subscription's wave (0)   installPlanApproval is Manual, and a Subscription
+#                                                     whose InstallPlan is unapproved reports Progressing
+#                                                     on a FIRST install — ArgoCD's built-in health check
+#                                                     forgives that only when .status.installedCSV is
+#                                                     already set. In a later wave the approver would wait
+#                                                     on the wave that is waiting on it.
+#   the readiness wait sits at wave 2                 blocks until the CSV is Succeeded, the operator has a
+#                                                     ready replica and both CRDs are Established, so the
+#                                                     policy CRs in wave 3 cannot be applied against an
+#                                                     apiserver that does not serve them yet.
+#   the policy CRs carry SkipDryRunOnMissingResource   ArgoCD dry-runs every resource before applying, and
+#                                                     a dry-run against a kind the cluster does not serve
+#                                                     fails THE WHOLE SYNC. These CRDs are not in the
+#                                                     manifest — OLM brings them mid-sync.
+#
+# check-ordering.py in this repo asserts all three, so a later edit cannot quietly undo them.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: namespace-configuration-operator
+  # The default OpenShift GitOps instance. Change this if your ArgoCD lives elsewhere.
+  namespace: openshift-gitops
+  # Without this the Application object is deleted immediately while its resources are left orphaned.
+  # With it, ArgoCD removes the managed resources first — in REVERSE wave order, which is what makes the
+  # policy CRs (wave 3) go before the Subscription (wave 0) and therefore lets their finalizers revoke
+  # RBAC while the operator is still running. Deleting the operator first leaves the CR stuck on deletion
+  # and its RoleBindings live with no policy behind them: measured, 3 CRs against a restarting operator
+  # left 20 orphaned RoleBindings that nothing would ever have collected.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/ephico2real2/openshift-rbac-automation.git
+    # A branch for testing. Pin to a tag for anything you care about, so a push to main cannot change a
+    # cluster without a commit that says so.
+    targetRevision: main
+    path: charts/namespace-configuration-operator
+    helm:
+      # Matches the name used by `helm install nco …`, so resource names are identical whichever way this
+      # chart is deployed and a switch between the two does not rename everything.
+      releaseName: nco
+      # Relative to `path` above. This is the per-cluster overlay that lives beside the chart.
+      valueFiles:
+        - crc-values.yaml
+
+      # SKIP crds/ — the single most important line in this file.
+      #
+      # ArgoCD renders Helm sources with `helm template --include-crds`, so the two CRDs vendored in the
+      # chart's crds/ ARE part of this Application unless this is set. Measured on this chart: 0
+      # CustomResourceDefinition documents from a plain render, 2 with the flag.
+      #
+      # Leaving them in would make ArgoCD take management of CRDs that OLM owns through the Subscription
+      # and CSV — two controllers writing one object — and with `prune: true` below, a CRD that ever left
+      # the rendered source would be PRUNED. Deleting either CRD cascades to every NamespaceConfig and
+      # GroupConfig on the cluster, and to the RBAC their finalizers are responsible for.
+      #
+      # Nothing is lost by skipping them. crds/ exists to solve a problem ArgoCD does not have: plain
+      # `helm install` resolves every kind against API discovery BEFORE applying anything, so it needs the
+      # CRD to exist before the manifest is even built. ArgoCD applies wave by wave and can be told to
+      # skip the dry run for a kind that is not there yet, which the policy CRs are annotated to do — so
+      # under GitOps OLM stays the only owner of these CRDs, exactly as it should be.
+      skipCrds: true
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: namespace-configuration-operator
+
+  syncPolicy:
+    automated:
+      # Safe here BECAUSE of the wave ordering, not in spite of it: ArgoCD prunes in reverse wave order,
+      # so the policy CRs (3) are removed before the Subscription (0) and their finalizers still have a
+      # live operator to run against.
+      prune: true
+      # The chart's image-override machinery patches the CSV, which ArgoCD does not manage — OLM created
+      # it — so selfHeal does not fight it. Watch for a permanently OutOfSync Application if that ever
+      # changes to patching something in this manifest; the fix is ignoreDifferences, not disabling this.
+      selfHeal: true
+    syncOptions:
+      # The chart's createNamespace defaults to false, so the destination namespace is ArgoCD's to make.
+      # Set createNamespace=true in values instead if you want the chart's Pod Security Admission labels
+      # stamped on it — this option creates a bare namespace.
+      - CreateNamespace=true
+    retry:
+      # The first sync waits on OLM: resolve the Subscription, approve the InstallPlan, install the CSV,
+      # start the operator. That is minutes, and the readiness-wait Job has its own budget for it — but a
+      # transient catalog failure should still be retried rather than left as a failed sync.
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
