@@ -59,7 +59,7 @@ data:
     #   not referenced by a subscription
     #
     # THIS MUST SELF-HEAL, not just report. ArgoCD manages this chart declaratively: there is no human
-    # in the sync loop to run `oc delete csv`, so a Subscription stuck on ResolutionFailed would fail
+    # in the sync loop to run `oc delete clusterserviceversions.operators.coreos.com`, so a Subscription stuck on ResolutionFailed would fail
     # every sync forever. So the orphan is reclaimed here and OLM re-resolves on its own.
     #
     # SIX CONDITIONS, ALL REQUIRED, because this deletes something the chart does not own:
@@ -81,11 +81,11 @@ data:
       RESOLUTION=""
       rdeadline=$(( $(date +%s) + ${RECLAIM_WAIT_SECONDS:-90} ))
       while [ "$(date +%s)" -lt "$rdeadline" ]; do
-        if [ -n "$(oc get subscription "$SUBSCRIPTION" -n "$NAMESPACE" \
+        if [ -n "$(oc get subscriptions.operators.coreos.com "$SUBSCRIPTION" -n "$NAMESPACE" \
                      -o jsonpath='{.status.installedCSV}' 2>/dev/null || true)" ]; then
           RESOLUTION="resolved"; break
         fi
-        RESOLUTION="$(oc get subscription "$SUBSCRIPTION" -n "$NAMESPACE" \
+        RESOLUTION="$(oc get subscriptions.operators.coreos.com "$SUBSCRIPTION" -n "$NAMESPACE" \
                         -o jsonpath='{.status.conditions[?(@.type=="ResolutionFailed")].status}' 2>/dev/null || true)"
         [ "$RESOLUTION" = "True" ] && break
         log "waiting for OLM to resolve Subscription/${SUBSCRIPTION} (or report why it cannot)..."
@@ -96,20 +96,20 @@ data:
         RECLAIMED=""
         # CSVs are named <package>.vX.Y.Z and SUBSCRIPTION is already the package name, so this is
         # scoped to our operator without another env var.
-        for c in $(oc get csv -n "$NAMESPACE" -o name 2>/dev/null | grep "$SUBSCRIPTION" || true); do
+        for c in $(oc get clusterserviceversions.operators.coreos.com -n "$NAMESPACE" -o name 2>/dev/null | grep "$SUBSCRIPTION" || true); do
           name="${c##*/}"
           copied="$(oc get "$c" -n "$NAMESPACE" -o jsonpath='{.metadata.labels.olm\.copiedFrom}' 2>/dev/null || true)"
           [ -n "$copied" ] && { log "  ${name}: OLM copy of ${copied}, leaving alone"; continue; }
           owners="$(oc get "$c" -n "$NAMESPACE" -o jsonpath='{.metadata.ownerReferences}' 2>/dev/null || true)"
           [ -n "$owners" ] && { log "  ${name}: has ownerReferences, OLM-managed, leaving alone"; continue; }
           referenced=""
-          for s in $(oc get subscription -n "$NAMESPACE" -o name 2>/dev/null || true); do
+          for s in $(oc get subscriptions.operators.coreos.com -n "$NAMESPACE" -o name 2>/dev/null || true); do
             installed="$(oc get "$s" -n "$NAMESPACE" -o jsonpath='{.status.installedCSV}' 2>/dev/null || true)"
             [ "$installed" = "$name" ] && referenced="yes"
           done
           [ -n "$referenced" ] && { log "  ${name}: referenced by a Subscription, leaving alone"; continue; }
           log "  ${name}: ORPHANED (no owner, unreferenced, not a copy) — deleting so OLM can resolve"
-          oc delete csv "$name" -n "$NAMESPACE" --wait=true 2>&1 | sed 's/^/    /' || \
+          oc delete clusterserviceversions.operators.coreos.com "$name" -n "$NAMESPACE" --wait=true 2>&1 | sed 's/^/    /' || \
             fail "could not delete orphaned CSV ${name}; the ServiceAccount needs delete on clusterserviceversions"
           RECLAIMED="${RECLAIMED} ${name}"
         done
@@ -118,7 +118,7 @@ data:
         else
           # Resolution is failing for some OTHER reason. Say so plainly rather than letting the wait
           # loop below time out and blame InstallPlan approval, which would be the wrong answer.
-          MSG="$(oc get subscription "$SUBSCRIPTION" -n "$NAMESPACE" \
+          MSG="$(oc get subscriptions.operators.coreos.com "$SUBSCRIPTION" -n "$NAMESPACE" \
                    -o jsonpath='{.status.conditions[?(@.type=="ResolutionFailed")].message}' 2>/dev/null || true)"
           fail "Subscription/${SUBSCRIPTION} cannot resolve and no orphaned CSV explains it. OLM says: ${MSG}"
         fi
@@ -139,7 +139,7 @@ data:
         log "waiting for OLM to reinstall the operator after the reclaim"
         odeadline=$(( $(date +%s) + ${RECLAIM_WAIT_SECONDS:-90} ))
         while [ "$(date +%s)" -lt "$odeadline" ]; do
-          NEWCSV="$(oc get subscription "$SUBSCRIPTION" -n "$NAMESPACE" \
+          NEWCSV="$(oc get subscriptions.operators.coreos.com "$SUBSCRIPTION" -n "$NAMESPACE" \
                       -o jsonpath='{.status.installedCSV}' 2>/dev/null || true)"
           if [ -n "$NEWCSV" ]; then
             log "operator CSV reinstalled: ${NEWCSV}"
@@ -159,9 +159,9 @@ data:
     CSV=""
     deadline=$(( $(date +%s) + WAIT_SECONDS ))
     while [ "$(date +%s)" -lt "$deadline" ]; do
-      CSV="$(oc get subscription "$SUBSCRIPTION" -n "$NAMESPACE" \
+      CSV="$(oc get subscriptions.operators.coreos.com "$SUBSCRIPTION" -n "$NAMESPACE" \
               -o jsonpath='{.status.installedCSV}' 2>/dev/null || true)"
-      if [ -n "$CSV" ] && oc get csv "$CSV" -n "$NAMESPACE" >/dev/null 2>&1; then
+      if [ -n "$CSV" ] && oc get clusterserviceversions.operators.coreos.com "$CSV" -n "$NAMESPACE" >/dev/null 2>&1; then
         break
       fi
       CSV=""
@@ -172,7 +172,7 @@ data:
     log "target CSV: ${CSV}"
 
     # Never patch an OLM replica — those are re-synced from the source and the change is lost.
-    COPIED="$(oc get csv "$CSV" -n "$NAMESPACE" \
+    COPIED="$(oc get clusterserviceversions.operators.coreos.com "$CSV" -n "$NAMESPACE" \
                -o jsonpath='{.metadata.labels.olm\.copiedFrom}' 2>/dev/null || true)"
     [ -z "$COPIED" ] || fail "CSV ${CSV} in ${NAMESPACE} is an OLM copy (olm.copiedFrom=${COPIED}); the source CSV lives in ${COPIED}."
 
@@ -183,7 +183,7 @@ data:
     # the guard and rollback logic below can act on it.
     deadline=$(( $(date +%s) + WAIT_SECONDS ))
     while [ "$(date +%s)" -lt "$deadline" ]; do
-      PHASE="$(oc get csv "$CSV" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+      PHASE="$(oc get clusterserviceversions.operators.coreos.com "$CSV" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
       [ "$PHASE" = "Succeeded" ] && break
       log "waiting for CSV ${CSV} to settle (phase=${PHASE:-<none>})"
       sleep 5
@@ -193,13 +193,13 @@ data:
     # --- 2. Locate the deployment and container by NAME ----------------------------------
     # Indices are discovered, never hardcoded: in this CSV the manager is containers[1]
     # (kube-rbac-proxy is [0]), and that ordering is a property of the bundle, not a contract.
-    DEPLOY_NAMES="$(oc get csv "$CSV" -n "$NAMESPACE" \
+    DEPLOY_NAMES="$(oc get clusterserviceversions.operators.coreos.com "$CSV" -n "$NAMESPACE" \
                      -o jsonpath='{.spec.install.spec.deployments[*].name}' | tr ' ' '\n')"
     D_IDX="$(printf '%s\n' "$DEPLOY_NAMES" | grep -nxF "$CSV_DEPLOYMENT" | cut -d: -f1 || true)"
     [ -n "$D_IDX" ] || fail "CSV ${CSV} has no install-strategy deployment named '${CSV_DEPLOYMENT}'. Found: $(printf '%s' "$DEPLOY_NAMES" | tr '\n' ' ')"
     D_IDX=$((D_IDX - 1))
 
-    CONTAINER_NAMES="$(oc get csv "$CSV" -n "$NAMESPACE" \
+    CONTAINER_NAMES="$(oc get clusterserviceversions.operators.coreos.com "$CSV" -n "$NAMESPACE" \
                         -o jsonpath="{.spec.install.spec.deployments[${D_IDX}].spec.template.spec.containers[*].name}" | tr ' ' '\n')"
     C_IDX="$(printf '%s\n' "$CONTAINER_NAMES" | grep -nxF "$CONTAINER" | cut -d: -f1 || true)"
     [ -n "$C_IDX" ] || fail "Deployment '${CSV_DEPLOYMENT}' in CSV ${CSV} has no container named '${CONTAINER}'. Found: $(printf '%s' "$CONTAINER_NAMES" | tr '\n' ' ')"
@@ -207,7 +207,7 @@ data:
     log "resolved deployments[${D_IDX}].containers[${C_IDX}] (${CSV_DEPLOYMENT}/${CONTAINER})"
 
     BASE="/spec/install/spec/deployments/${D_IDX}/spec/template/spec"
-    CURRENT="$(oc get csv "$CSV" -n "$NAMESPACE" \
+    CURRENT="$(oc get clusterserviceversions.operators.coreos.com "$CSV" -n "$NAMESPACE" \
                 -o jsonpath="{.spec.install.spec.deployments[${D_IDX}].spec.template.spec.containers[${C_IDX}].image}")"
     log "current CSV image: ${CURRENT}"
 
@@ -238,7 +238,7 @@ data:
         OPS="${OPS},$(printf '{"op":"add","path":"%s/imagePullSecrets","value":[{"name":"%s"}]}' "$BASE" "$PULL_SECRET")"
       fi
       log "patching CSV ${CSV}"
-      oc patch csv "$CSV" -n "$NAMESPACE" --type=json -p "[${OPS}]"
+      oc patch clusterserviceversions.operators.coreos.com "$CSV" -n "$NAMESPACE" --type=json -p "[${OPS}]"
     fi
 
     # --- 4. Verify OLM propagated it to the live Deployment ------------------------------
@@ -275,7 +275,7 @@ data:
     fi
 
     log "ROLLBACK: rollout of ${TARGET_IMAGE} did not become ready; restoring ${CURRENT}"
-    oc patch csv "$CSV" -n "$NAMESPACE" --type=json \
+    oc patch clusterserviceversions.operators.coreos.com "$CSV" -n "$NAMESPACE" --type=json \
       -p "[$(printf '{"op":"add","path":"%s/containers/%s/image","value":"%s"}' "$BASE" "$C_IDX" "$CURRENT")]" \
       || log "WARNING: CSV rollback patch failed; the CSV may still reference ${TARGET_IMAGE}"
     oc set image "deploy/${CSV_DEPLOYMENT}" -n "$NAMESPACE" "${CONTAINER}=${CURRENT}" \

@@ -60,9 +60,16 @@ data:
     # rc=0, and a warning merged into a parsed result becomes a phantom data row — or, on the named-role
     # probe below, makes an ABSENT Role read as PRESENT. Anything oc says that is not data belongs in
     # the pod log, not in a variable.
-    NCS="$(oc get namespaceconfig -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')" \
+    # NAMED IN FULL, and this is the call where it matters most. These two lists decide which
+    # managed RoleBindings still have a policy behind them — everything NOT listed here is
+    # treated as an orphan and deleted. A short name can bind to another API group (measured
+    # elsewhere in this chart: `oc get subscription` resolved to messaging.knative.dev and
+    # returned Forbidden), and a misrouted list returns NOTHING rather than failing. That would
+    # make every managed object look orphaned — which is exactly the 0.19.1 bug that deleted all
+    # 42 of them, reachable again through a name collision instead of a missing verb.
+    NCS="$(oc get namespaceconfigs.redhatcop.redhat.io -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')" \
       || fail "cannot list namespaceconfigs, so which CRs are alive is unknown and NOTHING will be swept — the API's error is printed above"
-    GCS="$(oc get groupconfig -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')" \
+    GCS="$(oc get groupconfigs.redhatcop.redhat.io -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')" \
       || fail "cannot list groupconfigs, so which CRs are alive is unknown and NOTHING will be swept — the API's error is printed above"
     EXISTING="$(printf '%s\n%s\n' "$NCS" "$GCS" | sed '/^$/d')"
     log "live policy CRs: $(printf '%s' "$EXISTING" | tr '\n' ' ')"
@@ -127,7 +134,7 @@ data:
     if [ "$COUNT" -gt 0 ] && [ "$ORPHAN_LIMIT" -gt 0 ] && [ "$COUNT" -gt "$ORPHAN_LIMIT" ]; then
       log "found ${COUNT} orphan candidates:"
       printf '%s' "$CANDIDATES" | sed '/^$/d' | sed 's/^/    /'
-      fail "refusing to delete ${COUNT} objects, which exceeds orphanSweeper.limit=${ORPHAN_LIMIT}. That many at once usually means the policy-CR list is wrong for what is on the cluster — every policy switched off by a bad upgrade, or a label-value migration — rather than the objects genuinely being orphaned, and deleting them would revoke everything this chart grants. Check 'oc get namespaceconfig,groupconfig' returns your policies, then re-run or raise the limit."
+      fail "refusing to delete ${COUNT} objects, which exceeds orphanSweeper.limit=${ORPHAN_LIMIT}. That many at once usually means the policy-CR list is wrong for what is on the cluster — every policy switched off by a bad upgrade, or a label-value migration — rather than the objects genuinely being orphaned, and deleting them would revoke everything this chart grants. Check 'oc get namespaceconfigs.redhatcop.redhat.io,groupconfigs.redhatcop.redhat.io' returns your policies, then re-run or raise the limit."
     fi
 
     if [ "$COUNT" -gt 0 ]; then
