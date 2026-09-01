@@ -129,7 +129,49 @@ jobs:
             || { echo "::error::no hasSuffix guard survived Helm — a group-suffix conditional was evaluated at render time"; exit 1; }
           echo "$out" | grep -q 'index .Labels' \
             || { echo "::error::no 'index .Labels' expression survived Helm — a namespace-label lookup was evaluated at render time"; exit 1; }
-          echo "operator expressions intact: $(echo "$out" | grep -c 'hasSuffix') hasSuffix, $(echo "$out" | grep -c 'index .Labels') index .Labels"
+          # The oudGroup value guards, added in 0.20.0. The crc overlay's shared-labelKey split renders
+          # hasPrefix guards; Helm evaluating one would silently drop a family's Role AND RoleBinding
+          # from the objectTemplates while everything else still rendered — green, and a missing grant.
+          echo "$out" | grep -q 'hasPrefix' \
+            || { echo "::error::no hasPrefix guard survived Helm — an oudGroup groupPrefix conditional was evaluated at render time"; exit 1; }
+          echo "operator expressions intact: $(echo "$out" | grep -c 'hasSuffix') hasSuffix, $(echo "$out" | grep -c 'hasPrefix') hasPrefix, $(echo "$out" | grep -c 'index .Labels') index .Labels"
+
+      # The 0.20.0 groupPrefix validation must REFUSE what it exists to refuse. Each case measured the
+      # silent failure it prevents before the guard existed (see 12-'s header): a mid-pattern star is
+      # matched literally and grants nothing; two policies sharing a labelKey without disjoint
+      # prefixes contest one RoleBinding — roleRef is immutable, the operator error-loops, both CRs
+      # log success. The message must name the offending policies, or the refusal is a puzzle.
+      #
+      # DEPENDS on crc-values.yaml's bdp/trino split sharing company.net/oud-group: the last two cases
+      # perturb trino against bdp. If the overlay ever drops that split, give these cases their own
+      # small overlay instead of quietly deleting them.
+      - name: Malformed groupPrefix configurations are refused
+        run: |
+          set -uo pipefail
+          fails=0
+          must_refuse() {
+            label="$1"; needle="$2"; shift 2
+            if out=$(helm template release "$CHART" -f "$CHART/crc-values.yaml" "$@" 2>&1); then
+              echo "::error::[$label] rendered successfully but should have been refused"
+              fails=$((fails + 1))
+            elif ! grep -q "$needle" <<<"$out"; then
+              echo "::error::[$label] refused, but not by the expected guard. Got:"
+              grep -o 'namespaceConfigPolicy[^\\]*' <<<"$out" | head -2
+              fails=$((fails + 1))
+            else
+              echo "ok  [$label]"
+            fi
+          }
+          P="namespaceConfigPolicy.oudGroup.policies"
+          must_refuse "mid-pattern star" 'not the trailing character' \
+            --set "$P.bdp.groupPrefix=bda*rbac"
+          must_refuse "star only" 'normalizes to nothing' \
+            --set "$P.bdp.groupPrefix=*"
+          must_refuse "shared labelKey, prefix missing" 'at least one has no groupPrefix' \
+            --set "$P.trino.groupPrefix="
+          must_refuse "overlapping prefixes" 'one prefix is a prefix of the other' \
+            --set "$P.trino.groupPrefix=bda-rbac-spark-alpha"
+          [ "$fails" -eq 0 ] || exit 1
 
       # Install and uninstall ordering: policy CRs deleted BEFORE the Subscription, the sweep applied
       # AFTER the CRs, every resource declaring an explicit wave, no two hooks sharing a weight.

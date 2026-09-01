@@ -137,6 +137,24 @@ No prefix, no composition, no tier suffix. Whatever `company.net/oud-group` hold
 the group name. This is the axis the CR label `rbac.ocp.io/group-naming: namespace-label` records, as
 against `pattern` for the other three.
 
+Since 0.20.0 the value is also **matched**, not just read. Each policy builds a deferred guard that
+wraps BOTH of its objectTemplates — the same mechanism as 11-/13-'s `hasSuffix` on `.Name`, applied to
+the label lookup:
+
+```gotemplate
+{{- $labelRef := printf "(index .Labels %s%s%s)" $q $p.labelKey $q }}
+{{- $guard := printf "{{- if %s }}" $labelRef }}                                  # groupPrefix unset
+{{- $guard = printf "{{- if hasPrefix %s%s%s %s }}" $q $prefix $q $labelRef }}    # groupPrefix set
+```
+
+`$prefix` is the policy's `groupPrefix` normalized (`trimSuffix "*"`, `trimSuffix "-"`, append `-`),
+so `bda-rbac-spark`, `bda-rbac-spark-` and `bda-rbac-spark-*` all emit
+`hasPrefix "bda-rbac-spark-" (index .Labels "company.net/oud-group")` inside the guard's action
+braces. The quotes are printf ARGUMENTS here too — the §2d rule applies to guards exactly as it does
+to `$group`. The unset shape guards mere non-emptiness, which is what retired the empty-value
+`-rb` error-loop. This is what lets several policies share one labelKey: their guards partition the
+values, and a render-time pre-pass refuses overlapping or missing prefixes before any of it ships.
+
 It is also why this policy is structurally separate rather than an `if` inside `10-baseline-`: one
 selector expression, a Role of its own, and a group name that is read rather than computed.
 
@@ -211,6 +229,7 @@ role.
 
 | output | expression |
 |---|---|
+| object guard (both templates) | deferred `hasPrefix "<groupPrefix>-" (index .Labels …)` when `groupPrefix` is set; deferred non-empty check when not |
 | Role name | `{{ $p.roleName }}` — fixed, **one per namespace**, not per group |
 | RoleBinding name | `{{ $group }}-rb` |
 | subject group | `$group` = the `company.net/oud-group` label value |
@@ -254,7 +273,7 @@ than Helm proper.
 | `fail "msg"` | abort the render with a message | 19 uses; every guard that would otherwise ship a silent no-op |
 | `index M "k"` | look up a map key | reads a namespace label — **deferred to the operator**, never run by Helm |
 | `hasSuffix "s" x` | string suffix test | inside the deferred guard string, so the *operator* runs it |
-| `hasPrefix "-" x` | string prefix test | Helm-side guard: refuses a suffix missing its leading hyphen |
+| `hasPrefix "-" x` | string prefix test | BOTH sides since 0.20.0: Helm-side (13-'s hyphen check; 12-'s prefix-overlap pre-pass) and inside 12-'s deferred value guard, where the *operator* runs it |
 | `default A B` | B if B is non-empty, else A | `default $entry.name $entry.bindingSuffix` |
 | `dict` / `set` / `hasKey` | build and probe a map | the duplicate-`bindingSuffix` detector |
 | `range` | iterate | over `roles` / `entries` / `policies` |

@@ -1,7 +1,53 @@
+{{- /*
+groupPrefix NORMALIZATION, the single source of truth — used by the pre-pass and by the guard
+construction in the render range, so the two can never drift. Trailing "*" is dropped, then a
+trailing "-", then one "-" is appended: `bda-rbac-spark`, `bda-rbac-spark-` and `bda-rbac-spark-*`
+all become "bda-rbac-spark-". The "-*" spelling is accepted for consistency with the group-sync
+chart's groupCn convention; the appended hyphen is what stops `bda-rbac-sparkles` matching a
+`bda-rbac-spark` policy. Empty in -> empty out.
+
+Defined ABOVE the file's enable-gate because Go templates only allow `define` at top level — inside
+the `if` it is a parse error ("unexpected <define> in command").
+*/}}
+{{- define "nco.oudGroupPrefixNormalized" -}}
+{{- if . -}}{{ printf "%s-" (trimSuffix "-" (trimSuffix "*" .)) }}{{- end -}}
+{{- end -}}
 {{- if and .Values.namespaceConfigPolicy.enabled .Values.namespaceConfigPolicy.oudGroup.enabled }}
 {{- $og := .Values.namespaceConfigPolicy.oudGroup }}
 {{- if not $og.policies }}
 {{- fail "namespaceConfigPolicy.oudGroup.policies is empty, so this would render nothing while the flag is on — a silent no-op. Give it at least one policy, or disable oudGroup." }}
+{{- end }}
+{{- /*
+PRE-PASS: groupPrefix syntax, and disjointness across policies sharing a labelKey. Runs BEFORE the
+main range so a bad combination refuses to render at all rather than rendering the good policies and
+skipping the bad one. Maps range in sorted key order, so the first failure is deterministic.
+*/}}
+{{- $byLabelKey := dict }}
+{{- range $key, $p := $og.policies }}
+{{- if and $p.enabled $p.labelKey }}
+{{- $normalized := include "nco.oudGroupPrefixNormalized" $p.groupPrefix }}
+{{- if $normalized }}
+{{- if contains "*" $normalized }}
+{{- fail (printf "namespaceConfigPolicy.oudGroup.policies.%s groupPrefix %q has a \"*\" that is not the trailing character. The only wildcard spelling accepted is a TRAILING \"-*\" (the group-sync chart's groupCn convention), and it means the same as no star at all — this field is always a prefix match. A star elsewhere would be matched literally against label values, which never contain one, so the policy would silently grant nothing." $key $p.groupPrefix) }}
+{{- end }}
+{{- if eq $normalized "-" }}
+{{- fail (printf "namespaceConfigPolicy.oudGroup.policies.%s groupPrefix %q normalizes to nothing — it would match every non-empty value while pretending to narrow. Omit groupPrefix instead, or give it a real family prefix such as bda-rbac-spark." $key $p.groupPrefix) }}
+{{- end }}
+{{- if gt (len $normalized) 62 }}
+{{- fail (printf "namespaceConfigPolicy.oudGroup.policies.%s groupPrefix %q normalizes to %d characters. A label value caps at 63 and must extend the prefix by at least one, so this policy could never match anything — it would deploy healthy and grant nothing." $key $p.groupPrefix (len $normalized)) }}
+{{- end }}
+{{- end }}
+{{- $sharers := get $byLabelKey $p.labelKey | default dict }}
+{{- range $prevKey, $prevPrefix := $sharers }}
+{{- if or (not $normalized) (not $prevPrefix) }}
+{{- fail (printf "namespaceConfigPolicy.oudGroup.policies %q and %q are both enabled on labelKey %q and at least one has no groupPrefix. Without disjoint prefixes both select the SAME namespaces and contest the same RoleBinding — roleRef is immutable, so the second policy creates zero bindings while the operator error-loops and both CRs log success (measured; see the header below). Give every policy sharing a labelKey its own groupPrefix, or use distinct labelKeys." $prevKey $key $p.labelKey) }}
+{{- end }}
+{{- if or (hasPrefix $prevPrefix $normalized) (hasPrefix $normalized $prevPrefix) }}
+{{- fail (printf "namespaceConfigPolicy.oudGroup.policies %q (groupPrefix -> %q) and %q (groupPrefix -> %q) overlap on labelKey %q: one prefix is a prefix of the other, so a label value can match BOTH policies — the same silent RoleBinding contest disjoint prefixes exist to prevent. Make the family prefixes disjoint." $prevKey $prevPrefix $key $normalized $p.labelKey) }}
+{{- end }}
+{{- end }}
+{{- $_ := set $byLabelKey $p.labelKey (merge (dict $key $normalized) $sharers) }}
+{{- end }}
 {{- end }}
 # =============================================================================
 # NamespaceConfig — oud-group families, ONE CR PER POLICY
@@ -48,26 +94,54 @@
 {{- if not $p.rules }}
 {{- fail (printf "namespaceConfigPolicy.oudGroup.policies.%s has no rules, so it would create an empty Role that grants nothing while looking configured." $key) }}
 {{- end }}
-# ONE labelKey PER POLICY — a convention, not a render-time guard, because it cannot be one. The
-# RoleBinding is named "<label value>-rb", and that value is read from a namespace at reconcile time, so
-# Helm cannot know whether two policies would collide. Uniqueness is (namespace, name), which makes it a
-# fact about the cluster rather than about values.
+# SHARING A labelKey IS SUPPORTED — when every sharer narrows itself with a DISJOINT groupPrefix, and
+# the pre-pass above REFUSES anything else at render time. Until 0.20.0 this header said sharing could
+# not be guarded, and the reasoning was half right: whether two policies collide on a NAMESPACE is a
+# fact about the cluster. But whether their VALUE PATTERNS can both match one value is a fact about
+# values, and that is what the pre-pass decides — no groupPrefix on a sharer, or one prefix a prefix
+# of the other, fails the render naming both policies.
 #
-# IF TWO POLICIES DO SHARE A labelKey, the failure is silent — measured by trying it:
+# WHY THE REFUSAL EXISTS — the failure it replaces was silent, measured by trying it:
 #   - both Roles are created and coexist; only the RoleBinding is contested
 #   - the second policy creates ZERO RoleBindings, because roleRef is immutable:
 #       RoleBinding "…-rb" is invalid: roleRef: Invalid value: …: cannot change roleRef
 #   - the operator error-loops on that patch while the CR logs "resources processed successfully"
 #
-# So the CR reads healthy and the grant is absent. If a grant here is missing, grep the manager log for
-# "cannot change roleRef" first.
+# So the CR read healthy and the grant was absent. If a grant here is ever missing, grep the manager
+# log for "cannot change roleRef" first.
 #
-# ONE roleName PER POLICY TOO, for the same reason with a worse failure. "Each policy defines its own
-# Role" holds only while the names differ: two policies sharing a roleName whose selectors overlap on a
-# namespace are two CRs reconciling ONE Role object — and rules are SPEC, which propagates, so each
-# reconcile rewrites the other's rules and the namespace's effective permissions oscillate between the
-# two lists. Nothing errors and both CRs log success. Unguardable at render time for the same reason as
-# labelKey: whether the selectors overlap is a fact about the cluster, not about values.
+# HOW THE NARROWING WORKS: not in the labelSelector — matchExpressions has no wildcard operator, and
+# 13-'s header records what happens when an unsupported selector is tried (silently pruned to
+# match-everything). Each policy's selector stays `labelKey Exists`; a DEFERRED guard the OPERATOR
+# evaluates per namespace wraps BOTH objectTemplates below — an if on
+#
+#   hasPrefix "bda-rbac-spark-" (index .Labels "company.net/oud-group")
+#
+# (shown here without its action braces, because a # comment is NOT a Helm comment — see the header —
+# and the braced form in a comment once opened a real, unclosed `if` and broke the whole parse.)
+#
+# Both objects, not just the binding: the Role has a FIXED name per policy, so unguarded it would
+# render into the other family's namespaces — unbound, but present where the policy does not apply.
+# In a namespace whose value matches no sharer, every template renders EMPTY. The operator skips the
+# empty render but LOGS IT AT ERROR LEVEL first — "Object 'Kind' is missing in 'null'" then "unable
+# to process template for", once per non-matching namespace per reconcile. Measured on CRC: those
+# lines are the guard WORKING, and the reconcile's closing "resources processed successfully …
+# resources:<n>" line is the verdict. (A GroupConfig reconcile logs no such lines — the noise is the
+# NamespaceConfig path's, a candidate fix for the operator fork, not this chart.)
+#
+# TWO MORE MEASURED FACTS, in Chart.yaml's 0.20.0 entry at full length: adding groupPrefix to an
+# ALREADY-DEPLOYED policy does not reliably remove the objects it displaces (delete them by
+# config-source label in each namespace the policy no longer matches — a stale binding still
+# GRANTS), and objects created before the change never gain the group-pattern annotation without a
+# delete-and-recreate (.metadata is excluded from drift comparison).
+#
+# ONE roleName PER POLICY across DIFFERENT labelKeys still matters, with a worse failure: two policies
+# sharing a roleName whose selectors overlap on a namespace are two CRs reconciling ONE Role object —
+# and rules are SPEC, which propagates, so each reconcile rewrites the other's rules and the
+# namespace's effective permissions oscillate between the two lists. Nothing errors and both CRs log
+# success. That remains unguardable at render time: whether selectors on different labelKeys overlap
+# is a fact about the cluster, not about values. (Sharers of ONE labelKey with disjoint prefixes may
+# share a roleName safely — the guards partition the namespaces.)
 # NAME IS DERIVED FROM THE MAP KEY, so the key is the single place a policy's identity is written.
 # values.yaml ships name: '' and this fills it in: key `bdp` gives the CR name bdp-oud-group-rbac.
 # Setting name explicitly overrides the derivation — the escape hatch for a policy that must keep a
@@ -80,6 +154,27 @@
 # ~50s to restore. Rename deliberately, not while tidying.
 {{- $name := $p.name | default (printf "%s-oud-group-rbac" $key) }}
 {{- $group := printf "{{ index .Labels %s%s%s }}" "\"" $p.labelKey "\"" }}
+{{- /*
+The value guard, deferred to the operator — built as a string for the same reason $group is, and with
+the quotes as printf ARGUMENTS, never `| quote` (the operator Go-template-renders first and
+YAML-parses second; a backslash-quote breaks the parse — templating-guide.md §2d).
+
+Three shapes, one per configuration:
+  groupPrefix set    {{- if hasPrefix "<family>-" (index .Labels "<key>") }}   family narrowing
+  groupPrefix unset  {{- if (index .Labels "<key>") }}                         non-empty value only
+The unset shape is new in 0.20.0 and deliberate: `Exists` matches a namespace whose value is "", and
+unguarded that rendered RoleBinding "-rb" with subject "" — rejected by the API (DNS-1123), operator
+error-looping while the CR logged success. Truthiness of "" is false in Go templates, so both objects
+now simply render empty for such a namespace.
+*/}}
+{{- $q := "\"" }}
+{{- $labelRef := printf "(index .Labels %s%s%s)" $q $p.labelKey $q }}
+{{- $prefix := include "nco.oudGroupPrefixNormalized" $p.groupPrefix }}
+{{- $guard := printf "{{- if %s }}" $labelRef }}
+{{- if $prefix }}
+{{- $guard = printf "{{- if hasPrefix %s%s%s %s }}" $q $prefix $q $labelRef }}
+{{- end }}
+{{- $endif := "{{- end }}" }}
 ---
 apiVersion: redhatcop.redhat.io/v1alpha1
 kind: NamespaceConfig
@@ -109,6 +204,13 @@ metadata:
     # One description key, on every policy — the "no prefix is added" fact is stated selectably by
     # rbac.ocp.io/group-naming: namespace-label above, so it does not need a second annotation here.
     description: "Namespace RBAC: bind the group named by the {{ $p.labelKey }} label value, verbatim and with no prefix added"
+{{- if $p.groupPrefix }}
+    # The family this policy narrows to, in the SAME `<prefix>*` shape 11- and 13- record on theirs —
+    # because for this policy the label value IS the group name, the value pattern and the group
+    # pattern are the same string. Absent when groupPrefix is unset: the policy binds whatever the
+    # label names, and there is no wildcard to record.
+    rbac.ocp.io/group-pattern: "{{ $prefix }}*"
+{{- end }}
     # After the operator is installed and its CSV is running. A NamespaceConfig applied before the CRD
     # exists fails the release; applied before the controller is up it simply sits there.
     argocd.argoproj.io/sync-wave: "3"
@@ -139,7 +241,13 @@ spec:
     # -------------------------------------------------------------------------
     - excludedPaths:
         {{- toYaml $p.excludedPaths | nindent 8 }}
+      # The $guard / $endif pair wraps the WHOLE object — the operator evaluates the guard per
+      # namespace, so where the label value is outside this policy's family (or empty) the template
+      # renders empty and nothing is created. The Role is guarded like the binding deliberately: its
+      # name is fixed per policy, so unguarded it would appear, unbound, in the other family's
+      # namespaces. (Named without braces here — in a # comment Helm would substitute them.)
       objectTemplate: |
+        {{ $guard }}
         apiVersion: rbac.authorization.k8s.io/v1
         kind: Role
         metadata:
@@ -166,20 +274,24 @@ spec:
             rbac.ocp.io/source-namespaceconfig: {{ $name }}
         rules:
           {{- toYaml $p.rules | nindent 10 }}
+        {{ $endif }}
 
     # -------------------------------------------------------------------------
     # RoleBinding — subject is the label value, used VERBATIM
     #
-    # AN EMPTY LABEL VALUE IS A REACHABLE BAD STATE: `labelKey Exists` matches a namespace whose
-    # value is "", the Role above still renders, and this binding renders name "-rb" with subject ""
-    # — which the API REJECTS (DNS-1123), so the operator error-loops on the create while the CR
-    # logs "resources processed successfully": no grant, no visible error. The Kyverno allowlist
-    # audits the value but does not block (Audit mode). If this policy's grant is missing in one
-    # namespace, check the label VALUE before reading the operator log.
+    # AN EMPTY LABEL VALUE WAS A REACHABLE BAD STATE until 0.20.0: `labelKey Exists` matches a
+    # namespace whose value is "", and unguarded this binding rendered name "-rb" with subject "" —
+    # which the API REJECTS (DNS-1123), so the operator error-looped on the create while the CR
+    # logged "resources processed successfully": no grant, no visible error. The guard closes it:
+    # "" is falsy to the truthiness guard and matches no prefix, so both templates render empty for
+    # such a namespace. The Kyverno allowlist still audits the value but does not block (Audit
+    # mode). If this policy's grant is missing in one namespace, check the label VALUE against the
+    # policy's groupPrefix before reading the operator log.
     # -------------------------------------------------------------------------
     - excludedPaths:
         {{- toYaml $p.excludedPaths | nindent 8 }}
       objectTemplate: |
+        {{ $guard }}
         apiVersion: rbac.authorization.k8s.io/v1
         kind: RoleBinding
         metadata:
@@ -203,10 +315,15 @@ spec:
           annotations:
             # The CR that created this object, readable. Same value as the config-source LABEL above:
             # the label is what you select on, this is what you read in `oc get -o yaml` / `oc describe`.
-            # No group-pattern — this policy reads its group from a namespace label, not a wildcard.
             rbac.ocp.io/source-namespaceconfig: {{ $name }}
-            # No group-pattern: this policy's group comes from a NAMESPACE LABEL, not from a name
-            # pattern, so there is no wildcard to record. That absence is correct, not a gap.
+{{- if $p.groupPrefix }}
+            # The family this policy narrows to — same `<prefix>*` shape as 11-/13-. Recorded here
+            # because with groupPrefix set the bound group IS matched against a wildcard.
+            rbac.ocp.io/group-pattern: "{{ $prefix }}*"
+{{- else }}
+            # No group-pattern: with groupPrefix unset this policy's group comes from a NAMESPACE
+            # LABEL with no wildcard involved, so there is nothing to record. Correct, not a gap.
+{{- end }}
         subjects:
           - kind: Group
             name: "{{ $group }}"
@@ -215,6 +332,7 @@ spec:
           apiGroup: rbac.authorization.k8s.io
           kind: Role
           name: {{ $p.roleName }}
+        {{ $endif }}
 {{- end }}
 {{- end }}
 {{- end }}

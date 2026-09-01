@@ -48,6 +48,54 @@ namespaceConfigPolicy:
         # and this one at the same time without the two grants colliding.
         labelKey: company.net/oud-group
 
+        # SHARED with `trino` below since 0.20.0, which is why both narrow. This policy takes the
+        # spark family: label values starting bda-rbac-spark- (the guard appends the hyphen, so
+        # bda-rbac-sparkles can never match). On this cluster that is oud-poc-spark's
+        # bda-rbac-spark-theta-apps. The trailing -* spelling would mean the same; bare is used here.
+        groupPrefix: bda-rbac-spark
+
+      # The trino family, sharing company.net/oud-group with bdp above — the 0.20.0 capability this
+      # cluster exists to exercise. A FULL policy body: per-policy fields do not inherit across map
+      # keys, so everything bdp gets from values.yaml defaults must be stated here.
+      #
+      # CR name derives from the key: trino-oud-group-rbac. On this cluster it matches oud-poc-trino's
+      # bda-rbac-trino-alpha-users.
+      trino:
+        enabled: true
+        labelKey: company.net/oud-group
+        # The -* spelling, deliberately different from bdp's bare one so this file demonstrates both
+        # normalize to the same guard shape. Values starting bda-rbac-trino-.
+        groupPrefix: bda-rbac-trino-*
+        # Its OWN Role. Distinct from bdp's spark-job-submitter-role — with disjoint prefixes sharing
+        # a roleName would be safe (the guards partition the namespaces), but distinct names keep
+        # `oc get role -A -l rbac.ocp.io/config-source=...` unambiguous per family.
+        roleName: trino-job-submitter-role
+        roleType: trino-job-submitter
+        excludedPaths:
+          - .metadata
+          - .status
+        # Leaner than spark's deliberately: a trino workload reads and inspects, it does not manage
+        # secrets or bulk-delete. The difference is also the point — two families on one labelKey
+        # carrying genuinely different grants is what this feature is for.
+        rules:
+          - apiGroups: [""]
+            resources:
+              - pods
+              - services
+              - configmaps
+            verbs:
+              - create
+              - get
+              - list
+              - watch
+              - delete
+          - apiGroups: [""]
+            resources:
+              - pods/log
+            verbs:
+              - get
+              - list
+
   # The baseline every team receives. As of 0.9.0 nonprod grants developer + audit (admin removed) and
   # prod grants audit only (developer removed).
   baseline:
