@@ -403,9 +403,19 @@ namespaceConfigPolicy:
     # WHY A MAP AND NOT AN `entries` LIST like customGroupConfig uses. An entries list renders multiple
     # objectTemplates INSIDE ONE CR, sharing that CR's single labelSelector. These policies each select
     # on their OWN labelKey and define their OWN Role, so they cannot share a CR — they are separate
-    # NamespaceConfigs. The template refuses two policies on the same labelKey for the same reason: both
-    # would match the same namespaces and create the same RoleBinding name with different roles, and the
-    # operator would rewrite one over the other every reconcile.
+    # NamespaceConfigs.
+    #
+    # TWO POLICIES MAY SHARE A labelKey — since 0.20.0, and only when every sharer narrows itself with
+    # its own DISJOINT groupPrefix. That is what lets one label key carry several group families:
+    #
+    #   bdp:   { labelKey: company.net/oud-group, groupPrefix: bda-rbac-spark }
+    #   trino: { labelKey: company.net/oud-group, groupPrefix: bda-rbac-trino }
+    #
+    # Anything more ambiguous is REFUSED at render time — sharing without a groupPrefix on every
+    # sharer, or prefixes where one is a prefix of the other. Unguarded sharing was measured to fail
+    # SILENTLY (both policies contest one RoleBinding name; roleRef is immutable; the operator
+    # error-loops while both CRs log success), which is why the refusal is loud and names both
+    # policies.
     #
     # Each policy renders: one namespace-scoped Role from its `rules`, plus one RoleBinding whose subject
     # is the VALUE of its labelKey, used verbatim.
@@ -436,6 +446,39 @@ namespaceConfigPolicy:
         # whatever its VALUE says. Both, from one key — which is why the template refuses to render when
         # it is empty rather than selecting every namespace and binding a group called "".
         labelKey: company.net/oud-group
+
+        # OPTIONAL: narrow this policy to label VALUES in one group family, so several policies can
+        # share the labelKey above and be told apart by the value. ALWAYS a prefix match, and the
+        # spelling is normalized — these three mean the identical guard:
+        #
+        #   groupPrefix: bda-rbac-spark
+        #   groupPrefix: bda-rbac-spark-
+        #   groupPrefix: bda-rbac-spark-*     # the group-sync chart's groupCn spelling, accepted for
+        #                                     # consistency; the star adds nothing here
+        #
+        # All three narrow to values starting "bda-rbac-spark-" — the hyphen is appended
+        # deliberately, so bda-rbac-sparkles can never match a bda-rbac-spark policy. A "*" anywhere
+        # but trailing is refused at render time. Case-sensitive.
+        #
+        # UNLIKE the other two groupPrefix fields in this file (clusterRbac's and customGroupConfig's,
+        # which only DOCUMENT a family on the group-pattern annotation), THIS ONE NARROWS. It can:
+        # for this policy the label value IS the group name, so a prefix on the value is a prefix on
+        # the group. Enforced by a guard the OPERATOR evaluates per namespace, not by the CR's
+        # labelSelector — matchExpressions has no wildcard operator (see 13-'s header for what
+        # happens when an unsupported selector is tried).
+        #
+        # EMPTY = every NON-EMPTY value (a value of "" is skipped either way — before 0.20.0 it
+        # error-looped the operator on a RoleBinding named "-rb"; now both templates render empty for
+        # such a namespace). Required whenever another enabled policy shares this labelKey.
+        #
+        # ADDING THIS TO A POLICY THAT IS ALREADY DEPLOYED needs one manual step, measured on CRC:
+        # the operator does not reliably remove the objects the narrowing displaces (1 of 3
+        # namespaces cleaned; the rest kept a live, still-granting binding). After the upgrade,
+        # delete this policy's objects from every namespace it no longer matches:
+        #   oc delete role,rolebinding -n <namespace> -l rbac.ocp.io/config-source=<cr-name>
+        # The operator recreates what it still wants within seconds. Details in Chart.yaml's 0.20.0
+        # entry, including why re-triggering reconciles cannot do this for you.
+        groupPrefix: ''
 
         # The Role this policy creates — one per namespace, from the first template — and what its
         # RoleBinding points at.
@@ -507,15 +550,29 @@ namespaceConfigPolicy:
               - list
 
 
-      # ---- a second family, showing the shape. Commented out, so nothing new is granted by upgrading;
-      # uncomment and give it a real labelKey to use it. ----
-      # xyz:
+      # ---- two more families SHARING ONE labelKey, showing the 0.20.0 shape. Commented out, so
+      # nothing new is granted by upgrading; uncomment to use. Each narrows the shared key to its own
+      # group family via groupPrefix — the prefixes must be disjoint, and the template refuses the
+      # render (naming both policies) if they overlap or if a sharer omits its groupPrefix. ----
+      # spark:
       #   enabled: true
-      #   name: xyz-oud-group-rbac
-      #   # MUST DIFFER from every other policy's labelKey — the template refuses a duplicate.
-      #   labelKey: company.net/xyz-oud-group
-      #   roleName: xyz-submitter-role
-      #   roleType: xyz-job-submitter
+      #   labelKey: company.net/oud-group
+      #   groupPrefix: app-bdp-rbac-spark        # values starting app-bdp-rbac-spark-
+      #   roleName: spark-submitter-role
+      #   roleType: spark-job-submitter
+      #   excludedPaths:
+      #     - .metadata
+      #     - .status
+      #   rules:
+      #     - apiGroups: [""]
+      #       resources: ["pods", "pods/log"]
+      #       verbs: ["get", "list", "watch"]
+      # trino:
+      #   enabled: true
+      #   labelKey: company.net/oud-group
+      #   groupPrefix: app-bdp-rbac-trino-*      # the groupsync -* spelling; identical meaning
+      #   roleName: trino-submitter-role
+      #   roleType: trino-job-submitter
       #   excludedPaths:
       #     - .metadata
       #     - .status

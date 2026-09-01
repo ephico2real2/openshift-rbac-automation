@@ -360,13 +360,14 @@ Kubernetes side is wrong.
 Kubernetes garbage collection cannot cascade, so orphans accumulate — is **incorrect**. NCO
 does its own tracking, and it is thorough.
 
-### Cleanup: verified, all three cases
+### Cleanup: verified — three clean cases and one that is NOT
 
 | Scenario | Result | Evidence |
 |---|---|---|
 | Delete the NamespaceConfig | ✅ full cleanup | 3 RoleBindings **and** 3 Roles removed across 3 namespaces |
 | Change a namespace label so a **different object name** is derived | ✅ old object removed | relabelled `oud-poc-trino`; `bda-rbac-trino-alpha-users-rb` deleted, `bda-rbac-spark-theta-apps-rb` created |
 | Namespace stops matching the selector | ✅ full cleanup | removed the label from `oud-poc-crossfamily`; Role and RoleBinding both gone |
+| **The CR's spec narrows** (0.20.0: `groupPrefix` added to a live policy, its guard now excluding namespaces the selector still matches) | ⚠️ **unreliable** | locked set shrank 8→2 on upgrade; `oud-poc-platform` cleaned, but `oud-poc-trino` and `oud-poc-crossfamily` kept the old Role AND a still-granting RoleBinding indefinitely. Re-triggering reconciles did not clean them (the current set is already correct — there is nothing left to diff), and the orphan sweeper skips them (their `config-source` names a live CR). Manual step: `oc delete role,rolebinding -n <ns> -l rbac.ocp.io/config-source=<cr-name>` in each displaced namespace; the operator recreates what it still wants |
 
 > **A retracted claim.** An earlier draft of this document marked the middle row
 > "❌ orphan", reasoning from the empty `ownerReferences`. That was inference, not

@@ -69,7 +69,7 @@ oc get rolebinding,clusterrolebinding -A -l rbac.ocp.io/bound-role=view    # all
 |---|---|---|
 | `rbac.ocp.io/source-namespaceconfig` | `baseline-nonprod-rbac` `baseline-prod-rbac` `bdp-oud-group-rbac` | the NamespaceConfig that owns it |
 | `rbac.ocp.io/source-groupconfig` | `baseline-cluster-rbac` `custom-cluster-rbac` | the GroupConfig that owns it |
-| `rbac.ocp.io/group-pattern` | `app-ocp-rbac-*-cluster-admin`, `app-ocp-rbac-*-database-admin` | the wildcard the operator matched groups against |
+| `rbac.ocp.io/group-pattern` | `app-ocp-rbac-*-cluster-admin`, `app-ocp-rbac-*-database-admin`, `bda-rbac-spark-*` | the wildcard the operator matched groups against — since 0.20.0 also on oud-group objects whose policy sets `groupPrefix` |
 
 ### The provenance keys, and why there are three of them
 
@@ -147,7 +147,9 @@ LDAP-backed; they do not all name groups the same way. One key covering both wou
 | **L** `mnemonic`, `environment` | ✓ | ✓ | — | — | — | — |
 | **A** `source-namespaceconfig` | ✓ | ✓ | — | — | ✓ | ✓ |
 | **A** `source-groupconfig` | — | — | ✓ | ✓ | — | — |
-| **A** `group-pattern` | — | — | ✓ | ✓ | — | — |
+| **A** `group-pattern` | — | — | ✓ | ✓ | ✓* | — |
+
+\* on an oud-group RB only when its policy sets `groupPrefix` (0.20.0) — unset, the dash is correct.
 
 Four keys are on all 42 objects; `bound-role` and `group-name` are on all 39 bindings (26 RoleBindings
 + 13 ClusterRoleBindings). Every remaining gap is structural, not an oversight:
@@ -159,8 +161,11 @@ Four keys are on all 42 objects; `bound-role` and `group-name` are on all 39 bin
   namespace, so there is no namespace label to read.
 - **`source-namespaceconfig` vs `source-groupconfig`** mirrors which CRD created the object. A
   GroupConfig cannot set the other.
-- **`group-pattern` only where a pattern exists.** oud-group reads its group from a namespace label;
-  there is no wildcard to record.
+- **`group-pattern` only where a pattern exists.** An oud-group policy WITHOUT `groupPrefix` reads
+  its group from a namespace label and there is no wildcard to record — the absence is correct. WITH
+  `groupPrefix` (0.20.0) the bound group IS matched against `<prefix>-*`, and because the label value
+  is the group name, the value pattern and the group pattern are the same string — so the same key
+  records it, on the CR and its RoleBindings.
 
 ---
 

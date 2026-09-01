@@ -31,6 +31,74 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.20.0, MINOR: SEVERAL oudGroup POLICIES CAN NOW SHARE ONE labelKey, split by a per-policy
+# `groupPrefix`. Each policy narrows itself to label values in one group family — bdp takes
+# bda-rbac-spark, trino takes bda-rbac-trino — via a guard the OPERATOR evaluates per namespace,
+# wrapped around BOTH objectTemplates. Not the labelSelector, which cannot do this: matchExpressions
+# has no wildcard operator, and 13-'s header records the unsupported-selector attempt being silently
+# pruned to match-everything. The guard is the same deferred mechanism 11-/13- use with hasSuffix on
+# .Name, applied to (index .Labels).
+#
+# THE SPELLING IS NORMALIZED: `bda-rbac-spark`, `bda-rbac-spark-` and `bda-rbac-spark-*` all mean
+# hasPrefix "bda-rbac-spark-". The -* form is the group-sync chart's groupCn convention, accepted for
+# consistency; the appended hyphen stops bda-rbac-sparkles matching a bda-rbac-spark policy. A star
+# anywhere but trailing is refused at render time. Always a prefix match — no exact-match mode; a
+# policy needing one exact group gets its own labelKey. NOTE the same field name on clusterRbac and
+# customGroupConfig only DOCUMENTS a family (their comments say "does NOT narrow"); this per-policy
+# one narrows, and both comments now say which is which.
+#
+# TWO BEHAVIOR CHANGES for existing installs, both deliberate:
+#   1. AMBIGUOUS SHARING NOW REFUSES TO RENDER. Two enabled policies on one labelKey without a
+#      groupPrefix on every sharer, or with prefixes where one is a prefix of the other, fail
+#      `helm template` naming both policies. The failure this replaces was measured and SILENT: both
+#      policies contest one RoleBinding name, roleRef is immutable, the operator error-loops while
+#      both CRs log "resources processed successfully".
+#   2. AN EMPTY LABEL VALUE NO LONGER ERROR-LOOPS THE OPERATOR. `labelKey Exists` matches a namespace
+#      whose value is ""; unguarded, the binding rendered as "-rb" with subject "" and the API
+#      rejected it forever while the CR logged success. Every policy's templates are now wrapped in a
+#      guard ("" is falsy; no prefix matches it), so both objects render EMPTY for such a namespace.
+#      A pre-0.20 install with such a namespace loses the unbound Role that sat there; it granted
+#      nothing.
+#
+# AND TWO OPERATIONAL FACTS, measured on CRC during the 0.19.7 -> 0.20.0 upgrade — read these before
+# adding groupPrefix to a policy that is ALREADY DEPLOYED:
+#
+#   NARROWING DOES NOT RELIABLY REMOVE THE OBJECTS IT DISPLACES. Adding groupPrefix to a live policy
+#   shrinks its object set (here 8 -> 2), and the operator deletes dropped objects only in the moment
+#   of that transition — measured: 1 of 3 displaced namespaces was cleaned, the other two kept the old
+#   Role and RoleBinding indefinitely, and re-triggering reconciles does NOT revisit them (the current
+#   set is already correct, so there is nothing to diff). The orphan sweeper will not reap them either:
+#   their config-source names a CR that is still live. A stale binding is worse than clutter — it still
+#   GRANTS, and if another policy now owns that namespace it blocks the new same-name RoleBinding on
+#   the immutable roleRef. So after narrowing a deployed policy, delete its objects from every
+#   namespace it no longer matches:
+#     oc delete role,rolebinding -n <namespace> -l rbac.ocp.io/config-source=<cr-name>
+#   The operator recreates anything it still wants within seconds; what it does not recreate was the
+#   stale part. (Deleting the CR and re-syncing also works — full revoke-and-rebuild, ~4s/~50s.)
+#
+#   GUARDED NamespaceConfigs ARE NOISY IN THE MANAGER LOG. Every reconcile renders each objectTemplate
+#   once per selected namespace, and a guarded-empty render logs error-level lines — "Error
+#   unmarshalling json manifest … Object 'Kind' is missing in 'null'" then "unable to process template
+#   for" — before being skipped. Measured: 57 such lines from these two policies; a forced GroupConfig
+#   reconcile produced zero, so the noise is specific to the NamespaceConfig path in the operator (a
+#   candidate fix for the operator-utils fork, not this chart). The lines are the guard WORKING; the
+#   verdict is the reconcile's closing line, e.g. "resources processed successfully … resources:2".
+#
+# When groupPrefix is set the CR and its RoleBindings carry rbac.ocp.io/group-pattern "<prefix>-*",
+# the same shape 11-/13- record — for this policy the label value IS the group name, so the value
+# pattern and the group pattern are one string. Objects that already exist do not gain the annotation
+# until their CR is deleted and rebuilt (.metadata is in excludedPaths — the GOTCHA 9 rule).
+#
+# CI: the unevaluated-expressions check now also asserts a hasPrefix guard survives Helm, and a new
+# step renders the four malformed configurations and requires each refusal to fire from the right
+# guard. crc-values.yaml carries the split (bdp=spark + trino) so the committed overlay exercises the
+# feature every run.
+#
+# FOLLOW-UP, outside this chart: the Kyverno namespace-label allowlist
+# (working-sessions/policies/kyverno-namespace-oud-group.yaml) knows the app-ocp-rbac and
+# bda-rbac-(spark|flink|trino) families; onboarding a new family (e.g. app-bdp-rbac-*) means
+# extending that regex. Audit-only, so nothing blocks meanwhile.
+#
 # 0.19.7, PATCH: THE ORPHAN SWEEPER'S LOG NOW SAYS WHAT IT IS DOING WHILE IT DOES IT. The old log printed
 # a one-line header, the candidate list, then went SILENT for the entire sweep — 74 seconds for 30 objects —
 # and finished with a single summary. That is indistinguishable from a hung Job, and it is why a run that was
@@ -629,7 +697,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.19.7
+version: 0.20.0
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:
