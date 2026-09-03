@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Refresh the CRDs vendored under charts/namespace-configuration-operator/crds/ from a live cluster.
+# Refresh the CRDs vendored under charts/openshift-rbac-automation/crds/ from a live cluster.
 #
 # WHY THEY ARE VENDORED AT ALL: Helm resolves every kind against API discovery before it applies
 # anything, so a chart whose manifest contains NamespaceConfig/GroupConfig cannot install onto a cluster
@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-CHART_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../charts/namespace-configuration-operator" && pwd)"
+CHART_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../charts/openshift-rbac-automation" && pwd)"
 CRD_DIR="${CHART_DIR}/crds"
 GENERATOR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/vendor-crd.py"
 

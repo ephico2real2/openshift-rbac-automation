@@ -357,7 +357,7 @@ podSecurity:
 #                          CRDs are installed first`. No hook weight and no sync-wave can fix that:
 #                          both are read long after the failure. Helm applies crds/ before it renders
 #                          templates, which is early enough, and it is the only mechanism Helm offers.
-#                          See charts/namespace-configuration-operator/crds/ for the measured proof and
+#                          See charts/openshift-rbac-automation/crds/ for the measured proof and
 #                          for why OLM, not Helm, still owns those CRDs at runtime.
 #   operatorWait           The CRDs existing is not the operator being able to serve them. The wait Job
 #                          blocks until the CSV is Succeeded, the operator has a ready replica and both
@@ -588,7 +588,7 @@ namespaceConfigPolicy:
   #
   # ONE TEMPLATE SERVES BOTH nonprod AND prod because they differ only in data — which environments and
   # which roles. See the header of
-  # charts/namespace-configuration-operator/templates/rbac-policies/10-baseline-namespaceconfig-rbac.yaml for when a future policy earns its own file
+  # charts/openshift-rbac-automation/templates/rbac-policies/10-baseline-namespaceconfig-rbac.yaml for when a future policy earns its own file
   # instead of an entry here.
   #
   # THESE BIND OPENSHIFT'S BUILT-IN CLUSTERROLES (admin / edit / view) through RoleBindings, which

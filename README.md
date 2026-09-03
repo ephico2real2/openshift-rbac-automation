@@ -45,7 +45,7 @@ This solution provides **automated RBAC management** for OpenShift clusters usin
 > **This role map is a demonstration, not a production standard.** The reusable part of this
 > repo is the *mechanism* — the group-name patterns, how a matched group is assigned a role,
 > and how namespace labels drive environment-aware behaviour. **Which access level production
-> should actually grant is a company policy decision.** Change it in `charts/namespace-configuration-operator/values.yaml` — the roles
+> should actually grant is a company policy decision.** Change it in `charts/openshift-rbac-automation/values.yaml` — the roles
 > each policy grants are values, not template edits. The manifests in `working-sessions/policies/` are
 > design references for reviewing the intent, not the thing to edit to change behaviour. The table below
 > records what these example policies currently do.
@@ -65,7 +65,7 @@ This solution provides **automated RBAC management** for OpenShift clusters usin
 - **Audit access**: Universal read-only access across all environments
 
 Tightening production to read-only means removing the `developer` entry from
-`namespaceConfigPolicy.baseline.policies.prod.roles` in `charts/namespace-configuration-operator/values.yaml`; loosening it means adding
+`namespaceConfigPolicy.baseline.policies.prod.roles` in `charts/openshift-rbac-automation/values.yaml`; loosening it means adding
 one. Prod withholding `ns-admin` is a SHORTER LIST than nonprod, not a different structure, which is why
 both policies render from one template and differ only in data. The environment values themselves
 (`rnd`/`eng`/`qa`/`uat`/`prod`) are just label values the selectors match — equally yours to change.
@@ -82,20 +82,21 @@ The chart is published to GitHub Pages by `.github/workflows/helm.yaml`, the sam
 helm repo add openshift-rbac-automation https://ephico2real2.github.io/openshift-rbac-automation
 helm repo update
 helm search repo openshift-rbac-automation
+helm install nco openshift-rbac-automation/openshift-rbac-automation --namespace namespace-configuration-operator
 ```
 
 Or clone and install from the directory, which is what the rest of this Quick Start does.
 
 ### 1. Install Red Hat CoP Namespace Configuration Operator
 
-Use the Helm chart in [`charts/namespace-configuration-operator/`](charts/namespace-configuration-operator/README.md) — it creates the install namespace, an
+Use the Helm chart in [`charts/openshift-rbac-automation/`](charts/openshift-rbac-automation/README.md) — it creates the install namespace, an
 AllNamespaces OperatorGroup and the Subscription, and can run a custom operator build:
 
 ```bash
-helm install nco ./charts/namespace-configuration-operator --namespace namespace-configuration-operator
+helm install nco ./charts/openshift-rbac-automation --namespace namespace-configuration-operator
 ```
 
-See [`charts/namespace-configuration-operator/README.md`](charts/namespace-configuration-operator/README.md) for the options (image override, InstallPlan
+See [`charts/openshift-rbac-automation/README.md`](charts/openshift-rbac-automation/README.md) for the options (image override, InstallPlan
 approval, resource sizing).
 
 > **Do not install with a hand-applied Subscription into `openshift-marketplace`.** That
@@ -116,7 +117,7 @@ intent of each policy can be reviewed. The chart is what deploys.
 Just the baseline every team receives (nonprod + prod), per namespace:
 
 ```bash
-helm upgrade --install nco charts/namespace-configuration-operator -n namespace-configuration-operator \
+helm upgrade --install nco charts/openshift-rbac-automation -n namespace-configuration-operator \
   --set namespaceConfigPolicy.enabled=true \
   --set namespaceConfigPolicy.baseline.enabled=true
 ```
@@ -127,7 +128,7 @@ flag you leave off a later command is a policy you switch **off**, and switching
 what it created:
 
 ```bash
-helm upgrade --install nco charts/namespace-configuration-operator -n namespace-configuration-operator \
+helm upgrade --install nco charts/openshift-rbac-automation -n namespace-configuration-operator \
   --set namespaceConfigPolicy.enabled=true \
   --set namespaceConfigPolicy.baseline.enabled=true \
   --set clusterRbac.enabled=true \
@@ -181,7 +182,7 @@ oc get rolebindings -n payment-prod
 
 > In this example the developer group keeps `edit` in production and only `admin` is withheld.
 > **That split is a company policy decision, not a rule** — adjust
-> `namespaceConfigPolicy.baseline.policies.prod.roles` in `charts/namespace-configuration-operator/values.yaml` to match your own. See
+> `namespaceConfigPolicy.baseline.policies.prod.roles` in `charts/openshift-rbac-automation/values.yaml` to match your own. See
 > [architecture.md](working-sessions/docs/architecture.md).
 
 ### 5. Verify System Access
@@ -404,7 +405,7 @@ oc get rolebindings -n openshift-user-workload-monitoring -l app.kubernetes.io/m
 │   ├── ci.yaml                                   # lint + render checks, on every PR
 │   └── helm.yaml                                 # publishes the chart to gh-pages
 ├── charts/                                       # chart-releaser packages every subdirectory here
-│   └── namespace-configuration-operator/         # the chart: operator install AND the policies
+│   └── openshift-rbac-automation/                # the chart: operator install AND the policies
 │       ├── Chart.yaml
 │       ├── values.yaml                           # Every policy flag; all ship DISABLED
 │       └── templates/
@@ -507,8 +508,8 @@ Start here if you are changing a policy:
   there, we do not set it.
 - **[Templating guide](working-sessions/docs/templating-guide.md)** — how the templates compute their
   values: the two template engines, the three ways `$group` is derived, every Helm function in use, and
-  the traps. Read before editing `charts/namespace-configuration-operator/templates/rbac-policies/`.
-- **[charts/namespace-configuration-operator/templates/rbac-policies/_README.txt](charts/namespace-configuration-operator/templates/rbac-policies/_README.txt)** — what each
+  the traps. Read before editing `charts/openshift-rbac-automation/templates/rbac-policies/`.
+- **[charts/openshift-rbac-automation/templates/rbac-policies/_README.txt](charts/openshift-rbac-automation/templates/rbac-policies/_README.txt)** — what each
   of the four policies grants, and the rules for adding one.
 
 Background and operations:

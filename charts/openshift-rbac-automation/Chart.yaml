@@ -1,11 +1,12 @@
 apiVersion: v2
-name: namespace-configuration-operator
+name: openshift-rbac-automation
 description: >-
-  Installs the Red Hat CoP Namespace Configuration Operator (NCO) on OpenShift via
-  OLM — a dedicated namespace, an AllNamespaces (global) OperatorGroup, and a
-  Subscription. It can ALSO deploy RBAC policies (NamespaceConfig CRs) from
-  namespaceConfigPolicy and clusterRbac, one policy per flag — the baseline tiers ship
-  ENABLED, so a stock install grants RBAC; the raw manifests under
+  A customized Red Hat CoP Namespace Configuration Operator (NCO), packaged as a Helm chart
+  together with our own RBAC policies. Installs the operator on OpenShift via OLM — a dedicated
+  namespace, an AllNamespaces (global) OperatorGroup, and a Subscription, optionally running a
+  custom operator build — and deploys the policies (NamespaceConfig and GroupConfig CRs) from
+  namespaceConfigPolicy, clusterRbac and customGroupConfig, one policy per flag. The baseline
+  tiers ship ENABLED, so a stock install grants RBAC; the raw manifests under
   working-sessions/policies stay the readable reference for those.
 type: application
 # 0.4.0, MINOR: a new template and a new TOP-LEVEL values stanza. `clusterRbac` renders one
@@ -31,6 +32,49 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.21.0, MINOR: THE CHART IS RENAMED namespace-configuration-operator -> openshift-rbac-automation, and its
+# directory moves with it: charts/namespace-configuration-operator/ -> charts/openshift-rbac-automation/.
+# The old name described the upstream operator, and this chart stopped being an install-only wrapper at
+# 0.3.0: it ships a customized operator build (operatorImage), the OLM plumbing that runs it, and OUR
+# policies — which is what the repo is called. Both the package and its contents follow Chart.yaml's
+# `name`: chart-releaser now publishes openshift-rbac-automation-<version>.tgz, and the archive unpacks
+# to a base folder openshift-rbac-automation/. The description still says what it installs.
+#
+# WHAT CHANGES ON AN EXISTING INSTALL — all of it derives from .Chart.Name, and all of it is Helm-managed,
+# so one upgrade applies it:
+#   1. app.kubernetes.io/name and helm.sh/chart carry the new name on every object THIS CHART creates:
+#      the policy CRs, the OLM objects, the Job machinery. NOT the RBAC the operator writes from the
+#      CRs — those carry app.kubernetes.io/managed-by=namespace-configuration-operator, the operator's
+#      own label, unchanged — because nco.labels sits on the CR, not inside its objectTemplates. So the
+#      excludedPaths trap that 0.8.0 and 0.16.0 had to work around does not arise. Nothing in the chart
+#      selects on app.kubernetes.io/name; the sweeper selects on managed-by.
+#   2. The operator-wait unit is renamed namespace-configuration-operator-wait ->
+#      openshift-rbac-automation-wait (ServiceAccount, Role, RoleBinding, ClusterRole,
+#      ClusterRoleBinding, and the hook Job). nco.operatorWait.name is the one helper built on
+#      nco.name. Helm deletes the old objects and creates the new ones in the same upgrade; ArgoCD
+#      prunes and creates likewise.
+#   3. NOTHING ELSE MOVES. Install namespace, OperatorGroup, Subscription and package name, release
+#      name nco, every policy CR name, the image-override / approver / sweeper units — all come from
+#      values, never from .Chart.Name (the nco.name comment in _helpers.tpl is the design). The RBAC on
+#      the cluster is untouched.
+#
+# HOW TO TAKE IT:
+#   helm, from the published repo   index.yaml now lists openshift-rbac-automation from 0.21.0 and
+#                                   namespace-configuration-operator up to 0.20.0; neither entry
+#                                   moves the other. `helm upgrade nco <repo>/namespace-configuration-
+#                                   operator` will never see this release — switch to
+#                                   <repo>/openshift-rbac-automation. Helm does not require a chart's
+#                                   name to match the release's previous chart, so the release keeps
+#                                   its name (nco) and its history.
+#   helm, from a checkout           the path is charts/openshift-rbac-automation now.
+#   ArgoCD                          argocd-application.yaml's `path` changed. An Application already
+#                                   tracking main reports the old path missing until the manifest is
+#                                   re-applied: oc apply -f argocd-application.yaml. Its metadata.name
+#                                   stays namespace-configuration-operator on purpose: renaming an
+#                                   Application creates a second one contending for the same objects.
+#
+# MINOR rather than MAJOR for the reason 0.8.0 gave: pre-1.0, MINOR is where the breaking change goes.
+#
 # 0.20.0, MINOR: SEVERAL oudGroup POLICIES CAN NOW SHARE ONE labelKey, split by a per-policy
 # `groupPrefix`. Each policy narrows itself to label values in one group family — bdp takes
 # bda-rbac-spark, trino takes bda-rbac-trino — via a guard the OPERATOR evaluates per namespace,
@@ -697,7 +741,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.20.0
+version: 0.21.0
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:

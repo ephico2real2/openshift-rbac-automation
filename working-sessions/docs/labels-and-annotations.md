@@ -114,8 +114,8 @@ not raise the limit to work around it.
 
 | key | values | meaning |
 |---|---|---|
-| `helm.sh/chart` | `namespace-configuration-operator-0.8.0` | **which revision of the policies a cluster is running** — this moves, so it is the version answer |
-| `app.kubernetes.io/name` | `namespace-configuration-operator` | Helm, from `_helpers.tpl#nco.labels` |
+| `helm.sh/chart` | `openshift-rbac-automation-0.21.0` | **which revision of the policies a cluster is running** — this moves, so it is the version answer |
+| `app.kubernetes.io/name` | `openshift-rbac-automation` | Helm, from `_helpers.tpl#nco.labels` |
 | `app.kubernetes.io/instance` | `nco` | the Helm release |
 | `app.kubernetes.io/managed-by` | `Helm` | note: **`Helm` on a CR, the operator on an object** — that is how you tell the two layers apart |
 | `app.kubernetes.io/version` | `1.2.6` | the **operator** version, from `Chart.AppVersion`. Set in exactly one place, and never on an object |
@@ -264,7 +264,7 @@ The only way to move metadata onto existing objects is to delete them and let th
 
 ```sh
 oc delete namespaceconfig --all && oc delete groupconfig --all
-helm upgrade nco charts/namespace-configuration-operator -n namespace-configuration-operator …   # recreates the CRs
+helm upgrade nco charts/openshift-rbac-automation -n namespace-configuration-operator …   # recreates the CRs
 ```
 
 **Measured cost, whole cluster:** 55 objects revoked in ~4s, all restored within ~50s. Free on CRC; on a
@@ -316,7 +316,7 @@ is not ownerReferences and not Kubernetes GC. Never delete one casually to "clea
   `objectTemplate` across the 10 RBAC policies there renders to valid YAML and sets **only** keys from
   §1–2 (plus the §4a family extensions). The Kyverno policies in the same directory are out of scope per
   §4a.
-- `charts/namespace-configuration-operator/templates/rbac-policies/_README.txt` — the four deployable policies and the rules for adding one
+- `charts/openshift-rbac-automation/templates/rbac-policies/_README.txt` — the four deployable policies and the rules for adding one
 
 **The history behind this contract is in git, not here.** The measurements that justified each choice —
 which keys were duplicates, which answered a question wrongly, and what the queries returned before and
