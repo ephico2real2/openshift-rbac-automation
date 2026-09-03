@@ -53,6 +53,11 @@ Then apply the policies:
 oc apply -f ../policies/
 ```
 
+To verify a rendered policy against the cluster as one of its members — the Role, the binding, the
+group, a SubjectAccessReview per verb, then real creates and a cleanup — follow
+[`docs/VERIFY_spark_job_submitter_role.md`](docs/VERIFY_spark_job_submitter_role.md), which ships in
+the chart package.
+
 ## Configuration
 
 | Key | Description | Default |
