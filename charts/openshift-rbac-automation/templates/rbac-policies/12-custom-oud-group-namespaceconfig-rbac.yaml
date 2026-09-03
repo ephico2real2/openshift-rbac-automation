@@ -175,6 +175,14 @@ now simply render empty for such a namespace.
 {{- $guard = printf "{{- if hasPrefix %s%s%s %s }}" $q $prefix $q $labelRef }}
 {{- end }}
 {{- $endif := "{{- end }}" }}
+{{- /*
+excludedPaths always carries the operator's own three. The operator unions [.metadata, .status,
+.spec.replicas] into the live CR on reconcile whatever the source declares (10-'s header has the
+measurement). A declared list that is shorter is therefore a permanent ArgoCD diff — two paths in Git,
+three on the cluster — and with selfHeal on, ArgoCD reverts and the operator re-adds, forever. The
+union here makes the rendered CR what the operator will leave it as; paths values adds on top are kept.
+*/}}
+{{- $excluded := concat (list ".metadata" ".status" ".spec.replicas") ($p.excludedPaths | default (list)) | uniq }}
 ---
 apiVersion: redhatcop.redhat.io/v1alpha1
 kind: NamespaceConfig
@@ -240,7 +248,7 @@ spec:
     # Namespace-scoped submitter Role
     # -------------------------------------------------------------------------
     - excludedPaths:
-        {{- toYaml $p.excludedPaths | nindent 8 }}
+        {{- toYaml $excluded | nindent 8 }}
       # The $guard / $endif pair wraps the WHOLE object — the operator evaluates the guard per
       # namespace, so where the label value is outside this policy's family (or empty) the template
       # renders empty and nothing is created. The Role is guarded like the binding deliberately: its
@@ -289,7 +297,7 @@ spec:
     # policy's groupPrefix before reading the operator log.
     # -------------------------------------------------------------------------
     - excludedPaths:
-        {{- toYaml $p.excludedPaths | nindent 8 }}
+        {{- toYaml $excluded | nindent 8 }}
       objectTemplate: |
         {{ $guard }}
         apiVersion: rbac.authorization.k8s.io/v1

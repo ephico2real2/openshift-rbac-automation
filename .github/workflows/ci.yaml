@@ -173,6 +173,24 @@ jobs:
             --set "$P.trino.groupPrefix=bda-rbac-spark-alpha"
           [ "$fails" -eq 0 ] || exit 1
 
+      # The operator unions [.metadata, .status, .spec.replicas] into every template's excludedPaths on the
+      # live CR, so a declared list that is shorter is a permanent ArgoCD diff — seen under ArgoCD on 0.21.0: two
+      # paths in Git, three on the cluster, selfHeal and the operator rewriting each other. 12- unions the
+      # operator's set at render time; this proves an overlay that lists fewer paths still renders all three.
+      - name: excludedPaths always carry the operator's own set
+        run: |
+          out=$(helm template release "$CHART" -f "$CHART/crc-values.yaml" \
+                  --set 'namespaceConfigPolicy.oudGroup.policies.bdp.excludedPaths={.metadata}')
+          blocks=$(echo "$out" | grep -c '^    - excludedPaths:' || true)
+          [ "$blocks" -gt 0 ] || { echo "::error::no excludedPaths block rendered"; exit 1; }
+          missing=$(echo "$out" | awk '
+            /^    - excludedPaths:/ { inb=1; seen=0; next }
+            inb && /^        - /    { if ($2 == ".spec.replicas") seen=1; next }
+            inb                     { if (!seen) m++; inb=0 }
+            END                     { print m+0 }')
+          echo "excludedPaths blocks: $blocks, missing .spec.replicas: $missing"
+          [ "$missing" -eq 0 ] || { echo "::error::$missing excludedPaths block(s) lack .spec.replicas"; exit 1; }
+
       # Install and uninstall ordering: policy CRs deleted BEFORE the Subscription, the sweep applied
       # AFTER the CRs, every resource declaring an explicit wave, no two hooks sharing a weight.
       #

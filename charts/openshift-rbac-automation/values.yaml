@@ -501,9 +501,17 @@ namespaceConfigPolicy:
 
         # Paths the operator IGNORES when comparing what it would create against what exists, so a
         # cluster-assigned field does not read as drift and cause a rewrite every reconcile.
+        #
+        # ALL THREE, ALWAYS. The operator unions [.metadata, .status, .spec.replicas] into the live CR on
+        # its first reconcile whatever this list says (10-'s header has the measurement). A shorter list
+        # here is therefore a permanent ArgoCD diff — two paths in Git, three on the cluster — and with
+        # selfHeal on, ArgoCD and the operator rewrite the spec at each other forever. 12- unions the
+        # operator's three into this list at render time, so leaving one out cannot recreate that; listing
+        # them here keeps Git reading the same as the cluster. Add to it, never trim it.
         excludedPaths:
           - .metadata
           - .status
+          - .spec.replicas
 
         # THE ACTUAL PERMISSIONS. Namespace-scoped, so nothing here can grant cluster-wide access — a
         # Role bound by a RoleBinding in one namespace.
@@ -563,6 +571,7 @@ namespaceConfigPolicy:
       #   excludedPaths:
       #     - .metadata
       #     - .status
+      #     - .spec.replicas
       #   rules:
       #     - apiGroups: [""]
       #       resources: ["pods", "pods/log"]
@@ -576,6 +585,7 @@ namespaceConfigPolicy:
       #   excludedPaths:
       #     - .metadata
       #     - .status
+      #     - .spec.replicas
       #   rules:
       #     - apiGroups: [""]
       #       resources: ["pods", "pods/log"]

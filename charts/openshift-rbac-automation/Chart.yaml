@@ -32,6 +32,18 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.21.1, PATCH: THE oudGroup POLICIES DECLARE excludedPaths [.metadata, .status, .spec.replicas] — the set
+# the operator writes into the live CR anyway — and 12- now unions those three into whatever values
+# declares. Before, values declared [.metadata, .status]; the operator added .spec.replicas on its first
+# reconcile (measured, 10-'s header), and ArgoCD then held the oudGroup CRs OutOfSync — two paths
+# in Git, three on the cluster — with selfHeal reverting and the operator re-adding, every cycle. The
+# baseline policies declare no list and showed no drift: ArgoCD ignores a field only the live object
+# carries. So: declare the operator's full set, and make it impossible to get wrong — an overlay that
+# lists fewer paths still renders all three (ci.yaml proves it). Paths values adds on top are kept.
+#
+# NOTHING CHANGES ON THE CLUSTER. The rendered spec now equals what the operator had already written, so
+# the upgrade patches nothing the operator disagrees with, and no RBAC object is touched.
+#
 # 0.21.0, MINOR: THE CHART IS RENAMED namespace-configuration-operator -> openshift-rbac-automation, and its
 # directory moves with it: charts/namespace-configuration-operator/ -> charts/openshift-rbac-automation/.
 # The old name described the upstream operator, and this chart stopped being an install-only wrapper at
@@ -741,7 +753,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.21.0
+version: 0.21.1
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:
