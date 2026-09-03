@@ -12,7 +12,7 @@ on:
   workflow_call:
 
 env:
-  CHART: charts/namespace-configuration-operator
+  CHART: charts/openshift-rbac-automation
 
 jobs:
   chart:
@@ -56,7 +56,7 @@ jobs:
         run: |
           python3 - <<'EOF' > /tmp/expected
           import yaml
-          v=yaml.safe_load(open("charts/namespace-configuration-operator/values.yaml"))
+          v=yaml.safe_load(open("charts/openshift-rbac-automation/values.yaml"))
           n=0
           ncp=v["namespaceConfigPolicy"]
           if ncp.get("enabled"):
@@ -93,8 +93,8 @@ jobs:
               for k, v in (b or {}).items():
                   out[k] = merge(a.get(k) or {}, v) if isinstance(v, dict) and isinstance(a.get(k), dict) else v
               return out
-          base = yaml.safe_load(open("charts/namespace-configuration-operator/values.yaml"))
-          over = yaml.safe_load(open("charts/namespace-configuration-operator/crc-values.yaml"))
+          base = yaml.safe_load(open("charts/openshift-rbac-automation/values.yaml"))
+          over = yaml.safe_load(open("charts/openshift-rbac-automation/crc-values.yaml"))
           v = merge(base, over)
           n = 0
           ncp = v["namespaceConfigPolicy"]

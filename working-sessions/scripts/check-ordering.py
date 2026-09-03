@@ -37,7 +37,7 @@ updating every time the thing it validates changes is a validator that silently 
 
 Usage:
     working-sessions/scripts/check-ordering.py            # every chart, every overlay
-    working-sessions/scripts/check-ordering.py --chart charts/namespace-configuration-operator
+    working-sessions/scripts/check-ordering.py --chart charts/openshift-rbac-automation
 """
 
 import argparse

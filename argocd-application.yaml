@@ -55,7 +55,7 @@ spec:
     # A branch for testing. Pin to a tag for anything you care about, so a push to main cannot change a
     # cluster without a commit that says so.
     targetRevision: main
-    path: charts/namespace-configuration-operator
+    path: charts/openshift-rbac-automation
     helm:
       # Matches the name used by `helm install nco …`, so resource names are identical whichever way this
       # chart is deployed and a switch between the two does not rename everything.

@@ -11,9 +11,9 @@
 #
 # Install or upgrade with:
 #
-#   helm upgrade --install nco charts/namespace-configuration-operator \
+#   helm upgrade --install nco charts/openshift-rbac-automation \
 #     -n namespace-configuration-operator \
-#     -f charts/namespace-configuration-operator/crc-values.yaml
+#     -f charts/openshift-rbac-automation/crc-values.yaml
 #
 # Everything else CRC needs is already the chart default and deliberately not repeated here:
 # createNamespace: false (the namespace predates the chart), the operator resources sized for a

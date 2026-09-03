@@ -49,7 +49,7 @@ jobs:
         uses: azure/setup-helm@v4
 
       # charts_dir defaults to `charts`, and the action packages each SUBDIRECTORY of it — which is
-      # why the chart had to move from chart/ to charts/namespace-configuration-operator/. Left at
+      # why the chart had to move from chart/ to charts/openshift-rbac-automation/. Left at
       # the repo root it would find nothing to package and publish nothing, with a green run.
       #
       # THE gh-pages BRANCH MUST ALREADY EXIST. With packages_with_index, chart-releaser builds a git

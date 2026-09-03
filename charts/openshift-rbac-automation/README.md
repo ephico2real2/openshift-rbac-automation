@@ -1,11 +1,11 @@
-# Namespace Configuration Operator — install chart
+# openshift-rbac-automation — Helm chart
 
-Installs the [Red Hat CoP Namespace Configuration Operator](https://github.com/redhat-cop/namespace-configuration-operator)
-(NCO) on OpenShift via OLM. Scope is the **operator install only** — a namespace, an
-AllNamespaces OperatorGroup, and a Subscription. The RBAC policies (`GroupConfig` /
-`NamespaceConfig` custom resources) live in [`../policies`](../policies) and are applied
-separately (they use the operator's own Go templating, so they are intentionally not
-Helm-templated).
+A customized [Red Hat CoP Namespace Configuration Operator](https://github.com/redhat-cop/namespace-configuration-operator)
+(NCO), packaged as a Helm chart together with our own RBAC policies. It installs the operator on
+OpenShift via OLM — a namespace, an AllNamespaces OperatorGroup, and a Subscription, optionally
+running a custom operator build — and deploys the policies (`NamespaceConfig` / `GroupConfig`
+custom resources) from `values.yaml`, one flag per policy. The raw manifests under
+[`../../working-sessions/policies`](../../working-sessions/policies) are the readable reference for those policies, not something to apply.
 
 ## What it creates
 

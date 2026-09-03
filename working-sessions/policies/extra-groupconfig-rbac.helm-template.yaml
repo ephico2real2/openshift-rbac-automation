@@ -1,7 +1,7 @@
 # =============================================================================
 # PARKED — a Helm template, NOT an applyable manifest
 # =============================================================================
-# This was charts/namespace-configuration-operator/templates/14-extra-groupconfig-rbac.yaml, rendering one GroupConfig that granted the
+# This was charts/openshift-rbac-automation/templates/14-extra-groupconfig-rbac.yaml, rendering one GroupConfig that granted the
 # OpenShift user-workload-monitoring roles to the -ns-admin / -ns-developer / -ns-audit tiers. It was
 # built, deployed and verified on CRC (50 RoleBindings across 28 groups), then withdrawn from the chart
 # because the access is not needed. Kept here rather than deleted: the work is sound and the research
@@ -9,8 +9,8 @@
 #
 # DO NOT `oc apply` THIS FILE. It is a Helm template — the `{{ }}` actions belong to two different
 # engines (see the header below) and it will not parse as a manifest. To use it again:
-#   1. move it back to charts/namespace-configuration-operator/templates/14-extra-groupconfig-rbac.yaml
-#   2. paste the values stanza at the bottom of this file into charts/namespace-configuration-operator/values.yaml
+#   1. move it back to charts/openshift-rbac-automation/templates/14-extra-groupconfig-rbac.yaml
+#   2. paste the values stanza at the bottom of this file into charts/openshift-rbac-automation/values.yaml
 #   3. bump the chart version
 #
 # WHY IT WAS WITHDRAWN, so the decision is not re-litigated blind: the grants it makes land in ONE
@@ -202,7 +202,7 @@ spec:
 # =============================================================================
 # THE VALUES STANZA THIS TEMPLATE NEEDS
 # =============================================================================
-# Removed from charts/namespace-configuration-operator/values.yaml when the template was parked. Paste it back at the top level —
+# Removed from charts/openshift-rbac-automation/values.yaml when the template was parked. Paste it back at the top level —
 # a sibling of namespaceConfigPolicy and clusterRbac, not a child of either.
 # =============================================================================
 # # ---------------------------------------------------------------------------
