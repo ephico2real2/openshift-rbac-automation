@@ -304,6 +304,38 @@ entries:
       artifacthub.io/operatorCapabilities: Basic Install
     apiVersion: v2
     appVersion: 1.2.6
+    created: "2026-09-03T02:05:28.257795111Z"
+    description: A customized Red Hat CoP Namespace Configuration Operator (NCO),
+      packaged as a Helm chart together with our own RBAC policies. Installs the operator
+      on OpenShift via OLM — a dedicated namespace, an AllNamespaces (global) OperatorGroup,
+      and a Subscription, optionally running a custom operator build — and deploys
+      the policies (NamespaceConfig and GroupConfig CRs) from namespaceConfigPolicy,
+      clusterRbac and customGroupConfig, one policy per flag. The baseline tiers ship
+      ENABLED, so a stock install grants RBAC; the raw manifests under working-sessions/policies
+      stay the readable reference for those.
+    digest: 2544e2e0d4a1ab9e81eda70565dc24890ecb326508430a8636d48d8f9d1b8d25
+    home: https://github.com/ephico2real2/openshift-rbac-automation
+    keywords:
+    - openshift
+    - olm
+    - rbac
+    - namespace-configuration-operator
+    - redhat-cop
+    maintainers:
+    - name: ephico2real2
+    name: openshift-rbac-automation
+    sources:
+    - https://github.com/ephico2real2/openshift-rbac-automation
+    - https://github.com/redhat-cop/namespace-configuration-operator
+    type: application
+    urls:
+    - openshift-rbac-automation-0.21.1.tgz
+    version: 0.21.1
+  - annotations:
+      artifacthub.io/operator: "true"
+      artifacthub.io/operatorCapabilities: Basic Install
+    apiVersion: v2
+    appVersion: 1.2.6
     created: "2026-09-03T00:35:45.700954387Z"
     description: A customized Red Hat CoP Namespace Configuration Operator (NCO),
       packaged as a Helm chart together with our own RBAC policies. Installs the operator
@@ -331,4 +363,4 @@ entries:
     urls:
     - openshift-rbac-automation-0.21.0.tgz
     version: 0.21.0
-generated: "2026-09-03T00:35:45.70098655Z"
+generated: "2026-09-03T02:05:28.257826558Z"
