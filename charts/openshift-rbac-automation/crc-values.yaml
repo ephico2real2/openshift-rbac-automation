@@ -74,6 +74,7 @@ namespaceConfigPolicy:
         excludedPaths:
           - .metadata
           - .status
+          - .spec.replicas
         # Leaner than spark's deliberately: a trino workload reads and inspects, it does not manage
         # secrets or bulk-delete. The difference is also the point — two families on one labelKey
         # carrying genuinely different grants is what this feature is for.

@@ -147,6 +147,12 @@ spec:
   # Not mirrored here on purpose: .spec.replicas is meaningless for a RoleBinding, so writing it into
   # this policy would imply a field these objects do not have. The operator's default is its business.
   #
+  # THE RULE FOR A POLICY THAT DOES DECLARE THEM (12- does, from values): declare the operator's FULL
+  # set, or ArgoCD holds the CR permanently OutOfSync. Not declaring, as here, is safe — ArgoCD ignores a
+  # field only the live object carries, and these CRs showed no drift. Declaring [.metadata, .status]
+  # was not: the cluster held three, Git two, and with selfHeal on ArgoCD and the operator rewrote the
+  # spec at each other. 12- unions the operator's three into whatever values declares, for that reason.
+  #
   # WHAT IT MEANS FOR YOU, and it is the same trap oud-group documents as GOTCHA 9: because .metadata
   # is excluded, editing labels or annotations in an objectTemplate below changes NOTHING on
   # RoleBindings that already exist. The operator reports success and the old metadata stays, so a
