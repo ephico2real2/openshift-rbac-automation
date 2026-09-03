@@ -32,6 +32,13 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.21.2, PATCH: docs/VERIFY_spark_job_submitter_role.md ships IN THE PACKAGE — a step-by-step check of
+# a rendered oudGroup policy against a live cluster as one of the group's members: the Role, the
+# binding, the group, a SubjectAccessReview per verb, real creates of every kind the Role names, and a
+# cleanup, with the outputs measured on the reference cluster. Two traps it records: `--as=` alone
+# carries no Group membership (a convincing "no"), and an unquoted zsh array impersonates a user
+# literally named after the flags. No template or default changes.
+#
 # 0.21.1, PATCH: THE oudGroup POLICIES DECLARE excludedPaths [.metadata, .status, .spec.replicas] — the set
 # the operator writes into the live CR anyway — and 12- now unions those three into whatever values
 # declares. Before, values declared [.metadata, .status]; the operator added .spec.replicas on its first
@@ -753,7 +760,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.21.1
+version: 0.21.2
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:
