@@ -32,6 +32,19 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.21.3, PATCH: DOCS ONLY, recording an operator-side fix this chart's oudGroup policies depended on.
+# Every guarded objectTemplate renders EMPTY for a namespace its guard rejects, and operator builds
+# before v1.2.6-84-gbc60603 logged that at error level — "Object 'Kind' is missing in 'null'", once
+# per rejected namespace per reconcile — because their template filter only understood
+# hasSuffix/contains on the namespace NAME and left everything else to a renderer that cannot
+# represent "nothing". From that build (quay :latest since 2026-09-04) the filter understands
+# hasPrefix / hasSuffix / contains / eq / ne / and / or / not on .Name, labels and annotations, and
+# decides any other guard by rendering first; a rejected namespace is skipped with one debug-level
+# line. Measured on CRC with the same two policies and four labelled namespaces: 40 error lines in
+# under three minutes before, zero after, identical Role/RoleBinding outcomes, and a deleted binding
+# recreated within a second. No template or default changes; 12-'s header and known-issues.md now
+# say which build behaves which way. operatorImage.tag stays `latest` — pin it on a cluster that
+# must not pick this up on its next pod restart.
 # 0.21.2, PATCH: docs/VERIFY_spark_job_submitter_role.md ships IN THE PACKAGE — a step-by-step check of
 # a rendered oudGroup policy against a live cluster as one of the group's members: the Role, the
 # binding, the group, a SubjectAccessReview per verb, real creates of every kind the Role names, and a
@@ -760,7 +773,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.21.2
+version: 0.21.3
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:
