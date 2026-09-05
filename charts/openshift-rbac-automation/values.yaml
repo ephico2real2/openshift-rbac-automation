@@ -365,9 +365,10 @@ podSecurity:
 #                          CRDs report Established. Measured on a bare-cluster install: its first poll
 #                          saw the CSV still `Installing`, so it is doing real work, not decorating.
 #
-# Verified end to end on a bare cluster (every NCO CRD, CSV and policy CR deleted first): one
-# `helm install` → revision 1 deployed in 3m21s, 2/2 CRDs, CSV Succeeded, operator ready, 5/5 policy
-# CRs, and the 42 operator-managed RBAC objects rebuilt.
+# Verified end to end on a bare cluster, before the trino fixture was added (every NCO CRD, CSV and
+# policy CR deleted first): one `helm install` → revision 1 deployed in 3m21s, 2/2 CRDs, CSV Succeeded,
+# operator ready, the then-enabled 5/5 policy CRs, and the 42 operator-managed RBAC objects rebuilt.
+# Today's crc-values.yaml renders 6 policy CRs: 4 NamespaceConfigs and 2 GroupConfigs.
 #
 # ON BY DEFAULT — a deliberate choice, with CI asserting "defaults render what values declares"
 # rather than "defaults render nothing". A plain `helm install` with stock values therefore
@@ -843,8 +844,9 @@ customGroupConfig:
     # roleRef comment — "Custom ClusterRole (must exist)" — is where this stanza came from.
     #
     # Inert today, and correctly so: the database-admin ClusterRole does not exist on the reference
-    # cluster, the repo does not define it, and 0 groups end in -database-admin. It is here as the
-    # worked shape, not as a live grant.
+    # cluster (the chart deliberately does not create it; the definition to apply by hand is
+    # working-sessions/policies/database-admin-clusterrole.yaml) and 0 groups end in -database-admin.
+    # It is here as the worked shape, not as a live grant.
     - name: database-admin
       suffix: -database-admin
       # OPTIONAL, defaults to `name`. Set here because the default would stutter — the group already

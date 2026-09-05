@@ -22,10 +22,10 @@ VERIFY
    $ oc get pods -n {{ .Values.namespace }}
    $ oc get deployment -n {{ .Values.namespace }}
 
-3. The policy CRDs are available (this chart installs both from its vendored crds/; OLM then
-   reconciles them from the operator bundle):
+3. The NCO CRDs are available (this chart installs NamespaceConfig and GroupConfig from its vendored
+   crds/; OLM reconciles those and supplies the rest, UserConfig among them, from the operator bundle):
    $ oc get crd | grep redhatcop.redhat.io
-   # expect: groupconfigs, namespaceconfigs
+   # expect: groupconfigs, namespaceconfigs, userconfigs, ...
 
 RBAC POLICIES
 =============

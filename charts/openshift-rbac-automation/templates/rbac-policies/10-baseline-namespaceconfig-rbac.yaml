@@ -4,7 +4,7 @@
 {{- fail "namespaceConfigPolicy.baseline.mnemonicLabelKey is empty. It selects the namespaces AND supplies the mnemonic that names the bound group, so empty would match EVERY namespace and bind groups named from nothing. Set it, or disable the baseline." }}
 {{- end }}
 {{- if not $b.environmentLabelKey }}
-{{- fail "namespaceConfigPolicy.baseline.environmentLabelKey is empty. It is what partitions nonprod from prod, so empty would let a prod namespace receive the nonprod grants — including ns-admin, which prod deliberately withholds. Set it, or disable the baseline." }}
+{{- fail "namespaceConfigPolicy.baseline.environmentLabelKey is empty. It is what partitions nonprod from prod, so empty would let a prod namespace receive the nonprod grants — including developer (edit), which prod deliberately withholds. Set it, or disable the baseline." }}
 {{- end }}
 # =============================================================================
 # NamespaceConfig — the BASELINE namespace RBAC every team receives
@@ -15,8 +15,8 @@
 # ── WHY THIS FILE HOLDS TWO POLICIES AND 12-custom-oud-group- HOLDS ONE ──────────────
 # SAME SHAPE -> ONE TEMPLATE. DIFFERENT SHAPE -> ITS OWN FILE.
 #
-# `nonprod` and `prod` differ only in DATA: which environments they select, which roles they grant,
-# and which roles they grant. prod withholding ns-admin is a SHORTER LIST, not a different structure.
+# `nonprod` and `prod` differ only in DATA: which environments they select and which roles they grant.
+# prod withholding developer (edit) is a SHORTER LIST, not a different structure.
 # So they share this template and are distinguished entirely in values.
 #
 # `oud-group` keeps its own file because it differs STRUCTURALLY — it creates a namespace-scoped Role

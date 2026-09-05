@@ -186,17 +186,19 @@ jobs:
       - name: excludedPaths always carry the chart's policy
         run: |
           P='namespaceConfigPolicy.oudGroup.policies.bdp'
-          # Each refusal must come from 12-'s guard: Helm's FIRST output line is "Error: execution error at
-          # (<template>:<line>): <message>" and the guard's message starts with its E_ marker, so the marker must
-          # follow the first ")" of that first line. Another fail's text can carry a user value that contains the
-          # marker (groupPrefix is printed %q) or even a line break followed by a forged "Error:" line (a policy map
-          # key; 12- now refuses such keys), but only inside its own message, after the first line (both measured).
+          # Each refusal must come from 12-'s guard. Helm prints "Error: execution error at (<template>:<line>):
+          # <message>" as its FIRST line beginning "Error:" (a coalesce warning about a --set that reshapes a value
+          # can precede it; measured), and the guard's message starts with its E_ marker, so the marker must follow
+          # the first ")" of that line. Another fail's text can carry a user value that contains the marker
+          # (groupPrefix is printed %q) or even a line break followed by a forged "Error:" line (a policy map key;
+          # 12- refuses such keys before anything else), but only after the genuine first Error line (both measured).
           refused_by_guard() {
             label="$1"; shift
             if out=$(helm template release "$CHART" -f "$CHART/crc-values.yaml" "$@" 2>&1); then
               echo "::error::[$label] rendered without allowMetadataExcluded"; exit 1
             fi
-            head -n1 <<<"$out" | grep -Eq '^Error: execution error at \([^)]*12-custom-oud-group[^)]*\): E_METADATA_EXCLUDED_UNACKNOWLEDGED: ' \
+            grep -m1 '^Error:' <<<"$out" \
+              | grep -Eq '^Error: execution error at \([^)]*12-custom-oud-group[^)]*\): E_METADATA_EXCLUDED_UNACKNOWLEDGED: ' \
               || { echo "::error::[$label] refused, but not by 12-'s guard. Got:"; echo "$out"; exit 1; }
             echo "[$label] refused by 12-"
           }
@@ -206,6 +208,8 @@ jobs:
           refused_by_guard ".metadata.labels"            --set "$P.excludedPaths={.metadata.labels}"
           refused_by_guard ".metadata.annotations"       --set "$P.excludedPaths={.metadata.annotations}"
           refused_by_guard ".metadata.labels.<key>"      --set "$P.excludedPaths={.metadata.labels.example}"
+          # a --set-string that reshapes rules makes Helm print a coalesce warning BEFORE the error line
+          refused_by_guard ".metadata, after a coalesce warning" --set "$P.excludedPaths={.metadata}" --set-string "$P.rules.foo=bar"
           # .metadata.finalizers touches neither labels nor annotations: it must render.
           helm template release "$CHART" -f "$CHART/crc-values.yaml" --set "$P.excludedPaths={.metadata.finalizers}" >/dev/null \
             || { echo "::error::.metadata.finalizers as an extra was refused; only labels/annotations paths should be"; exit 1; }

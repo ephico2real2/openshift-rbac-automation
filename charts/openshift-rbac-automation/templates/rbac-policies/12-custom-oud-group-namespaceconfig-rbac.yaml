@@ -18,16 +18,20 @@ the `if` it is a parse error ("unexpected <define> in command").
 {{- fail "namespaceConfigPolicy.oudGroup.policies is empty, so this would render nothing while the flag is on — a silent no-op. Give it at least one policy, or disable oudGroup." }}
 {{- end }}
 {{- /*
-PRE-PASS: groupPrefix syntax, and disjointness across policies sharing a labelKey. Runs BEFORE the
-main range so a bad combination refuses to render at all rather than rendering the good policies and
-skipping the bad one. Maps range in sorted key order, so the first failure is deterministic.
+PRE-PASSES. First, every policy KEY (enabled or not) must be single-line: a key with a line break would let a
+value-carrying fail print a second "Error:" line and forge CI's guard match (review), and it runs on its own
+so an earlier key's groupPrefix failure cannot preempt it. Then groupPrefix syntax, and disjointness across
+policies sharing a labelKey. Both run BEFORE the main range so a bad combination refuses to render at all
+rather than rendering the good policies and skipping the bad one. Maps range in sorted key order, so the
+first failure within each pass is deterministic.
 */}}
-{{- $byLabelKey := dict }}
-{{- range $key, $p := $og.policies }}
-{{- /* A key with a line break would let a value-carrying fail print a second "Error:" line and forge CI's guard match (review). */}}
+{{- range $key, $_ := $og.policies }}
 {{- if or (contains "\n" $key) (contains "\r" $key) }}
 {{- fail "namespaceConfigPolicy.oudGroup.policies has a key containing a line break; policy keys must be single-line." }}
 {{- end }}
+{{- end }}
+{{- $byLabelKey := dict }}
+{{- range $key, $p := $og.policies }}
 {{- if and $p.enabled $p.labelKey }}
 {{- $normalized := include "nco.oudGroupPrefixNormalized" $p.groupPrefix }}
 {{- if $normalized }}

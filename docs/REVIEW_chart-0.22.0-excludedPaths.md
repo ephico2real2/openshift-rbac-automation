@@ -137,3 +137,17 @@ renders 2); a broken relative link in the chart README (the local-testing docume
 **Verification after the fourth-pass changes:** lint clean (both values files); rendered CR specs identical to
 03fe6ed; CI step offline: six refusals, `.metadata.finalizers` renders, 11 blocks, 0 missing; both forgeries not
 matched; NOTES renders; no broken relative link in the chart README.
+
+## Fifth pass, confirmation (head 89b741c)
+
+| Claim | Codex | Cursor | Decision |
+|---|---|---|---|
+| C1 no input forges the first-line match | REFUTED the other way: 78 leaf and 5 key forgeries all fail, but a `--set-string` that reshapes `rules` makes Helm print a coalesce warning BEFORE the error line, so `head -n1` was a false NEGATIVE for a genuine guard refusal | CONFIRMED (every forgery table entry failed; the control matched) | **Accepted Codex's finding** (reproduced): the helper now takes the first line beginning `Error:`; a probe with the coalesce warning added. |
+| C2 the key check runs first for every key | REFUTED: an earlier sorted key's groupPrefix fail preempted a later key's line-break check | CONFIRMED (per key it is first) | **Accepted**: the key check is its own pass over all keys before the groupPrefix pass (measured: the forged key now fails first). |
+| C3 vendored CRDs; SkipDryRun still justified | CONFIRMED (2 CRDs; the Application sets `skipCrds: true`, so OLM supplies them mid-sync) | CONFIRMED, with the precision that ArgoCD renders `--include-crds` unless `skipCrds` | — |
+| C4 prose matches values/render | REFUTED on three: `helm upgrade` semantics needed the `--reuse-values` / no-arguments qualifier; "no script" while a legacy helper exists under working-sessions/scripts; NOTES omitted UserConfig | CONFIRMED | **Accepted all three** (the helper exists; the cluster serves four redhatcop CRDs). |
+| C5 specs identical to 03fe6ed | CONFIRMED (two description annotations only) | CONFIRMED | — |
+| C6 remaining contradictions | 10- still said prod withholds `ns-admin` (values: developer/edit); values' bare-cluster measurement said 5/5 policy CRs without dating it (6 today); values said the repo does not define `database-admin` (working-sessions/policies defines it) | the same two 10- lines | **Accepted all** after measuring. |
+
+**Volunteered by Codex, accepted:** the chart README's `helm install nco ./chart` commands named a directory that
+does not exist from any working directory; they now use the repository-root path (measured: it renders).
