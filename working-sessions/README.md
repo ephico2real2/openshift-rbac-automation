@@ -394,8 +394,12 @@ managed resources"* — but on this version it is **empty** on every NamespaceCo
 including long-lived ones. The tracking is real; it is just not surfaced in status, so the
 operator log is the place to look.
 
-`excludedPaths` has **no CRD default**. The operator injects one at runtime — a template
-declaring `['.metadata', '.status']` is stored as `['.metadata', '.status', '.spec.replicas']`.
+`excludedPaths` has **no CRD default**. Operator builds before v1.2.6-131 wrote their defaults into the
+spec on first reconcile — a template declaring `['.metadata', '.status']` was stored as
+`['.metadata', '.status', '.spec.replicas']`. From v1.2.6-131 the operator applies its defaults
+(`.status`, `.spec.replicas`, `.metadata.finalizers`) **in memory** and never writes the list; the spec
+stays what its author wrote, and this chart declares `[.status, .spec.replicas]` on every template as
+its own policy (Chart.yaml 0.22.0, and `docs/DESIGN_excludedPaths.md` for the design record).
 
 ### Two independent layers — this is the part that trips people
 
@@ -404,8 +408,8 @@ declaring `['.metadata', '.status']` is stored as `['.metadata', '.status', '.sp
 | **Lifecycle** | the whole object | always tracked; deleted on CR-delete, relabel, or unmatch |
 | **Field enforcement** | paths *within* the object | `excludedPaths` are left alone |
 
-Every NamespaceConfig in this repo excludes `.metadata`, so those two layers produce
-different answers for different edits. Verified by changing one of each:
+Before chart 0.22.0 every NamespaceConfig here excluded `.metadata`, so those two layers produced
+different answers for different edits. Verified then by changing one of each:
 
 ```
 spec change      pods/log verbs ["get","list"] -> ["get","list","watch"]
@@ -415,9 +419,17 @@ metadata change  adding an annotation to the template
                  did NOT propagate — required delete + recreate
 ```
 
-> ### GOTCHA 9 — template metadata edits do not reach existing objects
+Since chart 0.22.0 on operator v1.2.6-131 the second edit propagates too: the operator owns the labels
+and annotations a template renders, and a rendered label changed by hand is restored (measured on the
+sandbox, release 10). The exception is an oud-group policy whose values still list `.metadata`, which
+template 12 refuses unless the policy sets `allowMetadataExcluded: true`.
+
+> ### GOTCHA 9 — template metadata edits do not reach existing objects (before chart 0.22.0 / operator v1.2.6-131)
 >
-> Because `.metadata` is in `excludedPaths` on every NamespaceConfig here, editing labels or
+> RETIRED for that pair: the chart now declares `excludedPaths: [.status, .spec.replicas]`, the operator
+> owns the metadata it renders, and label edits reach existing objects (measured). Kept for older pairs:
+>
+> Because `.metadata` is in `excludedPaths` on every NamespaceConfig there, editing labels or
 > annotations in an `objectTemplate` changes **nothing** on objects that already exist.
 > `oc apply` succeeds, the operator reports `ReconcileSuccess`, and the old metadata stays
 > indefinitely. Only newly created objects pick it up, so a cluster ends up with two

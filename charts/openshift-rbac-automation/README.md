@@ -2,8 +2,8 @@
 
 A customized [Red Hat CoP Namespace Configuration Operator](https://github.com/redhat-cop/namespace-configuration-operator)
 (NCO), packaged as a Helm chart together with our own RBAC policies. It installs the operator on
-OpenShift via OLM — a namespace, an AllNamespaces OperatorGroup, and a Subscription, optionally
-running a custom operator build — and deploys the policies (`NamespaceConfig` / `GroupConfig`
+OpenShift via OLM into the configured namespace (created only when `createNamespace=true`), with an
+AllNamespaces OperatorGroup and a Subscription, optionally running a custom operator build — and deploys the policies (`NamespaceConfig` / `GroupConfig`
 custom resources) from `values.yaml`, one flag per policy. The raw manifests under
 [`../../working-sessions/policies`](../../working-sessions/policies) are the readable reference for those policies, not something to apply.
 
@@ -11,7 +11,7 @@ custom resources) from `values.yaml`, one flag per policy. The raw manifests und
 
 | Resource | Name | Notes |
 |---|---|---|
-| `Namespace` | `namespace-configuration-operator` | pre-install hook; skip with `createNamespace=false` |
+| `Namespace` | `namespace-configuration-operator` | an ordinary release resource (no hook); off by default, `createNamespace=true` renders it |
 | `OperatorGroup` | `namespace-configuration-operator` | **AllNamespaces** (empty spec); skip with `createOperatorGroup=false` |
 | `Subscription` | `namespace-configuration-operator` | channel `alpha`, source `community-operators` |
 
@@ -29,11 +29,12 @@ spec). This is the key difference from a namespace-scoped operator, which lists 
 ## Install
 
 ```bash
-# Default: dedicated namespace + global OperatorGroup + Subscription
-helm install nco ./chart
+# From the repository root. Default: existing install namespace + global OperatorGroup + Subscription
+# (+ the custom image patch)
+helm install nco charts/openshift-rbac-automation
 
 # Into the built-in openshift-operators namespace (already has a global OperatorGroup):
-helm install nco ./chart \
+helm install nco charts/openshift-rbac-automation \
   --set namespace=openshift-operators \
   --set createNamespace=false \
   --set createOperatorGroup=false
@@ -47,11 +48,16 @@ oc get pods -n namespace-configuration-operator
 oc get crd | grep redhatcop.redhat.io   # groupconfigs, namespaceconfigs, ...
 ```
 
-Then apply the policies:
+The chart deploys every policy enabled in `values.yaml` (the baseline namespace tiers and the cluster
+GroupConfig ship enabled; the oud-group example and the custom GroupConfig ship disabled). Verify them with:
 
 ```bash
-oc apply -f ../policies/
+oc get namespaceconfigs.redhatcop.redhat.io
+oc get groupconfigs.redhatcop.redhat.io
 ```
+
+Do not apply `../../working-sessions/policies/` alongside the chart. Those files are readable design
+references and would duplicate the CRs the chart manages.
 
 To verify a rendered policy against the cluster as one of its members — the Role, the binding, the
 group, a SubjectAccessReview per verb, then real creates and a cleanup — follow
@@ -63,7 +69,7 @@ the chart package.
 | Key | Description | Default |
 |---|---|---|
 | `namespace` | Install namespace (operator watches all namespaces regardless) | `namespace-configuration-operator` |
-| `createNamespace` | Create the install namespace | `true` |
+| `createNamespace` | Create the install namespace | `false` |
 | `createOperatorGroup` | Create the AllNamespaces OperatorGroup | `true` |
 | `subscription.packageName` | Catalog package name | `namespace-configuration-operator` |
 | `subscription.channel` | Update channel | `alpha` |
@@ -78,14 +84,14 @@ the chart package.
 | `subscription.zapDevel` | Development-mode logging (`ZAP_DEVEL`) | `"false"` |
 | `subscription.relatedImageManager` | `RELATED_IMAGE_MANAGER` env — does NOT override this operator's image (tested); off by default | `""` |
 | `subscription.extraEnv` | Extra env appended to `spec.config.env` | `[]` |
-| `subscription.resources` | Operator resource requests/limits (`spec.config.resources`) | 250m/500Mi → 2/4Gi |
-| `operatorImage.enabled` | Patch a custom operator image into the CSV (see below) | `false` |
+| `subscription.resources` | Operator resource requests/limits (`spec.config.resources`) | 100m/128Mi → 500m/512Mi |
+| `operatorImage.enabled` | Patch a custom operator image into the CSV (see below) | `true` |
 | `operatorImage.repository` / `tag` | The image to run | `quay.io/ephico2real/namespace-configuration-operator` / `latest` |
 | `operatorImage.pullPolicy` | Pull policy written into the CSV | `Always` |
 | `operatorImage.expectedImagePattern` | Regex the CSV's current image must match before it is overwritten | upstream `redhat-cop` image |
 | `operatorImage.csvDeploymentName` / `containerName` | Where in the CSV to patch (matched by name) | `…-controller-manager` / `manager` |
 | `operatorImage.imagePullSecret` | Pull secret for a private registry; empty for public | `""` |
-| `operatorImage.reconcile.enabled` | CronJob that re-patches after OLM upgrades revert the CSV | `false` |
+| `operatorImage.reconcile.enabled` | CronJob that re-patches after OLM upgrades revert the CSV | `true` |
 | `operatorImage.reconcile.schedule` | Reconcile schedule | `*/10 * * * *` |
 | `operatorImage.job.*` | Tool image, wait budget, retries, resources for the Job | see `values.yaml` |
 | `podSecurity.audit` / `podSecurity.warn` | PSA labels on the created namespace | `privileged` |
@@ -149,10 +155,10 @@ after it finishes.
 
 ## Operator image override — patching the CSV (Kyverno not required)
 
-Running our **custom-built** operator image no longer needs Kyverno. Enable
-`operatorImage.enabled=true` and the chart runs a Job that patches the image directly into the
-installed ClusterServiceVersion. Full write-up, including the negative results:
-[`../docs/local-testing/LOCAL_TEST_operator_image_override.md`](../docs/local-testing/LOCAL_TEST_operator_image_override.md).
+Running our **custom-built** operator image no longer needs Kyverno. With `operatorImage.enabled`
+(on in the stock values; set it to `false` to keep the catalog image) the chart runs a Job that patches
+the image directly into the installed ClusterServiceVersion. Full write-up, including the negative results:
+[`../../working-sessions/docs/local-testing/LOCAL_TEST_operator_image_override.md`](../../working-sessions/docs/local-testing/LOCAL_TEST_operator_image_override.md).
 
 What does **not** work (all tested on-cluster):
 
@@ -171,7 +177,7 @@ What **does** work:
 - ✅ `spec.config` still owns the ZAP log env and `resources`.
 
 ```bash
-helm upgrade --install nco ./chart \
+helm upgrade --install nco charts/openshift-rbac-automation \
   --set operatorImage.enabled=true \
   --set operatorImage.repository=quay.io/ephico2real/namespace-configuration-operator \
   --set operatorImage.tag=latest
@@ -195,11 +201,12 @@ is `containers[0]`, which is a bundle detail rather than a contract.
 The refusal guard is `operatorImage.expectedImagePattern`; widen it if you fork from a
 different upstream.
 
-### Two things to know before enabling this
+### Two things to know about this override
 
-**1. It is one-shot, not enforcing.** Kyverno mutated at admission, so it self-healed. This Job
-patches once. An OLM operator upgrade installs a fresh CSV from the catalog and the upstream
-image returns. Set `operatorImage.reconcile.enabled=true` for a CronJob that restores it.
+**1. The patch Job is one-shot; the reconcile CronJob is what enforces it.** Kyverno mutated at
+admission, so it self-healed. This Job patches once, and an OLM operator upgrade installs a fresh CSV
+from the catalog with the upstream image. The CronJob under `operatorImage.reconcile` (on in the stock
+values, every 10 minutes) restores it; set `operatorImage.reconcile.enabled=false` for one-shot behaviour.
 
 **2. A bad image wedges OLM.** If the target image is unpullable, the rollout never completes
 and OLM parks the CSV in `InstallWaiting`, where it **stops re-applying the Deployment**.
