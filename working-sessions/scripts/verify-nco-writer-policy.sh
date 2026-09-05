@@ -63,7 +63,8 @@ classify() {
   local out
   if out=$("$@" 2>&1); then
     printf 'allowed'
-  elif printf '%s' "$out" | grep -q 'denied the request'; then
+  elif printf '%s' "$out" | grep -qE 'denied (the )?request'; then
+    # Kyverno says "denied the request"; the API server's ValidatingAdmissionPolicy says "denied request"
     printf 'denied'
   elif printf '%s' "$out" | grep -qi 'forbidden'; then
     printf 'forbidden'
@@ -150,8 +151,14 @@ fi
 if oc get validatingadmissionpolicy protect-kyverno-configuration >/dev/null 2>&1; then
   got=$(classify oc patch cm kyverno -n kyverno --type=merge -p '{"data":{"verify-probe":"x"}}' --dry-run=server --as=probe-dev --as-group=app-ocp-rbac-alpha-cluster-developer --as-group=system:authenticated)
   case $got in
-    *ValidatingAdmissionPolicy*|denied) ok "companion: the edit tier cannot change Kyverno's ConfigMap" ;;
+    denied) ok "companion: the edit tier cannot change Kyverno's ConfigMap" ;;
     *) bad "companion: expected the edit tier to be refused on Kyverno's ConfigMap, got $got" ;;
+  esac
+  # a Kyverno service-account name is not a free pass: the edit tier can mint one in that namespace
+  got=$(classify oc patch cm kyverno -n kyverno --type=merge -p '{"data":{"verify-probe":"x"}}' --dry-run=server --as=system:serviceaccount:kyverno:forged --as-group=system:serviceaccounts:kyverno --as-group=system:authenticated)
+  case $got in
+    denied|forbidden) ok "companion: a forged kyverno service account is refused ($got)" ;;
+    *) bad "companion: expected a forged kyverno service account to be refused, got $got" ;;
   esac
   # shellcheck disable=SC2046
   got=$(classify oc patch cm kyverno -n kyverno --type=merge -p '{"data":{"verify-probe":"x"}}' --dry-run=server --as="$(oc whoami)" $(login_groups))

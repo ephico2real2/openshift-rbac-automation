@@ -18,15 +18,23 @@
 #
 # WHAT IT CHECKS
 # CREATE, UPDATE and DELETE of ConfigMaps and Deployments (and the scale subresource) in the
-# kyverno namespace are allowed only for the platform administrators and Kyverno's own service
-# accounts. "Platform administrator" is the guardrail's own allow-list, evaluated in process
-# here: the names OpenShift itself uses (system:admin, system:masters, system:cluster-admins);
-# the chart's -cluster-admin tier, app-ocp-rbac-<mnemonic>-cluster-admin, the trusted platform
-# admins by the chart's design (the same pattern as the guardrail, for the same reasons); and the
-# API server's authorizer asked whether the requester may do verb "*" on resource "*" in group
-# "*", which only a wildcard rule (a cluster-admin binding) grants. The -cluster-developer tier,
-# which holds edit, is refused. If Kyverno is deployed by a GitOps controller rather than by an
-# administrator running Helm, add that controller's service account to the validation.
+# kyverno namespace are allowed only for the platform administrators. That is the guardrail's
+# own allow-list, evaluated in process here: the names OpenShift itself uses (system:admin,
+# system:masters, system:cluster-admins); the chart's -cluster-admin tier by PATTERN,
+# app-ocp-rbac-<mnemonic>-cluster-admin, the trusted platform admins by the chart's design (the
+# same pattern as the guardrail, for the same reasons); groups allowed BY NAME in
+# namedPlatformAdminGroups, for a group that does not fit the pattern; and the API server's
+# authorizer asked whether the requester may do verb "*" on resource "*" in group "*", which only
+# a wildcard rule (a cluster-admin binding) grants. The -cluster-developer tier, which holds edit,
+# is refused. If Kyverno is deployed by a GitOps controller rather than by an administrator
+# running Helm, add that controller's service account to the validation.
+#
+# No Kyverno service account is exempted, on purpose. Measured: none of them has ever written
+# this ConfigMap or these Deployments (managedFields carry helm, kubectl and, through the status
+# subresource only, kube-controller-manager), and the developer tier can create ServiceAccounts,
+# Pods and tokens in the kyverno namespace, so an exemption by service-account name is an
+# identity that tier can mint. Kubernetes' own controllers write Deployments through /status,
+# which this policy does not match.
 #
 # TESTING (server dry runs, as the developer tier that holds edit)
 #   oc patch cm kyverno -n kyverno --type=merge -p '{"data":{"probe":"x"}}' --dry-run=server \
@@ -69,11 +77,15 @@ spec:
     - name: isPlatformAdminTier
       # The chart's -cluster-admin tier: the same pattern as the guardrail, see its comment there.
       expression: variables.groups.exists(g, g.startsWith('app-ocp-rbac-') && g.endsWith('-cluster-admin'))
-    - name: isKyvernoItself
-      expression: request.userInfo.username.startsWith('system:serviceaccount:kyverno:')
+    - name: namedPlatformAdminGroups
+      # Groups allowed by exact name, for platform admins outside the pattern. One string per
+      # group, for example ['ocp-platform-admins', 'sre-oncall']. Empty means none.
+      expression: "[]"
+    - name: isNamedPlatformAdmin
+      expression: variables.groups.exists(g, g in variables.namedPlatformAdminGroups)
   validations:
     - expression: >-
-        variables.isClusterAdmin || variables.isPlatformAdminTier || variables.isKyvernoItself ||
+        variables.isClusterAdmin || variables.isPlatformAdminTier || variables.isNamedPlatformAdmin ||
         authorizer.group('*').resource('*').check('*').allowed()
       messageExpression: >-
         request.operation + ' on ' + request.resource.resource +

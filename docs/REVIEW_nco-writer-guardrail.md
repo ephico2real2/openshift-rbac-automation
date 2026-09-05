@@ -84,3 +84,22 @@ both companion checks).
 is the trusted platform-admin population by the chart's design, so the companion must not lock it out of Kyverno's
 configuration; it now carries the guardrail's pattern exemption. Measured: the tier's patch of the `kyverno`
 ConfigMap allowed, the developer tier still refused.
+
+## Third pass on the companion (85019e9), Cursor
+
+| Claim | Cursor | Decision |
+|---|---|---|
+| C1 the `authorizer` check asks the API server for verb `*` on resource `*` in group `*`, cluster-scoped | CONFIRMED (the strings are literal attribute values; RBAC's `*` in a rule is what matches them) | — |
+| C2 the namespace selector and `deployments/scale` semantics; no bypass by omitting the namespace | CONFIRMED | — |
+| C3 the `system:serviceaccount:kyverno:` prefix is an identity the restricted tier can mint | PLAUSIBLE (no cluster) | **Re-measured, accepted**: the developer tier may create ServiceAccounts, Pods, tokens and exec in the kyverno namespace, and Kyverno's background controller holds update on ConfigMaps there. None of Kyverno's accounts has ever written the ConfigMap or the Deployments (managers: helm, kubectl, and kube-controller-manager through the status subresource only). The exemption is removed; measured: the background controller's account and a forged account are refused, Kubernetes' controllers write through `/status`, which the policy does not match |
+| C4 `failurePolicy` semantics for a VAP and the risk to Helm, OLM, Kyverno's own writes | CONFIRMED | — |
+| C5 GroupSync is namespaced, status writes unmatched, the operator's `SetDefaults` updates the main resource | CONFIRMED (cited from the group-sync-operator source) | the allow-list of the group-sync operator's account is load-bearing |
+
+**Volunteered, accepted:** the API server's refusal reads "denied request" where Kyverno's reads "denied the
+request"; the script's classifier now recognises both (the live run had passed through the error branch by luck).
+A forged Kyverno account is pinned as refused.
+
+**Operator's addition:** both policies now carry `namedPlatformAdminGroups`, an explicit list of groups allowed by
+exact name next to the tier pattern. Measured with a temporary list: a member holding edit plus the named group
+patched Kyverno's ConfigMap and created a NamespaceConfig in Deny while the developer tier was refused in both;
+with the shipped empty list the same identity is a plain edit holder. Settled runs: 29 checks in Audit, 28 in Deny.

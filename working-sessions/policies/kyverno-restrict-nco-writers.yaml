@@ -48,6 +48,8 @@
 #      create Secrets in its namespace). A GroupSync names its own provider, URL and credentials
 #      Secret, so whoever writes one decides which Groups exist and therefore who holds the tier
 #      this policy exempts. GroupSync CRs are guarded here as well;
+#   2b. members of a group named in namedPlatformAdminGroups: platform admins whose group does not
+#      fit the pattern, allowed by exact name (the same list exists in the companion policy);
 #   3. the operator's own service account. It removes its finalizer with an UPDATE on the CR
 #      (not on /status), so denying it would hang every CR deletion on the finalizer. The
 #      group-sync operator's service account likewise, for the GroupSync CRs it owns;
@@ -171,6 +173,13 @@ spec:
       # the design; this exemption is the chart's grant narrowed by the family prefix, nothing more.
       # A full-name regex (proposed in review) would be narrower than the grant itself.
       expression: variables.groups.exists(g, g.startsWith('app-ocp-rbac-') && g.endsWith('-cluster-admin'))
+    - name: namedPlatformAdminGroups
+      # Groups allowed by exact name, for platform admins outside the tier pattern. One string per
+      # group, for example ['ocp-platform-admins', 'sre-oncall']. Empty means none. Keep this list
+      # and the one in vap-protect-kyverno-configuration.yaml the same.
+      expression: "[]"
+    - name: isNamedPlatformAdmin
+      expression: variables.groups.exists(g, g in variables.namedPlatformAdminGroups)
     - name: isTrustedServiceAccount
       # The two operators (namespace and service account of each OLM install; the group-sync
       # operator may update its GroupSync CRs), and the GitOps application controller that
@@ -197,8 +206,8 @@ spec:
       expression: resource.Post("authorization.k8s.io/v1", "subjectaccessreviews", variables.wildcardReview).status.allowed == true
   validations:
     - expression: >-
-        variables.isClusterAdmin || variables.isClusterAdminTier || variables.isTrustedServiceAccount ||
-        variables.isRBACClusterAdmin
+        variables.isClusterAdmin || variables.isClusterAdminTier || variables.isNamedPlatformAdmin ||
+        variables.isTrustedServiceAccount || variables.isRBACClusterAdmin
       messageExpression: >-
         request.operation + ' on ' + request.resource.resource + '.' + request.resource.group +
         ' is restricted to cluster administrators, the -cluster-admin tier and approved service accounts; refused for ' +
