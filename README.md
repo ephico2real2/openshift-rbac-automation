@@ -124,10 +124,11 @@ helm upgrade --install nco charts/openshift-rbac-automation -n namespace-configu
   --set namespaceConfigPolicy.baseline.enabled=true
 ```
 
-Or everything, which is one command rather than four — **the flags are not cumulative across
-invocations.** `helm upgrade` resets to chart defaults the moment either `-f` or `--set` is given, so a
-flag you leave off a later command is a policy you switch **off**, and switching a policy off revokes
-what it created:
+Or everything, which is one command rather than four — **overrides are not cumulative across
+invocations.** `helm upgrade` recomputes values from the chart defaults plus the `-f` / `--set` arguments
+of that invocation, so an override you leave off a later command returns to its default; for the
+off-by-default oud-group and custom policies that switches the policy **off**, and switching a policy off
+revokes what it created:
 
 ```bash
 helm upgrade --install nco charts/openshift-rbac-automation -n namespace-configuration-operator \
@@ -490,24 +491,24 @@ ClusterRole the chart binds but does not create, and the `kyverno-*.yaml` valida
 - Rich metadata for monitoring and troubleshooting
 
 ### ✅ **System Namespace Access**
-- **Monitoring access**: not deployed by the chart today; the reference policy is parked under `working-sessions/policies/`
-- **Uses standard groups**: Works with existing `app-ocp-rbac-{mnemonic}-ns-(admin|developer)` groups
-- **Dedicated infrastructure groups**: Platform teams with specialized cluster-wide access
-- **Scalable pattern**: Easy to add new system namespace access
-- **Environment aware**: Monitoring access available in all environments
+- **Monitoring access**: not deployed by the chart; the former reference policy is parked under `working-sessions/policies/` and is not chart output
+- **Dedicated infrastructure groups**: the platform tiers are `clusterRbac` (admin / edit / view ClusterRoleBindings), not a monitoring RoleBinding
 
 ## 🔧 Custom Domain Support
 
-If you need to use a different domain instead of `company.net`, you can generate custom versions of the NamespaceConfig files:
+If you need a different domain instead of `company.net`, override the selector keys in the chart values;
+the templates render the new keys directly (no generated copies, no script):
 
-```bash
-# Generate configs for a custom domain
-cd <path-to-repo>/openshift-rbac-automation && ./scripts/create-custom-domain-configs.sh test.example.com
+```yaml
+namespaceConfigPolicy:
+  baseline:
+    mnemonicLabelKey: test.example.com/mnemonic
+    environmentLabelKey: test.example.com/app-environment
+  oudGroup:
+    policies:
+      bdp:
+        labelKey: test.example.com/oud-group
 ```
-
-This will create new files with your custom domain:
-- `test.example.com-nonprod-namespaceconfig-rbac.yaml`
-- `test.example.com-prod-namespaceconfig-rbac.yaml`
 
 **Note:** Make sure to label your namespaces with the new domain:
 ```bash
@@ -570,9 +571,14 @@ templates:
 2. **Template conditional**: Only creates ClusterRoleBindings for cluster-level groups
 3. **Result**: `app-ocp-rbac-*-ns-*` groups are processed but filtered out
 
-**Expected behavior**: Template errors for namespace groups are normal - they indicate filtering is working.
+**Expected behavior**: a namespace-level group renders an empty document and creates nothing; that silence is the filter working, not an error.
 
 ## 🎯 Advanced: Modular GroupConfig Pattern
+
+> **Illustrative only, not chart output.** The snippets below show the pattern for a GroupConfig you would
+> add to values (or park under `working-sessions/policies/`). The repository ships no
+> `security-admin-rbac.yaml`, `monitoring-rbac.yaml` or `backup-operator-rbac.yaml`, and the `kubectl apply`
+> lines are not install steps.
 
 **Benefit**: This architecture makes it incredibly easy to create **custom ClusterRole assignments for specific group patterns**.
 

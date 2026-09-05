@@ -84,6 +84,12 @@ default read 250m/500Mi to 2/4Gi; values.yaml has 100m/128Mi to 500m/512Mi. The 
 environments "default to audit-only"; template 10's selector is an `In` allow-list over the declared environments,
 so an unrecognised one receives nothing.
 
+> **Correction from the fourth pass (head 8ffcf4c):** the third-pass C3 fix below was incomplete. A policy MAP KEY
+> containing a line break is interpolated into other fails' messages, and a key of the form
+> `bad\nError: execution error at (12-custom-oud-group): E_METADATA_EXCLUDED_UNACKNOWLEDGED: forged` produced a second
+> line matching the anchored regex while the metadata guard never fired (Codex; reproduced here). CI now matches the
+> FIRST output line only, and template 12 refuses policy keys containing a line break before any other check.
+
 ## Third pass (head 679dfc4: the subset guard, the marker, the corrected Helm wording)
 
 Brief `adv/review_brief_chart022_pass3.md`; outputs `adv/review_cursor_chart022p3.txt`, `adv/review_codex_chart022p3_last.txt`.
@@ -113,3 +119,21 @@ groupPrefix value not matched, `.metadata.finalizers` renders, 11 blocks, 0 miss
 | C6 | REFUTED: a further list of statements contradicting values.yaml | **Accepted after measuring each:** chart README `operatorImage.enabled` and `reconcile.enabled` rows said `false` (values: `true`) and the override section told users to enable what is on; root README: the "tighten prod" paragraph removed a developer role prod does not have, the install sentence said the chart creates the namespace (`createNamespace: false`), the "everything" command lacked the bdp leaf flag, three sections presented a user-workload-monitoring policy the chart does not deploy (render: zero such objects; the reference policy is parked), the cluster-developer examples said `view` (values bind `edit`), the tree comment said all flags ship disabled, and the verification section expected admin RoleBindings the baseline never creates; values.yaml and 10- still described a two-step first install (the chart vendors 2 CRDs; values:349 already said one command) and values said the baseline binds admin/edit/view (edit and view). |
 
 **Volunteered by Codex, accepted:** the two-step-install comment in template 10 (same correction).
+
+## Fourth pass, confirmation (head 8ffcf4c)
+
+| Claim | Codex | Cursor | Decision |
+|---|---|---|---|
+| C1 no value on a path 12- prints can forge the anchored match | REFUTED: a policy map key with a newline synthesises a second matching `Error:` line (leaf values escape newlines via `%q` or fail YAML earlier) | PLAUSIBLE (no shell) | **Accepted.** CI matches the first line only; 12- refuses keys with a line break. Measured: the newline key and the groupPrefix forge both fail to match; the six probes pass. |
+| C2 every corrected statement matches values.yaml or a render | CONFIRMED (5 CRs from the "everything" command, 2 CRDs, zero monitoring objects, both flags `true`, both descriptions equal their annotations) | CONFIRMED | — |
+| C3 remaining contradictions | seven prose leftovers (namespace "dedicated"/created wording in Chart.yaml, chart README and crc-values; "before enabling this"; the reconcile comment; the "flags not cumulative" paragraph; README monitoring bullet; custom-domain script that does not exist; "template errors are normal"; NOTES attributing the CRDs to the operator) | two (the monitoring bullet; the future-examples section not marked illustrative) | **Accepted all after checking each** (the script named in the README does not exist; the chart vendors two CRDs; the CronJob is on by default). |
+| C4 rendered specs identical to 03fe6ed; only the two description annotations differ | CONFIRMED (PyYAML over `git archive`) | PLAUSIBLE | — (re-measured here) |
+| C5 the third-pass sections describe HEAD | REFUTED: C3's "no user value can appear" claim (see the correction above) | REFUTED: the Codex C2 cell said 10-'s header carried the `spec.templates` sentence; only Chart.yaml did | **Accepted both**: correction added; 10-'s header now carries the later-upgrade sentence. |
+
+**Volunteered by Codex, accepted after measuring:** all four policy templates still said "this CRD is not in the
+manifest" and three still described a two-step install (the chart vendors both CRDs; `helm template --include-crds`
+renders 2); a broken relative link in the chart README (the local-testing document lives under working-sessions).
+
+**Verification after the fourth-pass changes:** lint clean (both values files); rendered CR specs identical to
+03fe6ed; CI step offline: six refusals, `.metadata.finalizers` renders, 11 blocks, 0 missing; both forgeries not
+matched; NOTES renders; no broken relative link in the chart README.

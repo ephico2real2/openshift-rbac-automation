@@ -105,8 +105,8 @@ metadata:
     argocd.argoproj.io/sync-wave: "3"
     # ArgoCD dry-runs every resource BEFORE applying it, and a dry-run against a kind the cluster does not
     # serve yet fails with "the server could not find the requested resource" — which fails THE WHOLE SYNC,
-    # not just this document. That is the exact shape of a first sync here: this CRD is not in the manifest
-    # (it belongs to the operator's OLM bundle) and arrives mid-sync, when OLM installs the CSV in wave 0.
+    # not just this document. That is the shape of a first sync for a renderer that dry-runs this CR before
+    # the vendored CRD (crds/ in this chart; OLM then reconciles it from the operator bundle) is registered.
     # The ArgoCD docs call out this case explicitly — "the CRD is not part of the sync, but it could be
     # created in another way, e.g. by a controller in the cluster".
     #
@@ -152,7 +152,10 @@ spec:
   # in place forever; declaring it here is what replaces it on every chart-managed CR, on the first
   # upgrade to a release that renders it. Measured on the sandbox (release 8 to 10): every CR
   # rewritten to this list, 40 objects single-owner, a tampered rendered label restored and a foreign
-  # label kept on both a RoleBinding and a ClusterRoleBinding, every CR ReconcileSuccess.
+  # label kept on both a RoleBinding and a ClusterRoleBinding, every CR ReconcileSuccess. A later upgrade
+  # whose manifest is unchanged sends nothing: a list edited by hand on the cluster stays until a render
+  # changes spec.templates (a JSON merge patch replaces the whole array, so any template edit carries the
+  # list back), `helm upgrade --force`, or ArgoCD with selfHeal (this repository's Application sets it).
   #
   # NOT A MIRROR OF THE OPERATOR. From the build that applies its defaults in memory (the #16 design
   # record in the operator repository, docs/DESIGN_excludedPaths.md) the operator never writes this

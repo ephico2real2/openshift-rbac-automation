@@ -2,8 +2,8 @@
 
 A customized [Red Hat CoP Namespace Configuration Operator](https://github.com/redhat-cop/namespace-configuration-operator)
 (NCO), packaged as a Helm chart together with our own RBAC policies. It installs the operator on
-OpenShift via OLM — a namespace, an AllNamespaces OperatorGroup, and a Subscription, optionally
-running a custom operator build — and deploys the policies (`NamespaceConfig` / `GroupConfig`
+OpenShift via OLM into the configured namespace (created only when `createNamespace=true`), with an
+AllNamespaces OperatorGroup and a Subscription, optionally running a custom operator build — and deploys the policies (`NamespaceConfig` / `GroupConfig`
 custom resources) from `values.yaml`, one flag per policy. The raw manifests under
 [`../../working-sessions/policies`](../../working-sessions/policies) are the readable reference for those policies, not something to apply.
 
@@ -29,7 +29,7 @@ spec). This is the key difference from a namespace-scoped operator, which lists 
 ## Install
 
 ```bash
-# Default: dedicated namespace + global OperatorGroup + Subscription
+# Default: existing install namespace + global OperatorGroup + Subscription (+ the custom image patch)
 helm install nco ./chart
 
 # Into the built-in openshift-operators namespace (already has a global OperatorGroup):
@@ -157,7 +157,7 @@ after it finishes.
 Running our **custom-built** operator image no longer needs Kyverno. With `operatorImage.enabled`
 (on in the stock values; set it to `false` to keep the catalog image) the chart runs a Job that patches
 the image directly into the installed ClusterServiceVersion. Full write-up, including the negative results:
-[`../docs/local-testing/LOCAL_TEST_operator_image_override.md`](../docs/local-testing/LOCAL_TEST_operator_image_override.md).
+[`../../working-sessions/docs/local-testing/LOCAL_TEST_operator_image_override.md`](../../working-sessions/docs/local-testing/LOCAL_TEST_operator_image_override.md).
 
 What does **not** work (all tested on-cluster):
 
@@ -200,7 +200,7 @@ is `containers[0]`, which is a bundle detail rather than a contract.
 The refusal guard is `operatorImage.expectedImagePattern`; widen it if you fork from a
 different upstream.
 
-### Two things to know before enabling this
+### Two things to know about this override
 
 **1. The patch Job is one-shot; the reconcile CronJob is what enforces it.** Kyverno mutated at
 admission, so it self-healed. This Job patches once, and an OLM operator upgrade installs a fresh CSV

@@ -2,9 +2,9 @@ apiVersion: v2
 name: openshift-rbac-automation
 description: >-
   A customized Red Hat CoP Namespace Configuration Operator (NCO), packaged as a Helm chart
-  together with our own RBAC policies. Installs the operator on OpenShift via OLM — a dedicated
-  namespace, an AllNamespaces (global) OperatorGroup, and a Subscription, optionally running a
-  custom operator build — and deploys the policies (NamespaceConfig and GroupConfig CRs) from
+  together with our own RBAC policies. Installs the operator on OpenShift via OLM into the configured
+  namespace (created only when createNamespace is true), with an AllNamespaces (global) OperatorGroup
+  and a Subscription, optionally running a custom operator build — and deploys the policies (NamespaceConfig and GroupConfig CRs) from
   namespaceConfigPolicy, clusterRbac and customGroupConfig, one policy per flag. The baseline
   namespace tiers and the cluster GroupConfig ship ENABLED, so a stock install grants RBAC; the
   oud-group example (oudGroup.policies.bdp) and the custom GroupConfig ship disabled. The raw

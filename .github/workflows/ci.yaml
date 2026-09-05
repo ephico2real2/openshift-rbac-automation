@@ -186,16 +186,17 @@ jobs:
       - name: excludedPaths always carry the chart's policy
         run: |
           P='namespaceConfigPolicy.oudGroup.policies.bdp'
-          # Each refusal must come from 12-'s guard: Helm prints "Error: execution error at (<template>:<line>): <message>"
-          # and the guard's message starts with its E_ marker, so the marker must follow the first ")" of that line.
-          # Another fail's text can carry a user value that contains the marker (groupPrefix is printed %q), but
-          # only inside its own message, never between the location and the message (measured with a forged value).
+          # Each refusal must come from 12-'s guard: Helm's FIRST output line is "Error: execution error at
+          # (<template>:<line>): <message>" and the guard's message starts with its E_ marker, so the marker must
+          # follow the first ")" of that first line. Another fail's text can carry a user value that contains the
+          # marker (groupPrefix is printed %q) or even a line break followed by a forged "Error:" line (a policy map
+          # key; 12- now refuses such keys), but only inside its own message, after the first line (both measured).
           refused_by_guard() {
             label="$1"; shift
             if out=$(helm template release "$CHART" -f "$CHART/crc-values.yaml" "$@" 2>&1); then
               echo "::error::[$label] rendered without allowMetadataExcluded"; exit 1
             fi
-            grep -Eq '^Error: execution error at \([^)]*12-custom-oud-group[^)]*\): E_METADATA_EXCLUDED_UNACKNOWLEDGED: ' <<<"$out" \
+            head -n1 <<<"$out" | grep -Eq '^Error: execution error at \([^)]*12-custom-oud-group[^)]*\): E_METADATA_EXCLUDED_UNACKNOWLEDGED: ' \
               || { echo "::error::[$label] refused, but not by 12-'s guard. Got:"; echo "$out"; exit 1; }
             echo "[$label] refused by 12-"
           }

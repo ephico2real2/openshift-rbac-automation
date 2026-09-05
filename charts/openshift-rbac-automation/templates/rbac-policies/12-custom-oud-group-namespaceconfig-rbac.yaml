@@ -24,6 +24,10 @@ skipping the bad one. Maps range in sorted key order, so the first failure is de
 */}}
 {{- $byLabelKey := dict }}
 {{- range $key, $p := $og.policies }}
+{{- /* A key with a line break would let a value-carrying fail print a second "Error:" line and forge CI's guard match (review). */}}
+{{- if or (contains "\n" $key) (contains "\r" $key) }}
+{{- fail "namespaceConfigPolicy.oudGroup.policies has a key containing a line break; policy keys must be single-line." }}
+{{- end }}
 {{- if and $p.enabled $p.labelKey }}
 {{- $normalized := include "nco.oudGroupPrefixNormalized" $p.groupPrefix }}
 {{- if $normalized }}
@@ -251,8 +255,8 @@ metadata:
     argocd.argoproj.io/sync-wave: "3"
     # ArgoCD dry-runs every resource BEFORE applying it, and a dry-run against a kind the cluster does not
     # serve yet fails with "the server could not find the requested resource" — which fails THE WHOLE SYNC,
-    # not just this document. That is the exact shape of a first sync here: this CRD is not in the manifest
-    # (it belongs to the operator's OLM bundle) and arrives mid-sync, when OLM installs the CSV in wave 0.
+    # not just this document. That is the shape of a first sync for a renderer that dry-runs this CR before
+    # the vendored CRD (crds/ in this chart; OLM then reconciles it from the operator bundle) is registered.
     # The ArgoCD docs call out this case explicitly — "the CRD is not part of the sync, but it could be
     # created in another way, e.g. by a controller in the cluster".
     #
@@ -260,9 +264,9 @@ metadata:
     # the CRD is already present in the cluster." So on every sync after the first, this document is
     # dry-run exactly as before, and a malformed spec is still caught here rather than at apply time.
     #
-    # It does NOT help plain `helm install`, which resolves every kind against API discovery before applying
-    # anything and has no equivalent escape. That path still needs the two-step first install documented at
-    # namespaceConfigPolicy.enabled in values.yaml.
+    # Plain `helm install` needs no such escape: the vendored crds/ files are installed before any template
+    # renders, so kind discovery succeeds on a bare cluster (one command; see namespaceConfigPolicy.enabled
+    # in values.yaml), and operatorWait holds the CRs until the operator serves them.
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   labelSelector:

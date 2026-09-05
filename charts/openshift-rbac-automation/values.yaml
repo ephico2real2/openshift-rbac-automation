@@ -232,9 +232,9 @@ orphanSweeper:
 # operator Deployment and re-applies it within seconds. A Job does that patch, replacing the
 # Kyverno image-rewrite policy.
 #
-# TRADE-OFF vs Kyverno: Kyverno enforced at admission, so it self-healed. This is a one-shot
-# patch — an OLM operator upgrade installs a fresh CSV and the upstream image comes back.
-# Enable `reconcile` below to get the self-healing behaviour back.
+# TRADE-OFF vs Kyverno: Kyverno enforced at admission, so it self-healed. The patch Job is one-shot —
+# an OLM operator upgrade installs a fresh CSV and the upstream image comes back — and the `reconcile`
+# CronJob below (on by default) is what reapplies it. Set `reconcile.enabled: false` for one-shot behaviour.
 operatorImage:
   # ON: this chart now owns the operator image. The Kyverno policies that used to do it
   # (replace-operator-image-to-dockerhub, inject-dockerhub-secret) have been deleted — they
