@@ -164,3 +164,9 @@ does not exist from any working directory; they now use the repository-root path
 | C6 every changed sentence true | REFUTED on one: the `helm upgrade` paragraph omitted `--reset-then-reuse-values` and `--reset-values` (`helm upgrade --help` v3.14.0) | the same sentence | **Accepted**; the paragraph now names all three flags and points at the help text. |
 
 Clean: no code finding on either side. Merged after this pass.
+
+## Note on commit identifiers
+
+On 2026-09-05, after the merge, the ten commits from the first review commit to the #24 merge were rewritten to
+remove an attribution trailer from their messages (trees unchanged, verified byte-identical). Heads cited above
+by their old identifiers map as follows: eba0ac0 → 8f928dd, ba64c55 → 7601db2, 32f4d7b → 9b02644, 679dfc4 → bfc39e1, 0a1afd3 → feb39f9, 8ffcf4c → 43be53a, 89b741c → 0fd3b91, ceaa8f9 → fbcf821, 5a3ad80 → ac8aab7, a2bdf63 → f542eef.
