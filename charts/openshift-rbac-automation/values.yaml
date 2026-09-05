@@ -149,9 +149,10 @@ subscription:
 #                           waits for a wave to be healthy before starting the next, so a failed wait stops
 #                           the CRs being applied at all — which hook weights cannot do.
 #
-# It does NOT fix a first install on a cluster with no operator: Helm resolves every kind against API
-# discovery before applying anything, earlier than any hook. See namespaceConfigPolicy.enabled for those two
-# commands — this Job is what makes the first of them trustworthy, by not returning until the CRDs exist.
+# It does NOT itself fix kind discovery on a first install: the vendored crds/ files do that, installed by
+# Helm before any template renders (see namespaceConfigPolicy.enabled: one command on a bare cluster). This
+# Job solves the next problem, by not returning until those CRDs are Established and the operator that
+# serves them is ready.
 operatorWait:
   enabled: true
 
@@ -421,8 +422,9 @@ namespaceConfigPolicy:
     # is the VALUE of its labelKey, used verbatim.
     policies:
       # ---- the bdp oud-group family ----
-      # OFF here, ON per cluster. values.yaml is the shipped default and should grant nothing by itself;
-      # crc-values.yaml turns this on for the test cluster. Same split as every other policy flag.
+      # OFF here, ON per cluster. This example policy grants nothing from stock values; crc-values.yaml
+      # turns it on for the test cluster. Unlike the baseline namespace policies and clusterRbac, which
+      # ship on, it defaults off.
       bdp:
         enabled: false
 
@@ -602,7 +604,7 @@ namespaceConfigPolicy:
   # charts/openshift-rbac-automation/templates/rbac-policies/10-baseline-namespaceconfig-rbac.yaml for when a future policy earns its own file
   # instead of an entry here.
   #
-  # THESE BIND OPENSHIFT'S BUILT-IN CLUSTERROLES (admin / edit / view) through RoleBindings, which
+  # THESE BIND OPENSHIFT'S BUILT-IN CLUSTERROLES (edit and view, as configured below) through RoleBindings, which
   # grants them in one namespace only. They are aggregated roles maintained by the platform; defining
   # local copies would drift as OpenShift adds APIs. ClusterRoleBindings are a different thing and
   # live in the GroupConfig policies, not here.
