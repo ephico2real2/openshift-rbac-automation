@@ -177,6 +177,9 @@ oc apply -f working-sessions/policies/kyverno-restrict-nco-writers.yaml
 working-sessions/scripts/verify-nco-writer-policy.sh
 ```
 
+Moving any of the Kyverno policies from Audit to Deny is a one-field change in the file it already lives in, with
+preconditions and a verification step: `working-sessions/docs/kyverno-audit-to-deny.md`.
+
 ### 3. Test with a Namespace
 
 ```bash
