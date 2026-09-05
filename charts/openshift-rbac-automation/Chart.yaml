@@ -32,7 +32,7 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
-# 0.22.0, MINOR: EVERY NamespaceConfig DECLARES excludedPaths [.status, .spec.replicas], the operator's
+# 0.22.0, MINOR: EVERY NamespaceConfig AND GroupConfig DECLARES excludedPaths [.status, .spec.replicas], the operator's
 # default set since build v1.2.6-131, and .metadata is gone from it. Rendered labels and annotations on
 # RoleBindings and Roles are now ENFORCED: the operator applies server-side and owns exactly what the
 # template renders, so editing metadata in a template reaches objects that already exist, a rendered

@@ -72,7 +72,6 @@ namespaceConfigPolicy:
         roleName: trino-job-submitter-role
         roleType: trino-job-submitter
         excludedPaths:
-          - .metadata
           - .status
           - .spec.replicas
         # Leaner than spark's deliberately: a trino workload reads and inspects, it does not manage
