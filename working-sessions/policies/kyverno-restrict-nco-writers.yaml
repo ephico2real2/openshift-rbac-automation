@@ -83,8 +83,9 @@
 # to be re-checked against existing CRs anyway: the rule is about the writer, not the object.
 #
 # ROLLOUT
-# Apply the companion vap-protect-kyverno-configuration.yaml first. Shipped in Audit until 2026-09-05,
-# Deny since (verify script: 28 checks, edit tier denied on CREATE, UPDATE and DELETE). Watch the
+# Apply the companion vap-protect-kyverno-configuration.yaml first. Ships in Audit. Deny was proven on the
+# sandbox on 2026-09-05 (verify script: 28 checks, edit tier denied on CREATE, UPDATE and DELETE) and
+# reverted the same day by decision; the switch is working-sessions/docs/kyverno-audit-to-deny.md. Watch the
 # policy's PolicyViolation events (they name the requester) and
 # kyverno_validating_policy_execution_duration_seconds_count{policy_name="restrict-nco-config-writers",result="fail"}
 # for a week (the label values are lowercase: error, fail, pass; measured on the live series):
@@ -138,7 +139,7 @@ metadata:
       controller can create, update or delete these cluster-scoped resources.
 spec:
   failurePolicy: Fail
-  validationActions: [Deny]
+  validationActions: [Audit]
   evaluation:
     admission:
       enabled: true
