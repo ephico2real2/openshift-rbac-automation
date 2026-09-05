@@ -152,6 +152,25 @@ Optional standards validation (Kyverno, Audit mode — reports, does not block):
 oc apply -f working-sessions/policies/kyverno-validation-only.yaml
 ```
 
+Optional guardrail on who may write the operator's CRs (Kyverno `ValidatingPolicy`, ships in Audit).
+Measured on the sandbox cluster (the table is in the policy's header): OLM aggregates the CRDs into
+the cluster-wide `admin` and `edit` roles, so the chart's `-cluster-developer` tier can create a
+NamespaceConfig that binds any ClusterRole anywhere. The policy allows only cluster administrators (by
+name and group, otherwise by a wildcard SubjectAccessReview), groups named `app-ocp-rbac-*-cluster-admin`,
+the operator's service account and the GitOps controller; the header of the file says why each one.
+`working-sessions/scripts/verify-nco-writer-policy.sh` proves it with impersonated `--dry-run=server`
+writes, because `oc auth can-i` stops at authorization and never sees admission:
+
+The same tiers hold `edit` on the `kyverno` namespace and Kyverno exempts its own configuration from its own
+policies, so a companion `ValidatingAdmissionPolicy` (the API server's admission) keeps that configuration to
+cluster administrators; apply it first, or the guardrail can be switched off by the people it restricts.
+
+```bash
+oc apply -f working-sessions/policies/vap-protect-kyverno-configuration.yaml
+oc apply -f working-sessions/policies/kyverno-restrict-nco-writers.yaml
+working-sessions/scripts/verify-nco-writer-policy.sh
+```
+
 ### 3. Test with a Namespace
 
 ```bash

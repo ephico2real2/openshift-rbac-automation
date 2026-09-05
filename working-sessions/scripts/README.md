@@ -122,6 +122,20 @@ workflow. Every selector also asserts it matched something, so renaming a compon
 instead of turning the check into a no-op that keeps reporting success. Its header documents all
 three rules; all seven failure modes above were verified by deliberately breaking a copy of the chart.
 
+### 8. `verify-nco-writer-policy.sh`
+Proves `working-sessions/policies/kyverno-restrict-nco-writers.yaml` on the current cluster: every identity the
+policy names (an `edit` holder, the `-cluster-admin` tier, `kube:admin`, `system:admin`, a `system:masters`
+certificate, the current login, the operator's service account, the GitOps controller) performs a CREATE, an
+UPDATE and a DELETE of a probe NamespaceConfig, impersonated and with `--dry-run=server`, so admission runs and
+nothing is persisted. The expectation follows the mode the policy is in on the cluster (Audit: allowed plus a
+PolicyViolation event; Deny: refused). `oc auth can-i` cannot do this, it stops at authorization.
+
+**Usage:**
+```bash
+# as a cluster-admin, after applying the policy
+./working-sessions/scripts/verify-nco-writer-policy.sh
+```
+
 ## 🔍 RBAC Verification Commands
 
 ### Check Security Model Compliance
