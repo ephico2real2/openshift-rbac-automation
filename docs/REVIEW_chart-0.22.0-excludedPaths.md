@@ -100,3 +100,16 @@ Brief `adv/review_brief_chart022_pass3.md`; outputs `adv/review_cursor_chart022p
 **Verification after the third-pass changes:** lint clean (both values files); rendered CR specs identical to 03fe6ed,
 the two `description` annotations changed as intended; CI step offline: six refusals by the guard, the forged
 groupPrefix value not matched, `.metadata.finalizers` renders, 11 blocks, 0 missing.
+
+### Codex, third pass (reviewed at 679dfc4; the branch had moved to 0a1afd3 while it ran)
+
+| Claim | Codex | Decision |
+|---|---|---|
+| C1 | CONFIRMED (Helm 3.14.0 runs: numbers, maps and nulls in the list neither panic nor hide a sibling `.metadata`; `.metadata.labelsX` caught, no ObjectMeta field wrongly caught) | — |
+| C2 | REFUTED: "live not consulted" overstated (fetched, unused on the CR path); "until the manifest changes again" too broad (a metadata-only render carries no `excludedPaths`; a `spec.templates` change carries the whole array) | **Accepted.** 10-'s header and Chart.yaml corrected (0a1afd3 had fixed Chart.yaml and the pointer for the first point). |
+| C3 | REFUTED with the same forged-marker finding as Cursor, via `labelKey` | already fixed in 0a1afd3 (anchored match); Codex re-ran that step: six refusals pass, forged refused. |
+| C4 | REFUTED as of 679dfc4: the second-pass C2 cell said the helper "requires the guard's own message", which the forgery disproved | **Accepted**: the third-pass table records the forgery and the anchored fix; the numbers (11, 2, 0) confirmed by Codex's PyYAML run. |
+| C5 | CONFIRMED (PyYAML over `git archive` copies of 03fe6ed and HEAD: specs equal for both values files) | — |
+| C6 | REFUTED: a further list of statements contradicting values.yaml | **Accepted after measuring each:** chart README `operatorImage.enabled` and `reconcile.enabled` rows said `false` (values: `true`) and the override section told users to enable what is on; root README: the "tighten prod" paragraph removed a developer role prod does not have, the install sentence said the chart creates the namespace (`createNamespace: false`), the "everything" command lacked the bdp leaf flag, three sections presented a user-workload-monitoring policy the chart does not deploy (render: zero such objects; the reference policy is parked), the cluster-developer examples said `view` (values bind `edit`), the tree comment said all flags ship disabled, and the verification section expected admin RoleBindings the baseline never creates; values.yaml and 10- still described a two-step first install (the chart vendors 2 CRDs; values:349 already said one command) and values said the baseline binds admin/edit/view (edit and view). |
+
+**Volunteered by Codex, accepted:** the two-step-install comment in template 10 (same correction).

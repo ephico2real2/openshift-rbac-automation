@@ -64,9 +64,9 @@ This solution provides **automated RBAC management** for OpenShift clusters usin
 - **Developer access** (`edit`): non-production environments only
 - **Audit access** (`view`): non-production and prod; an environment not on the allow-list gets nothing
 
-Tightening production to read-only means removing the `developer` entry from
-`namespaceConfigPolicy.baseline.policies.prod.roles` in `charts/openshift-rbac-automation/values.yaml`; loosening it means adding
-one. Prod withholding `ns-admin` is a SHORTER LIST than nonprod, not a different structure, which is why
+Production is already read-only here. Loosening it means adding a role entry to
+`namespaceConfigPolicy.baseline.policies.prod.roles` in `charts/openshift-rbac-automation/values.yaml`; tightening
+nonprod means removing one. Prod is a SHORTER LIST than nonprod, not a different structure, which is why
 both policies render from one template and differ only in data. The environment values themselves
 (`rnd`/`eng`/`qa`/`uat`/`prod`) are just label values the selectors match — equally yours to change.
 
@@ -89,8 +89,9 @@ Or clone and install from the directory, which is what the rest of this Quick St
 
 ### 1. Install Red Hat CoP Namespace Configuration Operator
 
-Use the Helm chart in [`charts/openshift-rbac-automation/`](charts/openshift-rbac-automation/README.md) — it creates the install namespace, an
-AllNamespaces OperatorGroup and the Subscription, and can run a custom operator build:
+Use the Helm chart in [`charts/openshift-rbac-automation/`](charts/openshift-rbac-automation/README.md) — it creates an
+AllNamespaces OperatorGroup and the Subscription (and the install namespace with `--set createNamespace=true`; the
+stock values expect it to exist), and runs a custom operator build by default:
 
 ```bash
 helm install nco ./charts/openshift-rbac-automation --namespace namespace-configuration-operator
@@ -134,6 +135,7 @@ helm upgrade --install nco charts/openshift-rbac-automation -n namespace-configu
   --set namespaceConfigPolicy.baseline.enabled=true \
   --set clusterRbac.enabled=true \
   --set namespaceConfigPolicy.oudGroup.enabled=true \
+  --set namespaceConfigPolicy.oudGroup.policies.bdp.enabled=true \
   --set customGroupConfig.enabled=true
 ```
 
@@ -208,9 +210,8 @@ oc get rolebindings -n payment-prod
 ### 5. Verify System Access
 
 ```bash
-# Check monitoring access (automatic for all teams)
-oc get rolebindings -n openshift-user-workload-monitoring | grep paym
-# Expected: monitoring config and prometheus rules access
+# The chart deploys no user-workload-monitoring policy: the former reference policy is parked under
+# working-sessions/policies/ and is not chart output, so nothing is expected in that namespace.
 
 # Check infrastructure team access (if configured)
 oc get clusterrolebindings | grep platform
@@ -228,12 +229,11 @@ oc get namespaceconfig,groupconfig,userconfig
 ### Verify Non-Production Namespace RBAC
 
 ```bash
-# Check RoleBindings in a non-prod namespace (should have 3: admin, developer, audit)
+# Check RoleBindings in a non-prod namespace (should have 2: developer and audit; the baseline grants no admin)
 oc get rolebindings -n beta-rnd -l app.kubernetes.io/managed-by=namespace-configuration-operator
 
 # Expected output:
 # NAME                ROLE                AGE
-# beta-admin-rb       ClusterRole/admin   XXm
 # beta-audit-rb       ClusterRole/view    XXm
 # beta-developer-rb   ClusterRole/edit    XXm
 ```
@@ -248,7 +248,6 @@ oc get rolebindings -n beta-rnd \
 
 # Expected output:
 # NAME                ROLE    GROUP
-# beta-admin-rb       admin   app-ocp-rbac-beta-ns-admin
 # beta-audit-rb       view    app-ocp-rbac-beta-ns-audit
 # beta-developer-rb   edit    app-ocp-rbac-beta-ns-developer
 ```
@@ -261,7 +260,6 @@ oc get rolebindings -n beta-rnd \
   column -t -s $'\t'
 
 # Expected output:
-# beta-admin-rb      | Group: app-ocp-rbac-beta-ns-admin      | Role: admin  | Created: 2026-03-16T23:50:22Z
 # beta-audit-rb      | Group: app-ocp-rbac-beta-ns-audit      | Role: view   | Created: 2026-03-16T23:50:22Z
 # beta-developer-rb  | Group: app-ocp-rbac-beta-ns-developer  | Role: edit   | Created: 2026-03-16T23:50:22Z
 ```
@@ -275,7 +273,6 @@ oc get rolebindings -n beta-rnd \
 
 # Expected output:
 # NAME               GROUP                           ROLE   CREATED
-# beta-admin-rb      app-ocp-rbac-beta-ns-admin      admin  2026-03-16T23:50:22Z
 # beta-audit-rb      app-ocp-rbac-beta-ns-audit      view   2026-03-16T23:50:22Z
 # beta-developer-rb  app-ocp-rbac-beta-ns-developer  edit   2026-03-16T23:50:22Z
 ```
@@ -283,14 +280,13 @@ oc get rolebindings -n beta-rnd \
 ### Verify Production Namespace RBAC
 
 ```bash
-# Check RoleBindings in a prod namespace (should have 2: developer, audit - NO ADMIN)
+# Check RoleBindings in a prod namespace (should have 1: audit - prod is read-only)
 oc get rolebindings -n beta-prod -l app.kubernetes.io/managed-by=namespace-configuration-operator
 
 # Expected output:
 # NAME                ROLE               AGE
 # beta-audit-rb       ClusterRole/view   XXd
-# beta-developer-rb   ClusterRole/edit   XXd
-# (NO admin-rb - this is correct for production)
+# (no admin-rb and no developer-rb - this is correct for production)
 ```
 
 ### Verify Cluster-Level RBAC
@@ -329,7 +325,7 @@ oc get clusterrolebindings \
 # NAME                                          CLUSTERROLE   GROUP
 # app-ocp-rbac-alpha-cluster-admin-crb          admin         app-ocp-rbac-alpha-cluster-admin
 # app-ocp-rbac-alpha-cluster-audit-crb          view          app-ocp-rbac-alpha-cluster-audit
-# app-ocp-rbac-alpha-cluster-developer-crb      view          app-ocp-rbac-alpha-cluster-developer
+# app-ocp-rbac-alpha-cluster-developer-crb      edit          app-ocp-rbac-alpha-cluster-developer
 # ...
 ```
 
@@ -344,7 +340,7 @@ oc get clusterrolebindings \
 # NAME                                          ROLE-TYPE           CLUSTERROLE   GROUP
 # app-ocp-rbac-alpha-cluster-admin-crb          cluster-admin       admin         app-ocp-rbac-alpha-cluster-admin
 # app-ocp-rbac-alpha-cluster-audit-crb          cluster-audit       view          app-ocp-rbac-alpha-cluster-audit
-# app-ocp-rbac-alpha-cluster-developer-crb      cluster-developer   view          app-ocp-rbac-alpha-cluster-developer
+# app-ocp-rbac-alpha-cluster-developer-crb      cluster-developer   edit          app-ocp-rbac-alpha-cluster-developer
 # app-ocp-rbac-demo-cluster-admin-crb           cluster-admin       admin         app-ocp-rbac-demo-cluster-admin
 # ...
 ```
@@ -370,9 +366,9 @@ oc get clusterrolebindings \
 
 # Expected output:
 # NAME                                          CLUSTERROLE   GROUP
-# app-ocp-rbac-alpha-cluster-developer-crb      view          app-ocp-rbac-alpha-cluster-developer
-# app-ocp-rbac-demo-cluster-developer-crb       view          app-ocp-rbac-demo-cluster-developer
-# app-ocp-rbac-finance-cluster-developer-crb    view          app-ocp-rbac-finance-cluster-developer
+# app-ocp-rbac-alpha-cluster-developer-crb      edit          app-ocp-rbac-alpha-cluster-developer
+# app-ocp-rbac-demo-cluster-developer-crb       edit          app-ocp-rbac-demo-cluster-developer
+# app-ocp-rbac-finance-cluster-developer-crb    edit          app-ocp-rbac-finance-cluster-developer
 
 # Cluster-audit groups
 oc get clusterrolebindings \
@@ -411,10 +407,10 @@ oc get groups | grep "cluster-admin\|cluster-developer\|cluster-audit"
 ### Verify Monitoring Access
 
 ```bash
-# Check monitoring RoleBindings created for ns-admin groups
+# The chart currently deploys no user-workload-monitoring policy. The former reference policy is parked under
+# working-sessions/policies/ and must not be read as chart output:
 oc get rolebindings -n openshift-user-workload-monitoring -l app.kubernetes.io/managed-by=namespace-configuration-operator
-
-# Should show monitoring-config-edit, prometheus-rules-edit, and alert-routing-edit bindings
+# Expected: No resources found
 ```
 
 ## 📁 Repository Structure
@@ -427,7 +423,7 @@ oc get rolebindings -n openshift-user-workload-monitoring -l app.kubernetes.io/m
 ├── charts/                                       # chart-releaser packages every subdirectory here
 │   └── openshift-rbac-automation/                # the chart: operator install AND the policies
 │       ├── Chart.yaml
-│       ├── values.yaml                           # Every policy flag; all ship DISABLED
+│       ├── values.yaml                           # Every policy flag; baseline namespace + cluster tiers default on
 │       └── templates/
 │           ├── 00-namespace.yaml … 09-…-job.yaml # Operator install: OLM, image override, InstallPlan
 │           ├── _helpers.tpl                      # Shared label block (nco.labels)
@@ -494,7 +490,7 @@ ClusterRole the chart binds but does not create, and the `kyverno-*.yaml` valida
 - Rich metadata for monitoring and troubleshooting
 
 ### ✅ **System Namespace Access**
-- **Monitoring access**: Automatic user workload monitoring configuration and alerting
+- **Monitoring access**: not deployed by the chart today; the reference policy is parked under `working-sessions/policies/`
 - **Uses standard groups**: Works with existing `app-ocp-rbac-{mnemonic}-ns-(admin|developer)` groups
 - **Dedicated infrastructure groups**: Platform teams with specialized cluster-wide access
 - **Scalable pattern**: Easy to add new system namespace access

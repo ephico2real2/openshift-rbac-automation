@@ -45,9 +45,9 @@ type: application
 # empty patch sends nothing, only --force calls Replace). So a chart that never rendered the list left the
 # operator's in place forever, and the first release that renders it, this one, replaces the live list on
 # every chart-managed CR (measured, release 8 to 10). A later upgrade whose manifest is unchanged sends
-# nothing: a list edited by hand on the cluster stays until the manifest changes again, `helm upgrade
-# --force`, or ArgoCD with selfHeal (this repository's Application sets it) compares Git to live and
-# applies. Values that still add .metadata (or .metadata.labels/.metadata.annotations) to an oud-group
+# nothing: a list edited by hand on the cluster stays until a render changes spec.templates (a JSON merge
+# patch replaces the whole array, so any template edit carries the list back), `helm upgrade --force`, or
+# ArgoCD with selfHeal (this repository's Application sets it) compares Git to live and applies. Values that still add .metadata (or .metadata.labels/.metadata.annotations) to an oud-group
 # policy are REFUSED by 12- unless the policy sets allowMetadataExcluded: true, because a render that
 # quietly kept it would undo this migration for that policy while CI stayed green. It is not a mirror of the
 # operator's defaults: from the build that applies its defaults in memory (operator design record

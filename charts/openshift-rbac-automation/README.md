@@ -84,13 +84,13 @@ the chart package.
 | `subscription.relatedImageManager` | `RELATED_IMAGE_MANAGER` env — does NOT override this operator's image (tested); off by default | `""` |
 | `subscription.extraEnv` | Extra env appended to `spec.config.env` | `[]` |
 | `subscription.resources` | Operator resource requests/limits (`spec.config.resources`) | 100m/128Mi → 500m/512Mi |
-| `operatorImage.enabled` | Patch a custom operator image into the CSV (see below) | `false` |
+| `operatorImage.enabled` | Patch a custom operator image into the CSV (see below) | `true` |
 | `operatorImage.repository` / `tag` | The image to run | `quay.io/ephico2real/namespace-configuration-operator` / `latest` |
 | `operatorImage.pullPolicy` | Pull policy written into the CSV | `Always` |
 | `operatorImage.expectedImagePattern` | Regex the CSV's current image must match before it is overwritten | upstream `redhat-cop` image |
 | `operatorImage.csvDeploymentName` / `containerName` | Where in the CSV to patch (matched by name) | `…-controller-manager` / `manager` |
 | `operatorImage.imagePullSecret` | Pull secret for a private registry; empty for public | `""` |
-| `operatorImage.reconcile.enabled` | CronJob that re-patches after OLM upgrades revert the CSV | `false` |
+| `operatorImage.reconcile.enabled` | CronJob that re-patches after OLM upgrades revert the CSV | `true` |
 | `operatorImage.reconcile.schedule` | Reconcile schedule | `*/10 * * * *` |
 | `operatorImage.job.*` | Tool image, wait budget, retries, resources for the Job | see `values.yaml` |
 | `podSecurity.audit` / `podSecurity.warn` | PSA labels on the created namespace | `privileged` |
@@ -154,9 +154,9 @@ after it finishes.
 
 ## Operator image override — patching the CSV (Kyverno not required)
 
-Running our **custom-built** operator image no longer needs Kyverno. Enable
-`operatorImage.enabled=true` and the chart runs a Job that patches the image directly into the
-installed ClusterServiceVersion. Full write-up, including the negative results:
+Running our **custom-built** operator image no longer needs Kyverno. With `operatorImage.enabled`
+(on in the stock values; set it to `false` to keep the catalog image) the chart runs a Job that patches
+the image directly into the installed ClusterServiceVersion. Full write-up, including the negative results:
 [`../docs/local-testing/LOCAL_TEST_operator_image_override.md`](../docs/local-testing/LOCAL_TEST_operator_image_override.md).
 
 What does **not** work (all tested on-cluster):
@@ -202,9 +202,10 @@ different upstream.
 
 ### Two things to know before enabling this
 
-**1. It is one-shot, not enforcing.** Kyverno mutated at admission, so it self-healed. This Job
-patches once. An OLM operator upgrade installs a fresh CSV from the catalog and the upstream
-image returns. Set `operatorImage.reconcile.enabled=true` for a CronJob that restores it.
+**1. The patch Job is one-shot; the reconcile CronJob is what enforces it.** Kyverno mutated at
+admission, so it self-healed. This Job patches once, and an OLM operator upgrade installs a fresh CSV
+from the catalog with the upstream image. The CronJob under `operatorImage.reconcile` (on in the stock
+values, every 10 minutes) restores it; set `operatorImage.reconcile.enabled=false` for one-shot behaviour.
 
 **2. A bad image wedges OLM.** If the target image is unpullable, the rollout never completes
 and OLM parks the CSV in `InstallWaiting`, where it **stops re-applying the Deployment**.
