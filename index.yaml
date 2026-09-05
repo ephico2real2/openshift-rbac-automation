@@ -304,6 +304,40 @@ entries:
       artifacthub.io/operatorCapabilities: Basic Install
     apiVersion: v2
     appVersion: 1.2.6
+    created: "2026-09-05T11:19:59.179733359Z"
+    description: A customized Red Hat CoP Namespace Configuration Operator (NCO),
+      packaged as a Helm chart together with our own RBAC policies. Installs the operator
+      on OpenShift via OLM into the configured namespace (created only when createNamespace
+      is true), with an AllNamespaces (global) OperatorGroup and a Subscription, optionally
+      running a custom operator build — and deploys the policies (NamespaceConfig
+      and GroupConfig CRs) from namespaceConfigPolicy, clusterRbac and customGroupConfig,
+      one policy per flag. The baseline namespace tiers and the cluster GroupConfig
+      ship ENABLED, so a stock install grants RBAC; the oud-group example (oudGroup.policies.bdp)
+      and the custom GroupConfig ship disabled. The raw manifests under working-sessions/policies
+      stay the readable reference for those.
+    digest: 0bcab1a3228de3f2289d9d364074e598b33b8598618738511afacdbf174eb0b7
+    home: https://github.com/ephico2real2/openshift-rbac-automation
+    keywords:
+    - openshift
+    - olm
+    - rbac
+    - namespace-configuration-operator
+    - redhat-cop
+    maintainers:
+    - name: ephico2real2
+    name: openshift-rbac-automation
+    sources:
+    - https://github.com/ephico2real2/openshift-rbac-automation
+    - https://github.com/redhat-cop/namespace-configuration-operator
+    type: application
+    urls:
+    - openshift-rbac-automation-0.22.0.tgz
+    version: 0.22.0
+  - annotations:
+      artifacthub.io/operator: "true"
+      artifacthub.io/operatorCapabilities: Basic Install
+    apiVersion: v2
+    appVersion: 1.2.6
     created: "2026-09-05T07:23:47.834409591Z"
     description: A customized Red Hat CoP Namespace Configuration Operator (NCO),
       packaged as a Helm chart together with our own RBAC policies. Installs the operator
@@ -427,4 +461,4 @@ entries:
     urls:
     - openshift-rbac-automation-0.21.0.tgz
     version: 0.21.0
-generated: "2026-09-05T07:23:47.834434888Z"
+generated: "2026-09-05T11:19:59.179758968Z"
