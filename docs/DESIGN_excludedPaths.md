@@ -9,9 +9,14 @@ namespace-configuration-operator fork. The chart's part:
 - This chart declares `[.status, .spec.replicas]` on every template as its own policy (10-, 11-, 12-, 13-). That is
   not a mirror of the operator's defaults (which changed twice in a day and now include `.metadata.finalizers`);
   the operator unions its defaults with the declared list in memory, so a difference cannot loop or hide anything.
-- Declaring the list is what migrates existing clusters off the `.metadata` the old operator wrote into every CR:
-  only a Helm release whose rendered list differs from the previous one rewrites it (measured on the sandbox,
-  release 8 to 10). CRs outside the chart are named by the operator's `MetadataExcluded` Warning event.
+- Declaring the list is what migrates chart-managed CRs off the `.metadata` the old operator wrote into every CR:
+  Helm's three-way patch leaves a field alone that neither manifest renders, so the first release that declares the
+  list replaces the legacy one (measured on the sandbox, release 8 to 10); a later upgrade is a no-op only while
+  live still matches, and restores the rendered list if live has drifted. CRs outside the chart are named by the
+  operator's `MetadataExcluded` Warning event.
+- A values file that still adds `.metadata` to an oud-group policy would quietly keep set-once metadata for that
+  policy while CI stayed green (both reviewers' top finding, `docs/REVIEW_chart-0.22.0-excludedPaths.md`), so
+  template 12 refuses it unless the policy sets `allowMetadataExcluded: true`.
 - Ordering: the operator image first, then chart 0.22.0. Against an older operator a declared list that differs
   from its defaults is the 0.21.1 rewrite loop under ArgoCD self-heal.
 - Rejected: the operator removing `.metadata` automatically (nothing can attribute an entry to the author or to the

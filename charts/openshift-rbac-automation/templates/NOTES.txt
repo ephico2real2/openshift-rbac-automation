@@ -26,13 +26,18 @@ VERIFY
    $ oc get crd | grep redhatcop.redhat.io
    # expect: groupconfigs, namespaceconfigs, ...
 
-NEXT STEPS
-==========
-Apply your RBAC policies (GroupConfig / NamespaceConfig custom resources). These live
-in ../policies and are applied separately (they use the operator's own Go templating,
-so they are NOT part of this Helm chart):
+RBAC POLICIES
+=============
+This chart deploys the NamespaceConfig and GroupConfig policies enabled in values: the
+baseline namespace tiers and the cluster GroupConfig ship enabled, the oud-group example
+and the custom GroupConfig ship disabled. Once the operator is running:
 
-   $ oc apply -f policies/
+   $ oc get namespaceconfigs.redhatcop.redhat.io
+   $ oc get groupconfigs.redhatcop.redhat.io
+
+The YAML under working-sessions/policies in the repository is the readable design
+reference. Do not apply those copies alongside the chart: they would duplicate or contend
+with the CRs the chart manages.
 
 TROUBLESHOOTING
 ===============

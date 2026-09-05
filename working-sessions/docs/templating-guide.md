@@ -422,7 +422,7 @@ this guide is in `working-sessions/docs/`.
 | `{{ }}` inside a `#` comment | Helm evaluates it — `#` is YAML, not Helm | prose in `#`, or use `{{/* */}}` |
 | Parsing an objectTemplate directly | YAML error on the guard line | render expressions out first |
 | `.` inside `range` | root context lost; `include "nco.labels" .` gets the loop item | pass `$` |
-| Editing labels and expecting propagation | GOTCHA 9 — `.metadata` is excluded, existing objects keep old metadata | delete the CRs, let it rebuild |
+| Editing labels and expecting propagation on a pair older than chart 0.22.0 / operator v1.2.6-131 | GOTCHA 9 — `.metadata` was excluded, existing objects keep old metadata | upgrade the pair; until then delete the CRs and let it rebuild |
 | `-l` on `source-namespaceconfig` | matches nothing — it is an annotation, though it holds the same value | `-l rbac.ocp.io/config-source=…` |
 | `--set` with a list index | can empty the whole list and trip a different guard | use `-f` with a temp values file |
 

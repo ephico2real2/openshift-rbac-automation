@@ -242,8 +242,8 @@ oc get namespaceconfig,groupconfig -L helm.sh/chart
 ## 6. Changing a label
 
 **An `objectTemplate` metadata change reaches existing objects since chart 0.22.0 on operator
-v1.2.6-131.** The chart declares `excludedPaths: [.status, .spec.replicas]`, the operator's default set from
-that build, and `.metadata` is no longer excluded: the operator applies server-side, owns exactly the labels
+v1.2.6-131.** The chart declares `excludedPaths: [.status, .spec.replicas]` as its own policy on every template
+(not a mirror of the operator's defaults, which it unions in memory), and `.metadata` is no longer excluded: the operator applies server-side, owns exactly the labels
 and annotations the template renders, restores a rendered label someone changed by hand and leaves labels
 anyone else adds alone (measured). On an older chart or operator the old behaviour holds: `.metadata` is
 excluded, `helm upgrade` reports success and every existing object keeps its old labels (GOTCHA 9 in
@@ -261,9 +261,13 @@ differently, so the distinction is about Kubernetes and the operator, not about 
 | rename a `roleName` | **yes** | The operator creates the new Role and removes the old one but cannot repoint the binding, because `roleRef` is immutable. The orphan sweeper deletes any binding whose Role is missing and the operator rebuilds it. Measured at ~15s. |
 | change a LABEL or ANNOTATION | **yes** since chart 0.22.0 on operator v1.2.6-131 | The operator now enforces the metadata it renders. Before that pair: **no**, `.metadata` was excluded and new metadata never reached objects that already existed; delete the CRs and let the operator rebuild (GOTCHA 9). |
 
-The third row is the one to plan around, and it is the reason for the procedure below.
+On chart 0.22.0 with operator v1.2.6-131 or later, the third row needs no procedure: edit the template,
+`helm upgrade`, and the operator corrects every existing object. One exception: an oud-group policy whose values
+still list `.metadata` in `excludedPaths` keeps set-once metadata for its own objects, and template 12 refuses
+to render it unless the policy sets `allowMetadataExcluded: true`.
 
-The only way to move metadata onto existing objects is to delete them and let the operator rebuild:
+**On an older pair only**, the way to move metadata onto existing objects is to delete them and let the
+operator rebuild:
 
 ```sh
 oc delete namespaceconfig --all && oc delete groupconfig --all

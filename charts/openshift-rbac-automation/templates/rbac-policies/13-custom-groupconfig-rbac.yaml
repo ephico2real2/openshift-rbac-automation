@@ -140,7 +140,8 @@ spec:
     # scope: cluster — a ClusterRoleBinding, so the role applies in EVERY namespace
     {{- end }}
     # ---------------------------------------------------------------------
-    # The operator's default excludedPaths, declared so Git reads the same as the cluster (10-'s header).
+    # This chart's excludedPaths policy, the same on every template. 10-'s header says why it is declared
+    # and why it is not a mirror of the operator's defaults.
     - excludedPaths:
         - .status
         - .spec.replicas
