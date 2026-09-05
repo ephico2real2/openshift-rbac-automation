@@ -83,7 +83,7 @@ the chart package.
 | `subscription.zapDevel` | Development-mode logging (`ZAP_DEVEL`) | `"false"` |
 | `subscription.relatedImageManager` | `RELATED_IMAGE_MANAGER` env — does NOT override this operator's image (tested); off by default | `""` |
 | `subscription.extraEnv` | Extra env appended to `spec.config.env` | `[]` |
-| `subscription.resources` | Operator resource requests/limits (`spec.config.resources`) | 250m/500Mi → 2/4Gi |
+| `subscription.resources` | Operator resource requests/limits (`spec.config.resources`) | 100m/128Mi → 500m/512Mi |
 | `operatorImage.enabled` | Patch a custom operator image into the CSV (see below) | `false` |
 | `operatorImage.repository` / `tag` | The image to run | `quay.io/ephico2real/namespace-configuration-operator` / `latest` |
 | `operatorImage.pullPolicy` | Pull policy written into the CSV | `Always` |

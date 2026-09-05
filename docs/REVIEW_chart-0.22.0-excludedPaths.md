@@ -21,6 +21,12 @@ itself was reviewed separately (operator repository, `docs/DESIGN_excludedPaths.
 | C5 every sentence in Chart.yaml, headers and values describes implemented behaviour | REFUTED: the "only a release whose list differs rewrites it" sentence; 11-/13- "the operator's default"; labels doc §6 procedure; GOTCHA 9 prose | REFUTED: same list | **Accepted.** All rewritten (see the list below). |
 | C6 the reference copies under `working-sessions/policies/` may keep `.metadata` | REFUTED: they claim to describe current intent; six entries in three files | REFUTED: the README's "compared line for line" contract | **Accepted.** The six entries now read `[.status, .spec.replicas]`; the stale header in `extra-groupconfig-rbac.helm-template.yaml` rewritten. Codex's parser finds no `.metadata` entry (measured). |
 
+> **Correction from the second pass (head ba64c55):** the C3 decision above is wrong where it says a later upgrade
+> "restores the rendered list if live has drifted". helm v3.14.0 computes a two-way JSON merge patch from the previous
+> and the new rendered manifests for these CRs; an unchanged render is `{}` and Helm does not restore live drift.
+> ArgoCD self-heal, `helm upgrade --force`, or a later change to `spec.templates` does. Details in the second-pass
+> table below.
+
 **Volunteered by both, accepted:** `NOTES.txt` and the chart README still told the installer to `oc apply -f policies/`
 (the pre-chart-policy text; the opposite of the root README). Both now name what the chart deploys and say not to
 apply the reference copies. Root README said "all of them default to off" in two places; values.yaml has the
@@ -61,3 +67,19 @@ defaults it overrides.
 **Verification after the second-pass changes:** lint clean (both values files); rendered CR specs identical to
 head 03fe6ed (PyYAML); CI step offline: five refusals by the guard, `.metadata.finalizers` renders, 11 blocks,
 0 missing; NOTES renders on `helm install --dry-run`.
+
+### Codex, second pass (reviewed at ba64c55; the branch had moved to 32f4d7b while it ran)
+
+| Claim | Codex | Decision |
+|---|---|---|
+| C1 | CONFIRMED, with the same finding as Cursor: guard `.metadata.labels`/`.metadata.annotations` and descendants, keep `.metadata.finalizers` allowed | already in 32f4d7b; Codex's regression passes |
+| C2 | REFUTED: the CI grep for `allowMetadataExcluded: true` could be satisfied by another `fail` whose text carries a user-controlled label value; the awk missed a block open at EOF and checked only `.spec.replicas`; `blocks -gt 0` did not enforce 11 | **Accepted the marker.** The guard message starts with `E_METADATA_EXCLUDED_UNACKNOWLEDGED:` and CI greps for that token with `-F`; a string "yes" probe added. The awk and block count were already fixed in 32f4d7b. |
+| C3 | REFUTED from the source, the same finding as this record's own measurement: `createPatch` uses `jsonpatch.CreateMergePatch(oldData, newData)` for unstructured objects; `--reuse-values` carries an old overlay forward (now refused by the guard) | wording already corrected in 32f4d7b; erratum added under the first-pass table |
+| C4 | CONFIRMED (PyYAML: 12 CRs, 6 explicit blocks, 0 `.metadata`) | — |
+| C5 | REFUTED as incomplete, same as Cursor | already in 32f4d7b |
+| C6 | CONFIRMED | — |
+
+**Volunteered by Codex, accepted after measuring against values.yaml:** the chart README's `subscription.resources`
+default read 250m/500Mi to 2/4Gi; values.yaml has 100m/128Mi to 500m/512Mi. The root README said unrecognised
+environments "default to audit-only"; template 10's selector is an `In` allow-list over the declared environments,
+so an unrecognised one receives nothing.
