@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# Proves working-sessions/policies/kyverno-restrict-nco-writers.yaml on the current cluster.
+#
+# `oc auth can-i` cannot do this: it asks the authorization layer, and admission runs after
+# authorization, so an edit holder gets "yes" whatever the policy says. This script instead
+# performs the writes an identity would perform, impersonated and with --dry-run=server, which
+# runs admission without persisting anything. Each identity is checked for a CREATE (a name
+# that does not exist), an UPDATE (a label added to an existing probe object) and a DELETE of
+# that probe. The three are separate requests on purpose: an `apply` of an existing, unchanged
+# object is an UPDATE, not a CREATE, and would test the wrong operation.
+#
+# The expectation depends on the mode the policy is in on the cluster: in Deny a refused
+# identity must see "denied the request"; in Audit it must succeed and the policy must have
+# recorded a violation event. The script reads the mode from the cluster, never assumes it.
+#
+# Usage: working-sessions/scripts/verify-nco-writer-policy.sh
+# Needs: a cluster-admin login (impersonation), the policy applied, jq.
+set -euo pipefail
+
+policy=restrict-nco-config-writers
+probe=nco-writer-policy-probe
+pass=0
+fail=0
+
+say()  { printf '%s\n' "$*"; }
+ok()   { pass=$((pass + 1)); printf '  ok    %s\n' "$*"; }
+bad()  { fail=$((fail + 1)); printf '  FAIL  %s\n' "$*"; }
+
+mode=$(oc get validatingpolicy "$policy" -o jsonpath='{.spec.validationActions[*]}' 2>/dev/null) \
+  || { say "policy $policy is not on this cluster; apply working-sessions/policies/kyverno-restrict-nco-writers.yaml first"; exit 1; }
+case $mode in
+  *Deny*)  enforcing=true ;;
+  *)       enforcing=false ;;
+esac
+say "policy $policy: validationActions=[$mode] enforcing=$enforcing"
+
+manifest=$(mktemp)
+trap 'rm -f "$manifest"; oc delete namespaceconfig "$probe" --ignore-not-found >/dev/null 2>&1 || true' EXIT
+probe_manifest() {
+  cat <<EOF
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: NamespaceConfig
+metadata:
+  name: $1
+spec:
+  labelSelector:
+    matchLabels:
+      $probe: "true"
+  templates: []
+EOF
+}
+probe_manifest "$probe-create" >"$manifest"
+
+# The UPDATE and DELETE probes need an object to exist; with no templates the operator adds no
+# finalizer, so it is inert and removable. Created as the caller (a cluster-admin): if that is
+# refused, the caller is not on the allow-list and nothing else can be tested.
+probe_manifest "$probe" | oc apply -f - >/dev/null \
+  || { say "the current login ($(oc whoami)) may not create a NamespaceConfig; run this as a cluster-admin"; exit 1; }
+
+# classify <command...>: prints allowed | denied | forbidden | error(<text>)
+classify() {
+  local out
+  if out=$("$@" 2>&1); then
+    printf 'allowed'
+  elif printf '%s' "$out" | grep -q 'denied the request'; then
+    printf 'denied'
+  elif printf '%s' "$out" | grep -qi 'forbidden'; then
+    printf 'forbidden'
+  else
+    printf 'error(%s)' "$(printf '%s' "$out" | tail -1)"
+  fi
+}
+
+# check <label> <expected: allow|deny> <impersonation flags...>
+# "allow" must be allowed in both modes. "deny" must be denied in Deny mode and allowed in
+# Audit mode (RBAC permitting: an identity RBAC forbids never reaches the policy, which is
+# reported as such and counts as neither).
+check() {
+  local label=$1 expected=$2; shift 2
+  local create update delete
+  create=$(classify oc apply --dry-run=server -f "$manifest" "$@")
+  update=$(classify oc label namespaceconfig "$probe" "$probe=touched" --overwrite --dry-run=server "$@")
+  delete=$(classify oc delete namespaceconfig "$probe" --dry-run=server "$@")
+  for op in create update delete; do
+    local got; got=$(eval "printf '%s' \"\$$op\"")
+    case "$expected:$enforcing:$got" in
+      allow:*:allowed)        ok  "$label $op: allowed" ;;
+      deny:true:denied)       ok  "$label $op: denied by the policy" ;;
+      deny:false:allowed)     ok  "$label $op: allowed (Audit mode; expect a violation event)" ;;
+      *:*:forbidden)          say "  info  $label $op: RBAC forbids this identity before admission" ;;
+      *)                      bad "$label $op: expected $expected (enforcing=$enforcing), got $got" ;;
+    esac
+  done
+}
+
+say "identities:"
+check "edit holder (cluster-developer tier)"  deny  --as=probe-dev --as-group=app-ocp-rbac-alpha-cluster-developer --as-group=system:authenticated
+check "plain authenticated user"              deny  --as=probe-user --as-group=system:authenticated
+check "cluster-admin tier group"              allow --as=probe-admin --as-group=app-ocp-rbac-alpha-cluster-admin --as-group=system:authenticated
+check "kube:admin shape (system:cluster-admins)" allow --as=kube:admin --as-group=system:cluster-admins --as-group=system:authenticated
+check "system:admin by name only (sudoer)"    allow --as=system:admin
+check "system:masters certificate shape"      allow --as=probe-cert --as-group=system:masters
+check "current login (cluster-admin by binding)" allow --as="$(oc whoami)"
+check "operator service account"              allow --as=system:serviceaccount:namespace-configuration-operator:controller-manager
+check "GitOps application controller"         allow --as=system:serviceaccount:openshift-gitops:openshift-gitops-argocd-application-controller
+
+if [ "$enforcing" = false ]; then
+  say "violation events recorded by the policy (Audit mode):"
+  oc get events -A --field-selector reason=PolicyViolation -o json 2>/dev/null \
+    | jq -r --arg p "$policy" '.items[] | select(.message | contains($p)) | "  \(.lastTimestamp // .eventTime) \(.message | .[0:160])"' \
+    | tail -5 || true
+fi
+
+say "result: $pass ok, $fail failed"
+[ "$fail" -eq 0 ]

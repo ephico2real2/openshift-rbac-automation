@@ -1,0 +1,155 @@
+# =============================================================================
+# Guardrail: who may create, update or delete the operator's CRs
+# =============================================================================
+# WHY THIS POLICY EXISTS
+# The namespace-configuration-operator's CRs (NamespaceConfig, GroupConfig, UserConfig)
+# are cluster-scoped and each one can bind any ClusterRole into any selected namespace,
+# or cluster-wide. OLM makes them WRITABLE BY EVERY CLUSTER-WIDE `admin` AND `edit`
+# HOLDER: for each CRD an operator owns, OLM generates `<plural>.<group>-<version>-admin`
+# and `-edit` ClusterRoles with create/update/patch/delete and the aggregate-to-admin /
+# aggregate-to-edit labels, and OpenShift's `admin` and `edit` aggregate them. Measured on
+# the sandbox cluster, against the chart's own cluster-tier bindings:
+#
+#   requester's group (tier)                    bound ClusterRole  create NC  delete NC  can-i '*' '*'
+#   app-ocp-rbac-<mnemonic>-cluster-admin       admin              yes        yes        no
+#   app-ocp-rbac-<mnemonic>-cluster-developer   edit               yes        yes        no
+#   app-ocp-rbac-<mnemonic>-cluster-audit       view               no         no         no
+#   app-ocp-rbac-<mnemonic>-ns-admin            (namespaced)       no         no         no
+#   kubeadmin (User bound to cluster-admin)     cluster-admin      yes        yes        yes
+#
+# The decision recorded on namespace-configuration-operator issue #7: the operator gets no
+# new knob for this (CR authors are platform admins, and a dead knob is worse than none);
+# a restriction, if wanted, lives here, at admission, where it is visible, reportable and
+# can be moved to Deny independently.
+#
+# WHAT IT CHECKS
+# Every CREATE, UPDATE and DELETE of the three CRs is allowed only for:
+#   1. cluster administrators, exactly: a SubjectAccessReview for verb "*" on resource "*"
+#      in group "*", posted for the requester (user and groups). Only a wildcard rule, that
+#      is a cluster-admin binding, allows that; the `admin` and `edit` tiers answer "no".
+#      This covers every way OpenShift hands out cluster-admin: the installer's
+#      `system:admin` certificate, `kube:admin` via system:cluster-admins, a User or Group
+#      bound directly (the sandbox's `kubeadmin` is one), and `oc --as=system:admin`. The
+#      cheap name checks in isClusterAdmin come first so the review is only posted for
+#      requesters the names do not settle; Kyverno's admission controller may create
+#      SubjectAccessReviews (measured "yes" with the 1.16 chart defaults);
+#   2. members of a synced group in the `-cluster-admin` tier. That suffix is what the
+#      chart's baseline-cluster-rbac GroupConfig keys on to bind `admin` cluster-wide: the
+#      tier the chart itself names the platform administrators. An `edit` holder cannot
+#      forge membership: measured, the developer tier can neither create nor update
+#      groups.user.openshift.io;
+#   3. the operator's own service account. It removes its finalizer with an UPDATE on the CR
+#      (not on /status), so denying it would hang every CR deletion on the finalizer;
+#   4. the GitOps application controller that deploys the chart (argocd-application.yaml).
+#
+# Everyone else is reported (Audit) or refused (Deny), including the `-cluster-developer`
+# tier that holds `edit`. The /status subresource is not matched, so the operator's status
+# writes are untouched. RBAC is not changed: `oc auth can-i create namespaceconfigs` keeps
+# answering "yes" for an edit holder, because admission runs AFTER authorization; only an
+# impersonated `--dry-run=server` write shows the policy (see the verify script).
+#
+# WHY A ValidatingPolicy AND NOT A ClusterPolicy
+# The CEL policy types are Kyverno's current design (v1beta1 on 1.16, v1 from 1.17);
+# ClusterPolicy is deprecated as of Kyverno 1.17 with removal planned for 1.20. On this
+# cluster (Kyverno 1.16.1) policies.kyverno.io serves v1alpha1 and v1beta1; change the
+# apiVersion to v1 on 1.17 or later, nothing else changes.
+#
+# WHY background IS OFF
+# request.userInfo exists only in an admission request. A background scan has no requester,
+# the field is absent, and the expressions error instead of evaluating. Nothing here needs
+# to be re-checked against existing CRs anyway: the rule is about the writer, not the object.
+#
+# ROLLOUT
+# Ships in Audit. Watch the policy's PolicyViolation events (they name the requester) and
+# kyverno_validating_policy_execution_duration_seconds_count{policy_name="restrict-nco-config-writers",result="FAIL"}
+# for a week: every FAIL names a writer this allow-list forgot (typically a CI service
+# account). Then set validationActions to [Deny]. failurePolicy stays Fail: while Kyverno's
+# admission controller is down, nobody can write these CRs, which is the right failure for
+# rarely-changed platform configuration.
+#
+# TESTING
+# working-sessions/scripts/verify-nco-writer-policy.sh runs every identity above through an
+# impersonated `oc apply --dry-run=server` and `oc delete --dry-run=server` and checks the
+# outcome against the mode the policy is currently in.
+# =============================================================================
+apiVersion: policies.kyverno.io/v1beta1
+kind: ValidatingPolicy
+metadata:
+  name: restrict-nco-config-writers
+  labels:
+    app.kubernetes.io/name: kyverno
+    app.kubernetes.io/component: rbac-validation
+    app.kubernetes.io/part-of: rbac-automation
+  annotations:
+    policies.kyverno.io/title: "Restrict who may write NamespaceConfig, GroupConfig and UserConfig"
+    policies.kyverno.io/category: "RBAC"
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: "NamespaceConfig, GroupConfig, UserConfig"
+    policies.kyverno.io/minversion: "1.16.0"
+    policies.kyverno.io/description: >-
+      OLM aggregates create/update/patch/delete on the operator's CRDs into the cluster-wide
+      admin and edit roles. This policy adds an admission-time allow-list so that only cluster
+      administrators (by SubjectAccessReview), the -cluster-admin tier of synced groups, the
+      operator's own service account and the GitOps application controller can create, update
+      or delete these cluster-scoped resources.
+spec:
+  failurePolicy: Fail
+  validationActions: [Audit]
+  evaluation:
+    admission:
+      enabled: true
+    background:
+      enabled: false
+  webhookConfiguration:
+    timeoutSeconds: 10
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [redhatcop.redhat.io]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [namespaceconfigs, groupconfigs, userconfigs]
+  variables:
+    - name: username
+      expression: request.userInfo.username
+    - name: groups
+      # A service account or a certificate user may carry no groups key at all.
+      expression: "has(request.userInfo.groups) ? request.userInfo.groups : []"
+    - name: isClusterAdmin
+      # The identities OpenShift itself uses, settled without an API call.
+      expression: >-
+        variables.username == 'system:admin' ||
+        'system:masters' in variables.groups ||
+        'system:cluster-admins' in variables.groups
+    - name: isClusterAdminTier
+      # The suffix the chart's baseline-cluster-rbac GroupConfig binds `admin` cluster-wide to.
+      expression: variables.groups.exists(g, g.endsWith('-cluster-admin'))
+    - name: isTrustedServiceAccount
+      # The operator (namespace and service account of the OLM install), and the GitOps
+      # application controller that deploys the chart. Add CI identities here, not below.
+      expression: >-
+        variables.username in [
+          'system:serviceaccount:namespace-configuration-operator:controller-manager',
+          'system:serviceaccount:openshift-gitops:openshift-gitops-argocd-application-controller'
+        ]
+    - name: wildcardReview
+      # "May this requester do anything to anything?" Only a cluster-admin binding says yes.
+      expression: >-
+        {
+          "kind": dyn("SubjectAccessReview"),
+          "apiVersion": dyn("authorization.k8s.io/v1"),
+          "spec": dyn({
+            "user": dyn(variables.username),
+            "groups": dyn(variables.groups),
+            "resourceAttributes": dyn({"verb": dyn("*"), "group": dyn("*"), "resource": dyn("*")})
+          })
+        }
+    - name: isRBACClusterAdmin
+      expression: resource.Post("authorization.k8s.io/v1", "subjectaccessreviews", variables.wildcardReview).status.allowed == true
+  validations:
+    - expression: >-
+        variables.isClusterAdmin || variables.isClusterAdminTier || variables.isTrustedServiceAccount ||
+        variables.isRBACClusterAdmin
+      messageExpression: >-
+        request.operation + ' on ' + request.resource.resource + '.' + request.resource.group +
+        ' is restricted to cluster administrators, the -cluster-admin tier and approved service accounts; refused for ' +
+        request.userInfo.username
