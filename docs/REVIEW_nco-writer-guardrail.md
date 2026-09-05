@@ -79,3 +79,8 @@ tier (the `admin` ClusterRole has no wildcard), allows kubeadmin, and leaves a C
 alone; a developer's annotate on a GroupSync is refused, the group-sync operator's service account and kubeadmin
 allowed. The verify script: 26 checks in Deny, 27 in Audit (6 PolicyViolation events for the 6 refused writes, and
 both companion checks).
+
+**Operator's correction after the third opinion:** the `-cluster-admin` tier (`app-ocp-rbac-<mnemonic>-cluster-admin`)
+is the trusted platform-admin population by the chart's design, so the companion must not lock it out of Kyverno's
+configuration; it now carries the guardrail's pattern exemption. Measured: the tier's patch of the `kyverno`
+ConfigMap allowed, the developer tier still refused.

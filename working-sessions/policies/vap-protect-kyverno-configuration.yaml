@@ -18,20 +18,22 @@
 #
 # WHAT IT CHECKS
 # CREATE, UPDATE and DELETE of ConfigMaps and Deployments (and the scale subresource) in the
-# kyverno namespace are allowed only for cluster administrators and Kyverno's own service
-# accounts. "Cluster administrator" is the same criterion the guardrail uses, evaluated in
-# process here: the API server's authorizer asked whether the requester may do verb "*" on
-# resource "*" in group "*", which only a wildcard rule (a cluster-admin binding) grants; plus
-# the names OpenShift itself uses (system:admin, system:masters, system:cluster-admins).
-# If Kyverno is deployed by a GitOps controller rather than by an administrator running Helm,
-# add that controller's service account to the validation.
+# kyverno namespace are allowed only for the platform administrators and Kyverno's own service
+# accounts. "Platform administrator" is the guardrail's own allow-list, evaluated in process
+# here: the names OpenShift itself uses (system:admin, system:masters, system:cluster-admins);
+# the chart's -cluster-admin tier, app-ocp-rbac-<mnemonic>-cluster-admin, the trusted platform
+# admins by the chart's design (the same pattern as the guardrail, for the same reasons); and the
+# API server's authorizer asked whether the requester may do verb "*" on resource "*" in group
+# "*", which only a wildcard rule (a cluster-admin binding) grants. The -cluster-developer tier,
+# which holds edit, is refused. If Kyverno is deployed by a GitOps controller rather than by an
+# administrator running Helm, add that controller's service account to the validation.
 #
 # TESTING (server dry runs, as the developer tier that holds edit)
 #   oc patch cm kyverno -n kyverno --type=merge -p '{"data":{"probe":"x"}}' --dry-run=server \
 #     --as=probe-dev --as-group=app-ocp-rbac-alpha-cluster-developer --as-group=system:authenticated
 #   before: configmap/kyverno patched      after: ... ValidatingAdmissionPolicy ... denied request
-#   the same as kubeadmin or system:admin: patched (no change). A ConfigMap in another namespace
-#   as the developer: created. Kyverno's own service accounts: allowed.
+#   the same as kubeadmin, system:admin or --as-group=app-ocp-rbac-alpha-cluster-admin: patched
+#   (no change). A ConfigMap in another namespace as the developer: created.
 # =============================================================================
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -64,15 +66,18 @@ spec:
         request.userInfo.username == 'system:admin' ||
         'system:masters' in variables.groups ||
         'system:cluster-admins' in variables.groups
+    - name: isPlatformAdminTier
+      # The chart's -cluster-admin tier: the same pattern as the guardrail, see its comment there.
+      expression: variables.groups.exists(g, g.startsWith('app-ocp-rbac-') && g.endsWith('-cluster-admin'))
     - name: isKyvernoItself
       expression: request.userInfo.username.startsWith('system:serviceaccount:kyverno:')
   validations:
     - expression: >-
-        variables.isClusterAdmin || variables.isKyvernoItself ||
+        variables.isClusterAdmin || variables.isPlatformAdminTier || variables.isKyvernoItself ||
         authorizer.group('*').resource('*').check('*').allowed()
       messageExpression: >-
         request.operation + ' on ' + request.resource.resource +
-        ' in namespace kyverno is restricted to cluster administrators; refused for ' + request.userInfo.username
+        ' in namespace kyverno is restricted to platform administrators; refused for ' + request.userInfo.username
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding

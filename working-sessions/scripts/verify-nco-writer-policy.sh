@@ -156,6 +156,8 @@ if oc get validatingadmissionpolicy protect-kyverno-configuration >/dev/null 2>&
   # shellcheck disable=SC2046
   got=$(classify oc patch cm kyverno -n kyverno --type=merge -p '{"data":{"verify-probe":"x"}}' --dry-run=server --as="$(oc whoami)" $(login_groups))
   if [ "$got" = allowed ]; then ok "companion: the current login may change Kyverno's ConfigMap"; else bad "companion: the current login must be allowed, got $got"; fi
+  got=$(classify oc patch cm kyverno -n kyverno --type=merge -p '{"data":{"verify-probe":"x"}}' --dry-run=server --as=probe-admin --as-group=app-ocp-rbac-alpha-cluster-admin --as-group=system:authenticated)
+  if [ "$got" = allowed ]; then ok "companion: the -cluster-admin tier (platform admins) may change Kyverno's ConfigMap"; else bad "companion: the -cluster-admin tier must be allowed, got $got"; fi
 else
   say "  info  companion vap-protect-kyverno-configuration.yaml is not applied; the edit tier can change Kyverno's configuration"
 fi
