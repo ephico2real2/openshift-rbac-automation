@@ -139,28 +139,31 @@ spec:
         values:
           {{- toYaml $p.excludeEnvironments | nindent 10 }}
       {{- end }}
-  # NO excludedPaths DECLARED, AND THE OPERATOR ADDS ITS OWN ANYWAY. Measured on this cluster: the
-  # live CR carries [.metadata, .status, .spec.replicas] on every template even though neither this
-  # chart nor the source policy sends any, the CRD schema defines no default, and there is no mutating
-  # webhook — the operator writes them into the spec on reconcile (CR generation goes 1 -> 2).
+  # excludedPaths DECLARED, AS THE OPERATOR'S FULL DEFAULT SET, ON EVERY TEMPLATE. The operator unions
+  # its defaults into the live CR on reconcile whatever the source declares; since operator build
+  # v1.2.6-131 (quay :latest from 2026-09-05) those are [.status, .spec.replicas]. Before that build
+  # they were [.metadata, .status, .spec.replicas], and every CR on a cluster that ran it still carries
+  # .metadata in its spec: the operator wrote it there and removes nothing. Declaring the set here
+  # makes `helm upgrade` overwrite that stale list, and keeps Git reading the same as the cluster so
+  # ArgoCD never holds the CR OutOfSync (declaring a shorter list than the operator's is a permanent
+  # diff, and with selfHeal on ArgoCD and the operator rewrite the spec at each other forever).
   #
-  # Not mirrored here on purpose: .spec.replicas is meaningless for a RoleBinding, so writing it into
-  # this policy would imply a field these objects do not have. The operator's default is its business.
+  # WHAT IT CHANGES, and it retires the trap oud-group documented as GOTCHA 9: with .metadata no
+  # longer excluded the operator enforces the labels and annotations it renders (server-side apply,
+  # it owns exactly what the template renders and leaves labels anyone else adds alone). Editing
+  # metadata in an objectTemplate below now REACHES RoleBindings that already exist; a rendered
+  # label someone changed by hand is restored on the next reconcile. Measured on the sandbox.
+  # Spec-level edits (subjects, roleRef) propagate as they always did.
   #
-  # THE RULE FOR A POLICY THAT DOES DECLARE THEM (12- does, from values): declare the operator's FULL
-  # set, or ArgoCD holds the CR permanently OutOfSync. Not declaring, as here, is safe — ArgoCD ignores a
-  # field only the live object carries, and these CRs showed no drift. Declaring [.metadata, .status]
-  # was not: the cluster held three, Git two, and with selfHeal on ArgoCD and the operator rewrote the
-  # spec at each other. 12- unions the operator's three into whatever values declares, for that reason.
+  # REQUIRES the operator image v1.2.6-131 or later. An older operator adds .metadata back into the
+  # CR on every reconcile, which is exactly the ArgoCD diff loop above.
   #
-  # WHAT IT MEANS FOR YOU, and it is the same trap oud-group documents as GOTCHA 9: because .metadata
-  # is excluded, editing labels or annotations in an objectTemplate below changes NOTHING on
-  # RoleBindings that already exist. The operator reports success and the old metadata stays, so a
-  # cluster ends up with two generations of it. Spec-level edits (subjects, roleRef) DO propagate.
-  # To roll metadata forward, delete the objects and let the operator rebuild them. SELECT ON
-  # config-source, which is a LABEL. source-namespaceconfig carries the same value but is an ANNOTATION,
-  # and `oc -l` matches labels only — selecting on it returns nothing and the delete reads as a clean
-  # no-op. Read the annotation, select on the label.
+  # .spec.replicas is meaningless for a RoleBinding; it is listed because the operator lists it, and
+  # the CR must read the same in Git and on the cluster.
+  #
+  # Should metadata ever need a clean re-roll anyway, SELECT ON config-source, which is a LABEL.
+  # source-namespaceconfig carries the same value but is an ANNOTATION, and `oc -l` matches labels
+  # only — selecting on it returns nothing and the delete reads as a clean no-op.
   #   oc delete rolebinding -A -l rbac.ocp.io/config-source=baseline-nonprod-rbac   # baseline-prod-rbac for the prod CR
   templates:
     {{- range $r := $p.roles }}
@@ -168,7 +171,8 @@ spec:
     # ---------------------------------------------------------------------
     # {{ $r.name }} — binds ClusterRole/{{ $r.clusterRole }} in the namespace
     # ---------------------------------------------------------------------
-    - objectTemplate: |
+    - excludedPaths: [.status, .spec.replicas]
+      objectTemplate: |
         apiVersion: rbac.authorization.k8s.io/v1
         kind: RoleBinding
         metadata:

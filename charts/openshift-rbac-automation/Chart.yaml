@@ -32,6 +32,17 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.22.0, MINOR: EVERY NamespaceConfig DECLARES excludedPaths [.status, .spec.replicas], the operator's
+# default set since build v1.2.6-131, and .metadata is gone from it. Rendered labels and annotations on
+# RoleBindings and Roles are now ENFORCED: the operator applies server-side and owns exactly what the
+# template renders, so editing metadata in a template reaches objects that already exist, a rendered
+# label changed by hand is restored, and a label anyone else adds is left alone (measured on the
+# sandbox; GOTCHA 9 is retired). Declaring the full set makes `helm upgrade` overwrite the stale
+# [.metadata, .status, .spec.replicas] the old operator wrote into every live CR, and keeps Git equal to
+# the cluster for ArgoCD. MINOR, not PATCH: behaviour on existing objects changes, and it REQUIRES the
+# operator image v1.2.6-131 or later; an older operator adds .metadata back on every reconcile, which
+# with ArgoCD selfHeal is a rewrite loop. Upgrade the image first.
+#
 # 0.21.3, PATCH: DOCS ONLY, recording an operator-side fix this chart's oudGroup policies depended on.
 # Every guarded objectTemplate renders EMPTY for a namespace its guard rejects, and operator builds
 # before v1.2.6-84-gbc60603 logged that at error level — "Object 'Kind' is missing in 'null'", once
@@ -773,7 +784,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.21.3
+version: 0.22.0
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:

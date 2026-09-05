@@ -499,17 +499,16 @@ namespaceConfigPolicy:
         # nothing, `rules` below is the grant.
         roleType: spark-job-submitter
 
-        # Paths the operator IGNORES when comparing what it would create against what exists, so a
-        # cluster-assigned field does not read as drift and cause a rewrite every reconcile.
+        # Paths the operator never enforces on the objects it creates: set at creation, then left alone.
         #
-        # ALL THREE, ALWAYS. The operator unions [.metadata, .status, .spec.replicas] into the live CR on
-        # its first reconcile whatever this list says (10-'s header has the measurement). A shorter list
-        # here is therefore a permanent ArgoCD diff — two paths in Git, three on the cluster — and with
-        # selfHeal on, ArgoCD and the operator rewrite the spec at each other forever. 12- unions the
-        # operator's three into this list at render time, so leaving one out cannot recreate that; listing
-        # them here keeps Git reading the same as the cluster. Add to it, never trim it.
+        # THE OPERATOR'S FULL DEFAULT SET, ALWAYS. The operator unions its defaults into the live CR on
+        # its first reconcile whatever this list says; since operator build v1.2.6-131 those are
+        # [.status, .spec.replicas] (10-'s header has the history). A shorter list here is a permanent
+        # ArgoCD diff, and with selfHeal on ArgoCD and the operator rewrite the spec at each other
+        # forever. 12- unions the operator's defaults into this list at render time, so leaving one out
+        # cannot recreate that; listing them here keeps Git reading the same as the cluster. Add to it,
+        # never trim it. .metadata is NOT here any more: rendered labels and annotations are enforced.
         excludedPaths:
-          - .metadata
           - .status
           - .spec.replicas
 
@@ -569,7 +568,6 @@ namespaceConfigPolicy:
       #   roleName: spark-submitter-role
       #   roleType: spark-job-submitter
       #   excludedPaths:
-      #     - .metadata
       #     - .status
       #     - .spec.replicas
       #   rules:
@@ -583,7 +581,6 @@ namespaceConfigPolicy:
       #   roleName: trino-submitter-role
       #   roleType: trino-job-submitter
       #   excludedPaths:
-      #     - .metadata
       #     - .status
       #     - .spec.replicas
       #   rules:

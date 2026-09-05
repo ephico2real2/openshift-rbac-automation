@@ -415,9 +415,12 @@ metadata change  adding an annotation to the template
                  did NOT propagate — required delete + recreate
 ```
 
-> ### GOTCHA 9 — template metadata edits do not reach existing objects
+> ### GOTCHA 9 — template metadata edits do not reach existing objects (before chart 0.22.0 / operator v1.2.6-131)
 >
-> Because `.metadata` is in `excludedPaths` on every NamespaceConfig here, editing labels or
+> RETIRED for that pair: the chart now declares `excludedPaths: [.status, .spec.replicas]`, the operator
+> owns the metadata it renders, and label edits reach existing objects (measured). Kept for older pairs:
+>
+> Because `.metadata` is in `excludedPaths` on every NamespaceConfig there, editing labels or
 > annotations in an `objectTemplate` changes **nothing** on objects that already exist.
 > `oc apply` succeeds, the operator reports `ReconcileSuccess`, and the old metadata stays
 > indefinitely. Only newly created objects pick it up, so a cluster ends up with two

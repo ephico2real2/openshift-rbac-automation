@@ -363,10 +363,11 @@ for d in yaml.safe_load_all(out):
 - **Do not diff objectTemplates as strings.** `toYaml` emits block style where a hand-written source
   used flow style (`[""]`), so identical specs diff as different. Parse both, compare the dicts.
 
-Verify on the cluster with `oc get -o json`, not by reading the template — and remember **GOTCHA 9**:
-the operator injects `excludedPaths: [.metadata, .status, .spec.replicas]`, so a metadata change in an
-objectTemplate reaches **nothing that already exists**. Delete the CRs and let it rebuild. Measured:
-55 objects revoked in ~4s, restored within ~50s.
+Verify on the cluster with `oc get -o json`, not by reading the template. Since chart 0.22.0 on operator
+v1.2.6-131 a metadata change in an objectTemplate reaches objects that already exist (`.metadata` is no
+longer excluded; the operator owns what it renders). On an older pair remember **GOTCHA 9**: the operator
+injected `excludedPaths: [.metadata, .status, .spec.replicas]`, so such a change reached nothing that
+existed; delete the CRs and let it rebuild (measured: 55 objects revoked in ~4s, restored within ~50s).
 
 Select on `rbac.ocp.io/config-source` for that delete. As of 0.16.0 `source-namespaceconfig` holds the
 same value, but it is an annotation and `oc -l` matches labels only — so the annotation form matches

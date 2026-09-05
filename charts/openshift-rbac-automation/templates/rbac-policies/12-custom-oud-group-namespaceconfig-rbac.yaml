@@ -139,7 +139,7 @@ skipping the bad one. Maps range in sorted key order, so the first failure is de
 # ALREADY-DEPLOYED policy does not reliably remove the objects it displaces (delete them by
 # config-source label in each namespace the policy no longer matches — a stale binding still
 # GRANTS), and objects created before the change never gain the group-pattern annotation without a
-# delete-and-recreate (.metadata is excluded from drift comparison).
+# delete-and-recreate (roleRef is immutable).
 #
 # ONE roleName PER POLICY across DIFFERENT labelKeys still matters, with a worse failure: two policies
 # sharing a roleName whose selectors overlap on a namespace are two CRs reconciling ONE Role object —
@@ -182,13 +182,14 @@ now simply render empty for such a namespace.
 {{- end }}
 {{- $endif := "{{- end }}" }}
 {{- /*
-excludedPaths always carries the operator's own three. The operator unions [.metadata, .status,
-.spec.replicas] into the live CR on reconcile whatever the source declares (10-'s header has the
-measurement). A declared list that is shorter is therefore a permanent ArgoCD diff — two paths in Git,
-three on the cluster — and with selfHeal on, ArgoCD reverts and the operator re-adds, forever. The
-union here makes the rendered CR what the operator will leave it as; paths values adds on top are kept.
+excludedPaths always carries the operator's own defaults, [.status, .spec.replicas] since operator build
+v1.2.6-131 (10-'s header has the history; .metadata is no longer among them, so rendered labels and
+annotations are now enforced). The operator unions its defaults into the live CR on reconcile whatever
+the source declares, so a declared list that is shorter is a permanent ArgoCD diff, and with selfHeal
+on ArgoCD reverts and the operator re-adds, forever. The union here makes the rendered CR what the
+operator will leave it as; paths values adds on top are kept. Requires that operator build.
 */}}
-{{- $excluded := concat (list ".metadata" ".status" ".spec.replicas") ($p.excludedPaths | default (list)) | uniq }}
+{{- $excluded := concat (list ".status" ".spec.replicas") ($p.excludedPaths | default (list)) | uniq }}
 ---
 apiVersion: redhatcop.redhat.io/v1alpha1
 kind: NamespaceConfig
