@@ -396,10 +396,11 @@ operator log is the place to look.
 
 `excludedPaths` has **no CRD default**. Operator builds before v1.2.6-131 wrote their defaults into the
 spec on first reconcile — a template declaring `['.metadata', '.status']` was stored as
-`['.metadata', '.status', '.spec.replicas']`. From v1.2.6-131 the operator applies its defaults
-(`.status`, `.spec.replicas`, `.metadata.finalizers`) **in memory** and never writes the list; the spec
-stays what its author wrote, and this chart declares `[.status, .spec.replicas]` on every template as
-its own policy (Chart.yaml 0.22.0, and `docs/DESIGN_excludedPaths.md` for the design record).
+`['.metadata', '.status', '.spec.replicas']`. v1.2.6-131 dropped `.metadata` from what it wrote; from
+v1.2.6-132 (first shipped as v1.2.6-140, the fork's `master` since v1.2.6-142) the operator applies its
+defaults (`.status`, `.spec.replicas`, `.metadata.finalizers`) **in memory** and never writes the list;
+the spec stays what its author wrote, and this chart declares `[.status, .spec.replicas]` on every
+template as its own policy (Chart.yaml 0.22.0, and `docs/DESIGN_excludedPaths.md` for the design record).
 
 ### Two independent layers — this is the part that trips people
 
