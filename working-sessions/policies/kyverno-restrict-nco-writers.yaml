@@ -43,15 +43,31 @@
 #      measured, the developer tier can neither create nor update groups.user.openshift.io,
 #      and asserting a group through impersonation needs the impersonate verb, which is
 #      cluster-admin territory. A second family with a cluster tier is added here;
+#      The Group itself is minted by GroupSync, and OLM aggregates the group-sync-operator's CRD
+#      into `edit` too (measured: the developer tier may create, update and delete groupsyncs and
+#      create Secrets in its namespace). A GroupSync names its own provider, URL and credentials
+#      Secret, so whoever writes one decides which Groups exist and therefore who holds the tier
+#      this policy exempts. GroupSync CRs are guarded here as well;
 #   3. the operator's own service account. It removes its finalizer with an UPDATE on the CR
-#      (not on /status), so denying it would hang every CR deletion on the finalizer;
+#      (not on /status), so denying it would hang every CR deletion on the finalizer. The
+#      group-sync operator's service account likewise, for the GroupSync CRs it owns;
 #   4. the GitOps application controller that deploys the chart (argocd-application.yaml).
 #
 # Everyone else is reported (Audit) or refused (Deny), including the `-cluster-developer`
-# tier that holds `edit`. The /status subresource is not matched, so the operator's status
+# tier that holds `edit`. The /status subresource is not matched, so the operators' status
 # writes are untouched. RBAC is not changed: `oc auth can-i create namespaceconfigs` keeps
 # answering "yes" for an edit holder, because admission runs AFTER authorization; only an
 # impersonated `--dry-run=server` write shows the policy (see the verify script).
+#
+# Kyverno's own configuration decides whether this policy is consulted at all: a request that
+# matches the resourceFilters in ConfigMap kyverno/kyverno, or whose requester carries a group in
+# excludeGroups, is skipped before any policy runs (pkg/webhooks/handlers/filter.go). The same
+# admin and edit tiers can write that ConfigMap and Kyverno's Deployment, and Kyverno exempts its
+# whole namespace from its own policies ("[*/*,kyverno,*]" on this cluster). Measured: with
+# "[NamespaceConfig,*,*]" added to the filters, the developer tier's CREATE and DELETE were
+# admitted with this policy's execution counter unchanged. The companion
+# working-sessions/policies/vap-protect-kyverno-configuration.yaml (the API server's own
+# admission, which no Kyverno setting filters) must be in place before this policy is set to Deny.
 #
 # WHY A ValidatingPolicy AND NOT A ClusterPolicy
 # The CEL policy types are Kyverno's current design (v1beta1 on 1.16, v1 from 1.17);
@@ -65,24 +81,31 @@
 # to be re-checked against existing CRs anyway: the rule is about the writer, not the object.
 #
 # ROLLOUT
-# Ships in Audit. Watch the policy's PolicyViolation events (they name the requester) and
-# kyverno_validating_policy_execution_duration_seconds_count{policy_name="restrict-nco-config-writers",result="FAIL"}
-# for a week: every FAIL names a writer this allow-list forgot (typically a CI service
-# account). Then set validationActions to [Deny].
+# Apply the companion vap-protect-kyverno-configuration.yaml first. Ships in Audit. Watch the
+# policy's PolicyViolation events (they name the requester) and
+# kyverno_validating_policy_execution_duration_seconds_count{policy_name="restrict-nco-config-writers",result="fail"}
+# for a week (the label values are lowercase: error, fail, pass; measured on the live series):
+# every fail names a writer this allow-list forgot (typically a CI service account), and
+# result="error" is the review call failing (path 2 below) and must stay at zero. Then set
+# validationActions to [Deny].
 #
-# FAILURE MODES (failurePolicy: Fail); two different paths, not to be confused
-# 1. Kyverno's admission controller is down, or the webhook does not answer within
-#    timeoutSeconds (10): the API server gets no verdict and applies Fail to the WHOLE request.
-#    Nobody this policy matches can write these CRs, system:admin and the service accounts
-#    included. The right failure for rarely-changed platform configuration.
-# 2. The webhook answers but the SubjectAccessReview call itself fails (RBAC removed from
-#    Kyverno's service account; measured: "failed to load context"): the policy errors and Fail
-#    refuses only the requesters that needed the review, a User bound directly to cluster-admin
-#    and anyone the name, group and service-account checks did not settle. Identities those
-#    checks settle skip the review and are unaffected (variables are lazy, v1.16.1
-#    lazy.NewMapValue; measured with the call deliberately broken). Note that in Audit mode this
-#    error is HARDER than a review answering "not allowed": that write succeeds and emits a
-#    PolicyViolation event; an error is refused even in Audit.
+# FAILURE MODES; three different paths, not to be confused
+# 1. No verdict from the webhook (Kyverno's admission controller down, or no answer within
+#    timeoutSeconds 10): the API server applies failurePolicy Fail to the WHOLE request. Nobody
+#    this policy matches can write these CRs, system:admin and the service accounts included:
+#    the right failure for rarely-changed platform configuration. This is the only path
+#    failurePolicy governs (v1.16.1's compiler consults it for matchConditions errors alone). With
+#    one admission replica, every restart is such a window.
+# 2. The webhook answers but the SubjectAccessReview call fails (RBAC removed from Kyverno's
+#    service account; measured with the resource name broken: "failed to load context"): the
+#    validation errors. In Deny the request is refused because the action is Deny (the handler
+#    turns a rule error into a refusal only under Deny), and only for the requesters that needed
+#    the review: a User bound directly to cluster-admin, and anyone the name, group and
+#    service-account checks did not settle. Those checks come first and variables are lazy
+#    (v1.16.1 lazy.NewMapValue), so settled identities never post the review. In Audit the error
+#    is NOT refused: the write goes through and the policy records result="error" (measured).
+# 3. Kyverno's own configuration can skip this policy entirely; see above and the companion
+#    ValidatingAdmissionPolicy.
 #
 # TESTING
 # working-sessions/scripts/verify-nco-writer-policy.sh runs every identity above through an
@@ -102,7 +125,7 @@ metadata:
     policies.kyverno.io/title: "Restrict who may write NamespaceConfig, GroupConfig and UserConfig"
     policies.kyverno.io/category: "RBAC"
     policies.kyverno.io/severity: high
-    policies.kyverno.io/subject: "NamespaceConfig, GroupConfig, UserConfig"
+    policies.kyverno.io/subject: "NamespaceConfig, GroupConfig, UserConfig, GroupSync"
     policies.kyverno.io/minversion: "1.16.0"
     policies.kyverno.io/description: >-
       OLM aggregates create/update/patch/delete on the operator's CRDs into the cluster-wide
@@ -125,7 +148,9 @@ spec:
       - apiGroups: [redhatcop.redhat.io]
         apiVersions: ["*"]
         operations: [CREATE, UPDATE, DELETE]
-        resources: [namespaceconfigs, groupconfigs, userconfigs]
+        # groupsyncs: whoever writes a GroupSync decides which Groups exist, and so who holds the
+        # -cluster-admin tier exempted below (OLM aggregates that CRD into edit as well).
+        resources: [namespaceconfigs, groupconfigs, userconfigs, groupsyncs]
   variables:
     - name: username
       expression: request.userInfo.username
@@ -147,11 +172,13 @@ spec:
       # A full-name regex (proposed in review) would be narrower than the grant itself.
       expression: variables.groups.exists(g, g.startsWith('app-ocp-rbac-') && g.endsWith('-cluster-admin'))
     - name: isTrustedServiceAccount
-      # The operator (namespace and service account of the OLM install), and the GitOps
-      # application controller that deploys the chart. Add CI identities here, not below.
+      # The two operators (namespace and service account of each OLM install; the group-sync
+      # operator may update its GroupSync CRs), and the GitOps application controller that
+      # deploys the chart. Add CI identities here, not below.
       expression: >-
         variables.username in [
           'system:serviceaccount:namespace-configuration-operator:controller-manager',
+          'system:serviceaccount:group-sync-operator:controller-manager',
           'system:serviceaccount:openshift-gitops:openshift-gitops-argocd-application-controller'
         ]
     - name: wildcardReview

@@ -47,7 +47,7 @@ disabled on this cluster, so exemptions live in the policy.
 | Claim | Cursor | Decision |
 |---|---|---|
 | C1 the family-prefix pattern admits exactly the tier | REFUTED (`app-ocp-rbac--cluster-admin`, `app-ocp-rbac-x-cluster-admin-cluster-admin` pass) | **Rejected on the operator's design, then measured**: the chart's live GroupConfig guards on `hasSuffix "-cluster-admin" .Name` alone over synced groups; GroupSync pulls every LDAP group matching `cn=app-ocp-rbac-*`; live mnemonics run 4 to 8 letters; the naming policy is Audit-only. One CR capturing every group that fits the pattern is the design, so the exemption is the chart's grant narrowed by the family prefix; a full-name regex would be narrower than the grant itself and could refuse a legitimate synced admin group. The reasoning is written next to the expression |
-| C2 FAILURE MODES describes the YAML | REFUTED | **Accepted**: a webhook timeout is the API server applying Fail to the whole request (everyone refused, including name-settled identities); only a failed review call refuses just those who needed it; and in Audit an evaluation error is refused while a "not allowed" review is only reported. Rewritten as two paths |
+| C2 FAILURE MODES describes the YAML | REFUTED | **Accepted**: a webhook timeout is the API server applying Fail to the whole request (everyone refused, including name-settled identities); only a failed review call refuses just those who needed it; and (as first written here, then corrected by the third reviewer below) in Audit an evaluation error is NOT refused: the write goes through and the policy records result="error". Rewritten as three paths |
 | C3 the event assertion's time comparison | REFUTED | **Accepted**: an `eventTime` with a fraction sorts below a whole-second `since` as text when the seconds are equal (measured offline with jq: the in-window event was dropped). Timestamps are cut to whole seconds before comparing; an event with no timestamp still cannot match |
 | C4 exit status under `set -euo pipefail` | REFUTED | **Accepted**: a failing `oc get events` inside the assignment would end the script before "result:"; it now counts as no events |
 
@@ -61,3 +61,21 @@ to settle, during which requests see either mode; a run started within that wind
 verify script is meant to run well after applying; the record's numbers come from settled runs: 25 checks in
 Audit (12 PolicyViolation events for the 6 refused writes), 24 in Deny. Codex produced no second-pass report
 either; a first-principles Fable 5.1 reviewer's report is recorded below when it lands.
+
+## Third opinion (a9ebcb2), first-principles reviewer on Fable 5.1 with experiments on the cluster
+
+| Finding | Decision |
+|---|---|
+| F1 the restricted tiers can switch the policy off: they hold `edit` on the `kyverno` namespace, Kyverno's request filter runs before any policy, and Kyverno exempts its own namespace (`[*/*,kyverno,*]`) from every Kyverno policy | **Re-measured, accepted**: the developer tier's server dry run patched the `kyverno` ConfigMap and scaled the admission controller to zero; no policy on the cluster or in the repository covers that namespace. A Kyverno policy cannot close it; the companion `vap-protect-kyverno-configuration.yaml` (the API server's own admission, same wildcard-authorizer criterion, Kyverno's own service accounts allowed) does, in Deny. Measured below |
+| F2 the refusal on an evaluation error is the Deny action, not `failurePolicy`; in Audit an error is allowed | **Accepted, and the sentence I had added in the second pass is retracted**: measured by the reviewer with the error counter (kubeadmin allowed in Audit while `result="error"` moved). FAILURE MODES rewritten as three paths |
+| F3 the ROLLOUT metric selector `result="FAIL"` matches nothing (live labels are lowercase) | **Accepted** |
+| F4 OLM aggregates `groupsyncs` into `edit` too; an edit holder could author a GroupSync (provider, URL and credentials Secret live in the CR) that mints an `app-ocp-rbac-*-cluster-admin` group containing themselves | **Re-measured, accepted**: `edit` carries create/update/patch/delete on groupsyncs; the developer tier may create Secrets in the group-sync namespace. GroupSync CRs are now guarded; the group-sync operator's service account (`controller-manager` in `group-sync-operator`, which may update its CRs) is allow-listed |
+| F5 the script's current-login check impersonates a name without its groups | **Accepted**: the groups come from a SelfSubjectReview (measured working on this server) |
+| F6 the second-pass fixes to the event check verified; residual: a concurrent run's events could mask a missing one | Recorded, acceptable for a sandbox script |
+
+**Measured after applying the third-opinion changes (settled runs):** the companion in Deny refuses the developer
+tier's patch of the `kyverno` ConfigMap and its scale of the admission controller, refuses the `-cluster-admin`
+tier (the `admin` ClusterRole has no wildcard), allows kubeadmin, and leaves a ConfigMap in another namespace
+alone; a developer's annotate on a GroupSync is refused, the group-sync operator's service account and kubeadmin
+allowed. The verify script: 26 checks in Deny, 27 in Audit (6 PolicyViolation events for the 6 refused writes, and
+both companion checks).

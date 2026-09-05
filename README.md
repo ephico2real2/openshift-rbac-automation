@@ -161,7 +161,12 @@ the operator's service account and the GitOps controller; the header of the file
 `working-sessions/scripts/verify-nco-writer-policy.sh` proves it with impersonated `--dry-run=server`
 writes, because `oc auth can-i` stops at authorization and never sees admission:
 
+The same tiers hold `edit` on the `kyverno` namespace and Kyverno exempts its own configuration from its own
+policies, so a companion `ValidatingAdmissionPolicy` (the API server's admission) keeps that configuration to
+cluster administrators; apply it first, or the guardrail can be switched off by the people it restricts.
+
 ```bash
+oc apply -f working-sessions/policies/vap-protect-kyverno-configuration.yaml
 oc apply -f working-sessions/policies/kyverno-restrict-nco-writers.yaml
 working-sessions/scripts/verify-nco-writer-policy.sh
 ```

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Proves working-sessions/policies/kyverno-restrict-nco-writers.yaml on the current cluster.
+# Proves working-sessions/policies/kyverno-restrict-nco-writers.yaml on the current cluster, and its
+# companion vap-protect-kyverno-configuration.yaml when it is applied.
 #
 # `oc auth can-i` cannot do this: it asks the authorization layer, and admission runs after
 # authorization, so an edit holder gets "yes" whatever the policy says. This script instead
@@ -104,9 +105,17 @@ check "cluster-admin tier group"              allow --as=probe-admin --as-group=
 check "kube:admin shape (system:cluster-admins)" allow --as=kube:admin --as-group=system:cluster-admins --as-group=system:authenticated
 check "system:admin by name only (sudoer)"    allow --as=system:admin
 check "system:masters certificate shape"      allow --as=probe-cert --as-group=system:masters
-# impersonating a name carries no groups: this pins a login that is cluster-admin by a User binding
-# (the sandbox's kubeadmin); a login that is cluster-admin only through a group needs --as-group too
-check "current login (cluster-admin by binding)" allow --as="$(oc whoami)"
+# login_groups: the current login's groups, from the API server itself (a SelfSubjectReview), as
+# --as-group flags. Impersonating a name alone carries no groups, which would refuse a login that is
+# cluster-admin only through a group (kube:admin via system:cluster-admins).
+login_groups() {
+  printf '{"apiVersion":"authentication.k8s.io/v1","kind":"SelfSubjectReview"}' \
+    | oc create -f - -o json 2>/dev/null \
+    | jq -r '.status.userInfo.groups[]? | "--as-group=" + .'
+}
+# shellcheck disable=SC2046  # one flag per group; group names carry no spaces
+check "current login with its groups"          allow --as="$(oc whoami)" $(login_groups)
+check "group-sync operator service account"    allow --as=system:serviceaccount:group-sync-operator:controller-manager
 check "operator service account"              allow --as=system:serviceaccount:namespace-configuration-operator:controller-manager
 check "GitOps application controller"         allow --as=system:serviceaccount:openshift-gitops:openshift-gitops-argocd-application-controller
 
@@ -134,6 +143,21 @@ if [ "$enforcing" = false ] && [ "$audit_expected" -gt 0 ]; then
   else
     bad "Audit mode: expected $audit_expected PolicyViolation events naming $policy since $run_started, found $found"
   fi
+fi
+
+# The companion ValidatingAdmissionPolicy: the edit tier must not be able to change Kyverno's own
+# configuration (a server dry run; nothing is written). Skipped with a note when it is not applied.
+if oc get validatingadmissionpolicy protect-kyverno-configuration >/dev/null 2>&1; then
+  got=$(classify oc patch cm kyverno -n kyverno --type=merge -p '{"data":{"verify-probe":"x"}}' --dry-run=server --as=probe-dev --as-group=app-ocp-rbac-alpha-cluster-developer --as-group=system:authenticated)
+  case $got in
+    *ValidatingAdmissionPolicy*|denied) ok "companion: the edit tier cannot change Kyverno's ConfigMap" ;;
+    *) bad "companion: expected the edit tier to be refused on Kyverno's ConfigMap, got $got" ;;
+  esac
+  # shellcheck disable=SC2046
+  got=$(classify oc patch cm kyverno -n kyverno --type=merge -p '{"data":{"verify-probe":"x"}}' --dry-run=server --as="$(oc whoami)" $(login_groups))
+  if [ "$got" = allowed ]; then ok "companion: the current login may change Kyverno's ConfigMap"; else bad "companion: the current login must be allowed, got $got"; fi
+else
+  say "  info  companion vap-protect-kyverno-configuration.yaml is not applied; the edit tier can change Kyverno's configuration"
 fi
 
 say "result: $pass ok, $fail failed"

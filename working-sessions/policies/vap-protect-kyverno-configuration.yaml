@@ -1,0 +1,87 @@
+# =============================================================================
+# Companion to kyverno-restrict-nco-writers.yaml: protect Kyverno's own configuration
+# =============================================================================
+# WHY THIS EXISTS, AND WHY IT IS NOT A KYVERNO POLICY
+# Kyverno decides whether a request is shown to any policy BEFORE the policies run: requests
+# that match the resourceFilters in ConfigMap kyverno/kyverno, or whose requester carries a
+# group in excludeGroups, are skipped (pkg/webhooks/handlers/filter.go). That ConfigMap, and
+# Kyverno's admission Deployment, are themselves exempt from every Kyverno policy: on this
+# cluster resourceFilters carries "[*/*,kyverno,*]", and the webhooks skip the namespace.
+#
+# The population the guardrail restricts, the chart's cluster-wide `admin` and `edit` tiers,
+# holds edit on every namespace, kyverno included. Measured on the sandbox cluster with a server
+# dry run as the developer tier: `oc patch cm kyverno -n kyverno` succeeded, `oc scale deploy
+# kyverno-admission-controller --replicas=0` succeeded, and with "[NamespaceConfig,*,*]" added to
+# resourceFilters a NamespaceConfig CREATE and DELETE by that tier were admitted with the
+# guardrail's execution counter unchanged: the request never reached it. No Kyverno policy can
+# close that; the API server's own admission can, and no Kyverno configuration filters it.
+#
+# WHAT IT CHECKS
+# CREATE, UPDATE and DELETE of ConfigMaps and Deployments (and the scale subresource) in the
+# kyverno namespace are allowed only for cluster administrators and Kyverno's own service
+# accounts. "Cluster administrator" is the same criterion the guardrail uses, evaluated in
+# process here: the API server's authorizer asked whether the requester may do verb "*" on
+# resource "*" in group "*", which only a wildcard rule (a cluster-admin binding) grants; plus
+# the names OpenShift itself uses (system:admin, system:masters, system:cluster-admins).
+# If Kyverno is deployed by a GitOps controller rather than by an administrator running Helm,
+# add that controller's service account to the validation.
+#
+# TESTING (server dry runs, as the developer tier that holds edit)
+#   oc patch cm kyverno -n kyverno --type=merge -p '{"data":{"probe":"x"}}' --dry-run=server \
+#     --as=probe-dev --as-group=app-ocp-rbac-alpha-cluster-developer --as-group=system:authenticated
+#   before: configmap/kyverno patched      after: ... ValidatingAdmissionPolicy ... denied request
+#   the same as kubeadmin or system:admin: patched (no change). A ConfigMap in another namespace
+#   as the developer: created. Kyverno's own service accounts: allowed.
+# =============================================================================
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: protect-kyverno-configuration
+  labels:
+    app.kubernetes.io/name: kyverno
+    app.kubernetes.io/component: rbac-validation
+    app.kubernetes.io/part-of: rbac-automation
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kyverno
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [configmaps]
+      - apiGroups: [apps]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [deployments, deployments/scale]
+  variables:
+    - name: groups
+      expression: "has(request.userInfo.groups) ? request.userInfo.groups : []"
+    - name: isClusterAdmin
+      expression: >-
+        request.userInfo.username == 'system:admin' ||
+        'system:masters' in variables.groups ||
+        'system:cluster-admins' in variables.groups
+    - name: isKyvernoItself
+      expression: request.userInfo.username.startsWith('system:serviceaccount:kyverno:')
+  validations:
+    - expression: >-
+        variables.isClusterAdmin || variables.isKyvernoItself ||
+        authorizer.group('*').resource('*').check('*').allowed()
+      messageExpression: >-
+        request.operation + ' on ' + request.resource.resource +
+        ' in namespace kyverno is restricted to cluster administrators; refused for ' + request.userInfo.username
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: protect-kyverno-configuration
+  labels:
+    app.kubernetes.io/name: kyverno
+    app.kubernetes.io/component: rbac-validation
+    app.kubernetes.io/part-of: rbac-automation
+spec:
+  policyName: protect-kyverno-configuration
+  validationActions: [Deny]
