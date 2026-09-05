@@ -475,7 +475,7 @@ ClusterRole the chart binds but does not create, and the `kyverno-*.yaml` valida
 ### ✅ **Environment-Aware Security**
 - **Explicit allowlist approach**: Only `rnd`, `eng`, `qa`, `uat` get admin/edit access
 - **Production restrictions**: No admin/edit access in `prod`
-- **Unknown environment protection**: Unrecognized environments default to audit-only
+- **Unknown environment protection**: Unrecognized environments receive no baseline RBAC grant (the selector is an `In` allow-list)
 - **Typo protection**: Misspelled environments (e.g., `production`) are denied access
 
 ### ✅ **Mnemonic-Driven Automation**

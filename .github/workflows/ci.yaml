@@ -186,18 +186,20 @@ jobs:
       - name: excludedPaths always carry the chart's policy
         run: |
           P='namespaceConfigPolicy.oudGroup.policies.bdp'
-          # Each refusal must come from 12-'s guard (its message names the flag), not from another fail.
+          # Each refusal must come from 12-'s guard, recognised by its E_ marker: another fail's text can carry a
+          # user-controlled label value (the flag's name included), the marker cannot.
           refused_by_guard() {
             label="$1"; shift
             if out=$(helm template release "$CHART" -f "$CHART/crc-values.yaml" "$@" 2>&1); then
               echo "::error::[$label] rendered without allowMetadataExcluded"; exit 1
             fi
-            grep -q 'allowMetadataExcluded: true' <<<"$out" \
+            grep -Fq 'E_METADATA_EXCLUDED_UNACKNOWLEDGED:' <<<"$out" \
               || { echo "::error::[$label] refused, but not by 12-'s guard. Got:"; echo "$out"; exit 1; }
             echo "[$label] refused by 12-"
           }
           refused_by_guard ".metadata, flag absent"      --set "$P.excludedPaths={.metadata}"
           refused_by_guard ".metadata, string false"     --set "$P.excludedPaths={.metadata}" --set-string "$P.allowMetadataExcluded=false"
+          refused_by_guard ".metadata, string yes"       --set "$P.excludedPaths={.metadata}" --set-string "$P.allowMetadataExcluded=yes"
           refused_by_guard ".metadata.labels"            --set "$P.excludedPaths={.metadata.labels}"
           refused_by_guard ".metadata.annotations"       --set "$P.excludedPaths={.metadata.annotations}"
           refused_by_guard ".metadata.labels.<key>"      --set "$P.excludedPaths={.metadata.labels.example}"

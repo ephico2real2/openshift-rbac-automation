@@ -206,7 +206,8 @@ compared as text: a quoted "false" is a non-empty string and would otherwise cou
 {{- end }}
 {{- end }}
 {{- if and $metadataSetOnce (ne (toString ($p.allowMetadataExcluded | default false)) "true") }}
-{{- fail (printf "namespaceConfigPolicy.oudGroup.policies.%s.excludedPaths lists .metadata, .metadata.labels or .metadata.annotations. That makes the rendered labels or annotations on this policy's Roles and RoleBindings set-once (never corrected after creation) and defeats the chart 0.22.0 migration off .metadata. Remove the path, or set allowMetadataExcluded: true on the policy to declare set-once metadata deliberately." $key) }}
+{{- /* The E_ marker is what CI greps for: another fail's text can carry a user-controlled label value, this token cannot. */}}
+{{- fail (printf "E_METADATA_EXCLUDED_UNACKNOWLEDGED: namespaceConfigPolicy.oudGroup.policies.%s.excludedPaths lists .metadata, .metadata.labels or .metadata.annotations. That makes the rendered labels or annotations on this policy's Roles and RoleBindings set-once (never corrected after creation) and defeats the chart 0.22.0 migration off .metadata. Remove the path, or set allowMetadataExcluded: true on the policy to declare set-once metadata deliberately." $key) }}
 {{- end }}
 {{- $excluded := concat (list ".status" ".spec.replicas") $declaredExcluded | uniq }}
 ---
