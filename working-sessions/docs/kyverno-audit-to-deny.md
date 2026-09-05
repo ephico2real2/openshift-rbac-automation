@@ -14,7 +14,7 @@ file, and running the verification that belongs to it. The companion ValidatingA
 
 | Policy (file) | Kind | Field to change | Today | Enforcing value |
 |---|---|---|---|---|
-| `kyverno-restrict-nco-writers.yaml` (`restrict-nco-config-writers`) | `policies.kyverno.io/v1beta1` ValidatingPolicy | `spec.validationActions` | `[Audit]` | `[Deny]` |
+| `kyverno-restrict-nco-writers.yaml` (`restrict-nco-config-writers`) | `policies.kyverno.io/v1beta1` ValidatingPolicy | `spec.validationActions` | `[Deny]` since 2026-09-05 (was `[Audit]`) | `[Deny]` |
 | `vap-protect-kyverno-configuration.yaml` (`protect-kyverno-configuration`) | `admissionregistration.k8s.io/v1` ValidatingAdmissionPolicy + Binding | `spec.validationActions` on the **Binding** | `[Deny]` | already `[Deny]` |
 | `kyverno-group-naming-app-ocp-rbac.yaml` (`group-naming-app-ocp-rbac`) | `kyverno.io/v1` ClusterPolicy | `spec.validationFailureAction` | `Audit` | `Enforce` |
 | `kyverno-group-naming-bda-rbac.yaml` (`group-naming-bda-rbac`) | `kyverno.io/v1` ClusterPolicy | `spec.validationFailureAction` | `Audit` | `Enforce` |

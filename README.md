@@ -158,7 +158,8 @@ Optional standards validation (Kyverno, Audit mode — reports, does not block):
 oc apply -f working-sessions/policies/kyverno-validation-only.yaml
 ```
 
-Optional guardrail on who may write the operator's CRs (Kyverno `ValidatingPolicy`, ships in Audit).
+Optional guardrail on who may write the operator's CRs (Kyverno `ValidatingPolicy`, enforcing: `validationActions: [Deny]`
+since 2026-09-05; `working-sessions/docs/kyverno-audit-to-deny.md` is the procedure that got it there and back).
 Measured on the sandbox cluster (the table is in the policy's header): OLM aggregates the CRDs into
 the cluster-wide `admin` and `edit` roles, so the chart's `-cluster-developer` tier can create a
 NamespaceConfig that binds any ClusterRole anywhere. The policy allows only cluster administrators (by
