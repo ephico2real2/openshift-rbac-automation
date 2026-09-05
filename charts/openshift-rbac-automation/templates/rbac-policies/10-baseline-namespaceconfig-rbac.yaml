@@ -175,7 +175,9 @@ spec:
     # ---------------------------------------------------------------------
     # {{ $r.name }} — binds ClusterRole/{{ $r.clusterRole }} in the namespace
     # ---------------------------------------------------------------------
-    - excludedPaths: [.status, .spec.replicas]
+    - excludedPaths:
+        - .status
+        - .spec.replicas
       objectTemplate: |
         apiVersion: rbac.authorization.k8s.io/v1
         kind: RoleBinding

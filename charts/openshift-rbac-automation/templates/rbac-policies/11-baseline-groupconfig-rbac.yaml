@@ -110,7 +110,9 @@ spec:
     # {{ $r.name }} — groups ending {{ $suffix }} get ClusterRole/{{ $r.clusterRole }}, cluster-wide
     # ---------------------------------------------------------------------
     # The operator's default excludedPaths, declared so Git reads the same as the cluster (10-'s header).
-    - excludedPaths: [.status, .spec.replicas]
+    - excludedPaths:
+        - .status
+        - .spec.replicas
       objectTemplate: |
         {{ $guard }}
         apiVersion: rbac.authorization.k8s.io/v1
