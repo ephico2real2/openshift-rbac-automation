@@ -638,7 +638,7 @@ namespaceConfigPolicy:
       nonprod:
         enabled: true
         name: baseline-nonprod-rbac
-        description: "Nonprod RBAC: admin/developer/audit access for rnd/eng/qa/uat environments only"
+        description: "Nonprod RBAC: developer (edit) and audit (view) access for rnd/eng/qa/uat environments only"
 
         # AN EXPLICIT ALLOW-LIST, not "everything that is not prod". An environment nobody has ruled on
         # gets nothing, rather than silently inheriting non-production access — which is why
@@ -684,7 +684,7 @@ namespaceConfigPolicy:
       prod:
         enabled: true
         name: baseline-prod-rbac
-        description: "Prod RBAC: developer/audit access for prod environments only (no admin or edit)"
+        description: "Prod RBAC: audit (view) access for prod environments only (no admin, no developer)"
         environments:
           - prod
         # Nothing to exclude: the allow-list is already a single value.

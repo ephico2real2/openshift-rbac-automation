@@ -11,11 +11,13 @@ namespace-configuration-operator fork. The chart's part:
   the operator unions its defaults with the declared list in memory, so a difference cannot loop or hide anything.
 - Declaring the list is what migrates chart-managed CRs off the `.metadata` the old operator wrote into every CR:
   Helm patches a CR from the previous and the new rendered manifests only (helm v3.14.0 `pkg/kube/client.go`
-  `createPatch`: a JSON merge patch for unstructured objects, the live object not consulted, an empty patch sends
-  nothing, only `--force` replaces), so a chart that never rendered the list left the operator's in place, and the
-  first release that renders it replaces the live list (measured on the sandbox, release 8 to 10). A later upgrade
-  with an unchanged manifest sends nothing; a list edited by hand on the cluster is healed by ArgoCD (Git against
-  live), not by Helm. CRs outside the chart are named by the operator's `MetadataExcluded` Warning event.
+  `createPatch`: a JSON merge patch for unstructured objects, the live object fetched but unused on that path, an
+  empty patch sends nothing, only `--force` calls Replace), so a chart that never rendered the list left the
+  operator's in place, and the first release that renders it replaces the live list (measured on the sandbox, release
+  8 to 10). A later upgrade with an unchanged manifest sends nothing; a list edited by hand on the cluster is healed
+  by `--force` or by ArgoCD with selfHeal (this repository's Application sets it; without it ArgoCD only reports
+  OutOfSync), not by a plain `helm upgrade`. CRs outside the chart are named by the operator's `MetadataExcluded`
+  Warning event.
 - A values file that still adds `.metadata`, `.metadata.labels` or `.metadata.annotations` to an oud-group policy
   would quietly keep set-once metadata for that policy while CI stayed green (both reviewers' top finding,
   `docs/REVIEW_chart-0.22.0-excludedPaths.md`), so template 12 refuses it unless the policy sets

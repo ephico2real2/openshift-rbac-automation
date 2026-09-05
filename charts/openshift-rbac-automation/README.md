@@ -11,7 +11,7 @@ custom resources) from `values.yaml`, one flag per policy. The raw manifests und
 
 | Resource | Name | Notes |
 |---|---|---|
-| `Namespace` | `namespace-configuration-operator` | pre-install hook; skip with `createNamespace=false` |
+| `Namespace` | `namespace-configuration-operator` | an ordinary release resource (no hook); off by default, `createNamespace=true` renders it |
 | `OperatorGroup` | `namespace-configuration-operator` | **AllNamespaces** (empty spec); skip with `createOperatorGroup=false` |
 | `Subscription` | `namespace-configuration-operator` | channel `alpha`, source `community-operators` |
 
@@ -68,7 +68,7 @@ the chart package.
 | Key | Description | Default |
 |---|---|---|
 | `namespace` | Install namespace (operator watches all namespaces regardless) | `namespace-configuration-operator` |
-| `createNamespace` | Create the install namespace | `true` |
+| `createNamespace` | Create the install namespace | `false` |
 | `createOperatorGroup` | Create the AllNamespaces OperatorGroup | `true` |
 | `subscription.packageName` | Catalog package name | `namespace-configuration-operator` |
 | `subscription.channel` | Update channel | `alpha` |
