@@ -173,11 +173,11 @@ jobs:
             --set "$P.trino.groupPrefix=bda-rbac-spark-alpha"
           [ "$fails" -eq 0 ] || exit 1
 
-      # The operator unions [.metadata, .status, .spec.replicas] into every template's excludedPaths on the
-      # live CR, so a declared list that is shorter is a permanent ArgoCD diff — seen under ArgoCD on 0.21.0: two
-      # paths in Git, three on the cluster, selfHeal and the operator rewriting each other. 12- unions the
-      # operator's set at render time; this proves an overlay that lists fewer paths still renders all three.
-      - name: excludedPaths always carry the operator's own set
+      # Every rendered excludedPaths block carries the chart's policy [.status, .spec.replicas] whatever an
+      # overlay declares (12- adds it at render time; 10-, 11- and 13- declare it). The history: older
+      # operators wrote their own list into the live CR, and a Git list that differed was a rewrite loop under
+      # ArgoCD selfHeal (0.21.0); from the build that applies defaults in memory the list is the chart's alone.
+      - name: excludedPaths always carry the chart's policy
         run: |
           out=$(helm template release "$CHART" -f "$CHART/crc-values.yaml" \
                   --set 'namespaceConfigPolicy.oudGroup.policies.bdp.excludedPaths={.metadata}')

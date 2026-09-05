@@ -182,12 +182,11 @@ now simply render empty for such a namespace.
 {{- end }}
 {{- $endif := "{{- end }}" }}
 {{- /*
-excludedPaths always carries the operator's own defaults, [.status, .spec.replicas] since operator build
-v1.2.6-131 (10-'s header has the history; .metadata is no longer among them, so rendered labels and
-annotations are now enforced). The operator unions its defaults into the live CR on reconcile whatever
-the source declares, so a declared list that is shorter is a permanent ArgoCD diff, and with selfHeal
-on ArgoCD reverts and the operator re-adds, forever. The union here makes the rendered CR what the
-operator will leave it as; paths values adds on top are kept. Requires that operator build.
+excludedPaths always carries this chart's policy, [.status, .spec.replicas] (10-'s header says why it is
+declared and why it is not a mirror of the operator's defaults), plus whatever paths values adds for the
+policy. Rendered labels and annotations are enforced. Roll the operator build that applies its defaults
+in memory out first: an older one writes its own list into the spec, and a Git that declares a
+different list is the rewrite loop the 0.21.1 entry records.
 */}}
 {{- $excluded := concat (list ".status" ".spec.replicas") ($p.excludedPaths | default (list)) | uniq }}
 ---

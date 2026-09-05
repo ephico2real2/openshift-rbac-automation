@@ -32,16 +32,20 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
-# 0.22.0, MINOR: EVERY NamespaceConfig AND GroupConfig DECLARES excludedPaths [.status, .spec.replicas], the operator's
-# default set since build v1.2.6-131, and .metadata is gone from it. Rendered labels and annotations on
-# RoleBindings and Roles are now ENFORCED: the operator applies server-side and owns exactly what the
-# template renders, so editing metadata in a template reaches objects that already exist, a rendered
+# 0.22.0, MINOR: EVERY NamespaceConfig AND GroupConfig DECLARES excludedPaths [.status, .spec.replicas] as
+# THIS CHART'S POLICY, and .metadata is gone from it. Rendered labels and annotations on RoleBindings,
+# ClusterRoleBindings and Roles are now ENFORCED: the operator applies server-side and owns exactly what
+# the template renders, so editing metadata in a template reaches objects that already exist, a rendered
 # label changed by hand is restored, and a label anyone else adds is left alone (measured on the
-# sandbox; GOTCHA 9 is retired). Declaring the full set makes `helm upgrade` overwrite the stale
-# [.metadata, .status, .spec.replicas] the old operator wrote into every live CR, and keeps Git equal to
-# the cluster for ArgoCD. MINOR, not PATCH: behaviour on existing objects changes, and it REQUIRES the
-# operator image v1.2.6-131 or later; an older operator adds .metadata back on every reconcile, which
-# with ArgoCD selfHeal is a rewrite loop. Upgrade the image first.
+# sandbox; GOTCHA 9 is retired). Declaring the list is what migrates every existing CR: older operator
+# builds wrote [.metadata, .status, .spec.replicas] into every live CR's spec, and only a Helm release
+# whose rendered list differs rewrites it (measured, release 8 to 10). It is not a mirror of the
+# operator's defaults: from the build that applies its defaults in memory (operator design record
+# docs/DESIGN_excludedPaths.md, chosen by an adversarial design review of both approaches) the operator
+# never writes this list and unions its own defaults with it, so a difference cannot loop or hide
+# anything. MINOR, not PATCH: behaviour on existing objects changes, and the ORDER matters: roll that
+# operator image out first. An older operator writes its list into the spec, and a Git that declares a
+# different one is the 0.21.1 rewrite loop under ArgoCD selfHeal.
 #
 # 0.21.3, PATCH: DOCS ONLY, recording an operator-side fix this chart's oudGroup policies depended on.
 # Every guarded objectTemplate renders EMPTY for a namespace its guard rejects, and operator builds

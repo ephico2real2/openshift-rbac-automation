@@ -501,13 +501,10 @@ namespaceConfigPolicy:
 
         # Paths the operator never enforces on the objects it creates: set at creation, then left alone.
         #
-        # THE OPERATOR'S FULL DEFAULT SET, ALWAYS. The operator unions its defaults into the live CR on
-        # its first reconcile whatever this list says; since operator build v1.2.6-131 those are
-        # [.status, .spec.replicas] (10-'s header has the history). A shorter list here is a permanent
-        # ArgoCD diff, and with selfHeal on ArgoCD and the operator rewrite the spec at each other
-        # forever. 12- unions the operator's defaults into this list at render time, so leaving one out
-        # cannot recreate that; listing them here keeps Git reading the same as the cluster. Add to it,
-        # never trim it. .metadata is NOT here any more: rendered labels and annotations are enforced.
+        # THE CHART'S POLICY, [.status, .spec.replicas], is added to this list by 12- at render time, so
+        # what you write here is the EXTRA paths for this policy. Listing the two anyway keeps values
+        # reading the same as the rendered CR. .metadata is NOT here any more: rendered labels and
+        # annotations are enforced (10-'s header has the history and the ordering requirement).
         excludedPaths:
           - .status
           - .spec.replicas

@@ -139,27 +139,31 @@ spec:
         values:
           {{- toYaml $p.excludeEnvironments | nindent 10 }}
       {{- end }}
-  # excludedPaths DECLARED, AS THE OPERATOR'S FULL DEFAULT SET, ON EVERY TEMPLATE. The operator unions
-  # its defaults into the live CR on reconcile whatever the source declares; since operator build
-  # v1.2.6-131 (quay :latest from 2026-09-05) those are [.status, .spec.replicas]. Before that build
-  # they were [.metadata, .status, .spec.replicas], and every CR on a cluster that ran it still carries
-  # .metadata in its spec: the operator wrote it there and removes nothing. Declaring the set here
-  # makes `helm upgrade` overwrite that stale list, and keeps Git reading the same as the cluster so
-  # ArgoCD never holds the CR OutOfSync (declaring a shorter list than the operator's is a permanent
-  # diff, and with selfHeal on ArgoCD and the operator rewrite the spec at each other forever).
+  # excludedPaths DECLARED ON EVERY TEMPLATE, AS THIS CHART'S OWN POLICY: [.status, .spec.replicas].
+  # Those are the parts of a created object the operator never enforces (set at creation, then left
+  # alone); everything else the template renders, labels and annotations included, is enforced.
   #
-  # WHAT IT CHANGES, and it retires the trap oud-group documented as GOTCHA 9: with .metadata no
-  # longer excluded the operator enforces the labels and annotations it renders (server-side apply,
-  # it owns exactly what the template renders and leaves labels anyone else adds alone). Editing
-  # metadata in an objectTemplate below now REACHES RoleBindings that already exist; a rendered
-  # label someone changed by hand is restored on the next reconcile. Measured on the sandbox.
-  # Spec-level edits (subjects, roleRef) propagate as they always did.
+  # WHY DECLARE IT. Operator builds before the server-side-apply enforcer unioned their defaults,
+  # .metadata among them, INTO every live CR's spec on first reconcile, and removed nothing later; every
+  # CR on a cluster that ran them still carries .metadata, and with it labels and annotations that are
+  # set once and never corrected (the trap oud-group documented as GOTCHA 9). Nothing rewrites that list
+  # except a Helm release whose rendered list differs from the previous one, so declaring the list here
+  # is what migrates every existing CR, once, on the first upgrade to a release that declares it, and
+  # what keeps Git equal to the cluster afterwards. Measured on the sandbox (release 8 to 10): every CR
+  # rewritten to this list, 40 objects single-owner, a tampered rendered label restored and a foreign
+  # label kept on both a RoleBinding and a ClusterRoleBinding, every CR ReconcileSuccess.
   #
-  # REQUIRES the operator image v1.2.6-131 or later. An older operator adds .metadata back into the
-  # CR on every reconcile, which is exactly the ArgoCD diff loop above.
+  # NOT A MIRROR OF THE OPERATOR. From the build that applies its defaults in memory (the #16 design
+  # record in the operator repository, docs/DESIGN_excludedPaths.md) the operator never writes this
+  # list; it unions its own defaults with whatever the CR declares when it builds the objects, so a
+  # default this chart does not mention (.metadata.finalizers today) is still applied and a difference
+  # between this list and the operator's defaults can neither loop nor hide anything.
   #
-  # .spec.replicas is meaningless for a RoleBinding; it is listed because the operator lists it, and
-  # the CR must read the same in Git and on the cluster.
+  # ORDERING. Roll that operator image out BEFORE this chart release. An older operator writes its
+  # defaults into the spec, and a Git that declares a different list is the rewrite loop the 0.21.1
+  # entry records (ArgoCD self-heal and the operator taking turns).
+  #
+  # .spec.replicas is meaningless for a RoleBinding; it is here so one declaration serves every template.
   #
   # Should metadata ever need a clean re-roll anyway, SELECT ON config-source, which is a LABEL.
   # source-namespaceconfig carries the same value but is an ANNOTATION, and `oc -l` matches labels
