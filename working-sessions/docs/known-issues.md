@@ -104,6 +104,10 @@ oc get rolebindings -n beta-prod -l app.kubernetes.io/managed-by=namespace-confi
    - When `{{- if ... }}` conditions are false, templates output empty strings
    - Red Hat CoP operator tries to parse empty output as Kubernetes resources
    - Results in `Object 'Kind' is missing in 'null'` errors
+   - **Resolved at the operator layer on 2026-09-04** (fork build v1.2.6-84-gbc60603, quay `:latest`): the
+     template filter now understands guards on `.Name`, labels and annotations, and decides any other guard
+     by rendering first, so a rejected namespace is skipped before the renderer sees an empty output. The
+     split described below remains the right structure; the error lines are gone. See Chart.yaml 0.21.3.
 3. **Failed Workarounds**: Adding `{{- else }}` with comments doesn't work (comments aren't valid K8s resources)
 4. **Solution**: Split into environment-specific NamespaceConfigs where all templates always produce valid resources
 5. **Architecture Benefits**: Separation of concerns, cleaner debugging, better maintainability
@@ -290,6 +294,12 @@ ERROR lockedresource unable to process template for
 - Red Hat CoP operator tries to parse empty output as valid Kubernetes resources
 - Even with `{{- else }}` comments, the output isn't a valid API resource
 - The operator cannot handle templates that sometimes produce valid resources and sometimes don't
+
+**Update 2026-09-04**: this is fixed in the operator fork from build v1.2.6-84-gbc60603. The template filter
+evaluates `hasPrefix` / `hasSuffix` / `contains` / `eq` / `ne` / `and` / `or` / `not` guards on `.Name`, labels
+and annotations before rendering, and renders-then-checks any other guard, so an object the guard rejects is
+skipped at debug level instead of reaching the renderer. The split below is still the cleaner design for the
+baseline; it is no longer a workaround for an operator error.
 
 ### Final Solution: Split Approach ✅
 We had to abandon the combined approach and use **two separate NamespaceConfigs**:

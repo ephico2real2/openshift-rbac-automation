@@ -122,12 +122,18 @@ skipping the bad one. Maps range in sorted key order, so the first failure is de
 #
 # Both objects, not just the binding: the Role has a FIXED name per policy, so unguarded it would
 # render into the other family's namespaces — unbound, but present where the policy does not apply.
-# In a namespace whose value matches no sharer, every template renders EMPTY. The operator skips the
-# empty render but LOGS IT AT ERROR LEVEL first — "Object 'Kind' is missing in 'null'" then "unable
-# to process template for", once per non-matching namespace per reconcile. Measured on CRC: those
-# lines are the guard WORKING, and the reconcile's closing "resources processed successfully …
-# resources:<n>" line is the verdict. (A GroupConfig reconcile logs no such lines — the noise is the
-# NamespaceConfig path's, a candidate fix for the operator fork, not this chart.)
+# In a namespace whose value matches no sharer, every template renders EMPTY. What the operator does
+# with that depends on its build:
+#   - builds from v1.2.6-84-gbc60603 on (quay :latest since 2026-09-04) understand this guard BEFORE
+#     rendering — hasPrefix on a label value is part of their template filter — and skip the
+#     namespace with one debug-level "skipping namespace" line. Zero error lines, measured on CRC
+#     with two policies and four namespaces (Chart.yaml 0.21.3 has the numbers).
+#   - older builds only understood hasSuffix/contains on the namespace NAME, so they rendered, hit
+#     the empty output and LOGGED IT AT ERROR LEVEL — "Object 'Kind' is missing in 'null'" then
+#     "unable to process template for", once per non-matching namespace per reconcile — before
+#     skipping it. The grant was still right (the closing "resources processed successfully …
+#     resources:<n>" line was the verdict); only the log was wrong. Those lines in a manager log
+#     mean the cluster runs an old image.
 #
 # TWO MORE MEASURED FACTS, in Chart.yaml's 0.20.0 entry at full length: adding groupPrefix to an
 # ALREADY-DEPLOYED policy does not reliably remove the objects it displaces (delete them by
