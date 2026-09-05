@@ -10,13 +10,16 @@ namespace-configuration-operator fork. The chart's part:
   not a mirror of the operator's defaults (which changed twice in a day and now include `.metadata.finalizers`);
   the operator unions its defaults with the declared list in memory, so a difference cannot loop or hide anything.
 - Declaring the list is what migrates chart-managed CRs off the `.metadata` the old operator wrote into every CR:
-  Helm's three-way patch leaves a field alone that neither manifest renders, so the first release that declares the
-  list replaces the legacy one (measured on the sandbox, release 8 to 10); a later upgrade is a no-op only while
-  live still matches, and restores the rendered list if live has drifted. CRs outside the chart are named by the
-  operator's `MetadataExcluded` Warning event.
-- A values file that still adds `.metadata` to an oud-group policy would quietly keep set-once metadata for that
-  policy while CI stayed green (both reviewers' top finding, `docs/REVIEW_chart-0.22.0-excludedPaths.md`), so
-  template 12 refuses it unless the policy sets `allowMetadataExcluded: true`.
+  Helm patches a CR from the previous and the new rendered manifests only (helm v3.14.0 `pkg/kube/client.go`
+  `createPatch`: a JSON merge patch for unstructured objects, the live object not consulted, an empty patch sends
+  nothing, only `--force` replaces), so a chart that never rendered the list left the operator's in place, and the
+  first release that renders it replaces the live list (measured on the sandbox, release 8 to 10). A later upgrade
+  with an unchanged manifest sends nothing; a list edited by hand on the cluster is healed by ArgoCD (Git against
+  live), not by Helm. CRs outside the chart are named by the operator's `MetadataExcluded` Warning event.
+- A values file that still adds `.metadata`, `.metadata.labels` or `.metadata.annotations` to an oud-group policy
+  would quietly keep set-once metadata for that policy while CI stayed green (both reviewers' top finding,
+  `docs/REVIEW_chart-0.22.0-excludedPaths.md`), so template 12 refuses it unless the policy sets
+  `allowMetadataExcluded: true`.
 - Ordering: the operator image first, then chart 0.22.0. Against an older operator a declared list that differs
   from its defaults is the 0.21.1 rewrite loop under ArgoCD self-heal.
 - Rejected: the operator removing `.metadata` automatically (nothing can attribute an entry to the author or to the

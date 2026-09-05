@@ -178,39 +178,51 @@ jobs:
       # operators wrote their own list into the live CR, and a Git list that differed was a rewrite loop under
       # ArgoCD selfHeal (0.21.0); from the build that applies defaults in memory the list is the chart's alone.
       #
-      # The overlay probe is a PAIR. A pre-0.22.0 values file that still lists .metadata on an oud-group policy
-      # must be REFUSED (12- guards it), because rendering it would make that policy's metadata set-once again
-      # and undo the migration while this workflow stayed green; the same overlay with allowMetadataExcluded
-      # set must render, with .metadata kept and the chart's policy still present on every block.
+      # The overlay probes: a pre-0.22.0 values file that still lists .metadata (or .metadata.labels or
+      # .metadata.annotations) on an oud-group policy must be REFUSED by 12-'s guard, because rendering it would
+      # make that policy's metadata set-once again and undo the migration while this workflow stayed green; a
+      # quoted "false" acknowledgement must be refused too; .metadata.finalizers must still render; and the
+      # acknowledged overlay must render with .metadata kept and the chart's policy on every block.
       - name: excludedPaths always carry the chart's policy
         run: |
           P='namespaceConfigPolicy.oudGroup.policies.bdp'
-          if out=$(helm template release "$CHART" -f "$CHART/crc-values.yaml" \
-                     --set "$P.excludedPaths={.metadata}" 2>&1); then
-            echo "::error::an overlay listing .metadata rendered without allowMetadataExcluded"; exit 1
-          fi
-          grep -q 'allowMetadataExcluded: true' <<<"$out" \
-            || { echo "::error::the .metadata overlay was refused, but not by 12-'s guard. Got:"; echo "$out"; exit 1; }
-          echo "unacknowledged .metadata overlay refused by 12-"
-          # A quoted "false" is a non-empty string; the guard compares the flag's text so it must still refuse.
-          if helm template release "$CHART" -f "$CHART/crc-values.yaml" \
-               --set "$P.excludedPaths={.metadata}" --set-string "$P.allowMetadataExcluded=false" >/dev/null 2>&1; then
-            echo "::error::allowMetadataExcluded=\"false\" (a string) rendered the .metadata overlay"; exit 1
-          fi
-          echo "string \"false\" acknowledgement refused by 12-"
+          # Each refusal must come from 12-'s guard (its message names the flag), not from another fail.
+          refused_by_guard() {
+            label="$1"; shift
+            if out=$(helm template release "$CHART" -f "$CHART/crc-values.yaml" "$@" 2>&1); then
+              echo "::error::[$label] rendered without allowMetadataExcluded"; exit 1
+            fi
+            grep -q 'allowMetadataExcluded: true' <<<"$out" \
+              || { echo "::error::[$label] refused, but not by 12-'s guard. Got:"; echo "$out"; exit 1; }
+            echo "[$label] refused by 12-"
+          }
+          refused_by_guard ".metadata, flag absent"      --set "$P.excludedPaths={.metadata}"
+          refused_by_guard ".metadata, string false"     --set "$P.excludedPaths={.metadata}" --set-string "$P.allowMetadataExcluded=false"
+          refused_by_guard ".metadata.labels"            --set "$P.excludedPaths={.metadata.labels}"
+          refused_by_guard ".metadata.annotations"       --set "$P.excludedPaths={.metadata.annotations}"
+          refused_by_guard ".metadata.labels.<key>"      --set "$P.excludedPaths={.metadata.labels.example}"
+          # .metadata.finalizers touches neither labels nor annotations: it must render.
+          helm template release "$CHART" -f "$CHART/crc-values.yaml" --set "$P.excludedPaths={.metadata.finalizers}" >/dev/null \
+            || { echo "::error::.metadata.finalizers as an extra was refused; only labels/annotations paths should be"; exit 1; }
+          echo "[.metadata.finalizers] renders"
           out=$(helm template release "$CHART" -f "$CHART/crc-values.yaml" \
                   --set "$P.excludedPaths={.metadata}" --set "$P.allowMetadataExcluded=true")
           kept=$(echo "$out" | grep -c '^        - \.metadata$' || true)
           [ "$kept" -eq 2 ] || { echo "::error::acknowledged overlay should keep .metadata on bdp's 2 templates, found $kept"; exit 1; }
+          # crc-values renders 11 templates (10-: 3, 11-: 3, 12-: 4, 13-: 1). Adding a template to a fixture
+          # policy changes this number on purpose; update it with the fixture.
           blocks=$(echo "$out" | grep -c '^    - excludedPaths:' || true)
-          [ "$blocks" -gt 0 ] || { echo "::error::no excludedPaths block rendered"; exit 1; }
+          [ "$blocks" -eq 11 ] || { echo "::error::expected 11 excludedPaths blocks from crc-values, found $blocks"; exit 1; }
+          # Every block must carry BOTH .status and .spec.replicas; a block closes on the next non-item line
+          # or on the next block header (an empty block followed directly by a header is counted too).
           missing=$(echo "$out" | awk '
-            /^    - excludedPaths:/ { inb=1; seen=0; next }
-            inb && /^        - /    { if ($2 == ".spec.replicas") seen=1; next }
-            inb                     { if (!seen) m++; inb=0 }
-            END                     { print m+0 }')
-          echo "excludedPaths blocks: $blocks, missing .spec.replicas: $missing"
-          [ "$missing" -eq 0 ] || { echo "::error::$missing excludedPaths block(s) lack .spec.replicas"; exit 1; }
+            function closeb() { if (inb && (!st || !rep)) m++; inb=0; st=0; rep=0 }
+            /^    - excludedPaths:/ { closeb(); inb=1; next }
+            inb && /^        - /    { if ($2 == ".status") st=1; if ($2 == ".spec.replicas") rep=1; next }
+            inb                     { closeb() }
+            END                     { closeb(); print m+0 }')
+          echo "excludedPaths blocks: $blocks, missing the chart policy: $missing"
+          [ "$missing" -eq 0 ] || { echo "::error::$missing excludedPaths block(s) lack .status or .spec.replicas"; exit 1; }
 
       # Install and uninstall ordering: policy CRs deleted BEFORE the Subscription, the sweep applied
       # AFTER the CRs, every resource declaring an explicit wave, no two hooks sharing a weight.

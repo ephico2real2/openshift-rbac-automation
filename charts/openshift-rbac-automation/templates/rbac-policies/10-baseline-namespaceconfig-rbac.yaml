@@ -146,11 +146,11 @@ spec:
   # WHY DECLARE IT. Operator builds before the server-side-apply enforcer unioned their defaults,
   # .metadata among them, INTO every live CR's spec on first reconcile, and removed nothing later; every
   # CR on a cluster that ran them still carries .metadata, and with it labels and annotations that are
-  # set once and never corrected (the trap oud-group documented as GOTCHA 9). Helm's three-way patch
-  # never touches a field that neither the previous nor the new manifest renders, so a chart that stayed
-  # silent left that list in place forever; declaring it here is what migrates every chart-managed CR on
-  # the first upgrade to a release that declares it, and a later upgrade restores it if the live list has
-  # drifted (a no-op only while live still matches). Measured on the sandbox (release 8 to 10): every CR
+  # set once and never corrected (the trap oud-group documented as GOTCHA 9). Helm patches a CR from the
+  # previous and the new rendered manifests only (helm v3.14.0 createPatch: a JSON merge patch, live not
+  # consulted, an empty patch sends nothing), so a chart that never rendered the list left the operator's
+  # in place forever; declaring it here is what replaces it on every chart-managed CR, on the first
+  # upgrade to a release that renders it. Measured on the sandbox (release 8 to 10): every CR
   # rewritten to this list, 40 objects single-owner, a tampered rendered label restored and a foreign
   # label kept on both a RoleBinding and a ClusterRoleBinding, every CR ReconcileSuccess.
   #

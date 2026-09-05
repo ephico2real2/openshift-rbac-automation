@@ -6,8 +6,9 @@ description: >-
   namespace, an AllNamespaces (global) OperatorGroup, and a Subscription, optionally running a
   custom operator build — and deploys the policies (NamespaceConfig and GroupConfig CRs) from
   namespaceConfigPolicy, clusterRbac and customGroupConfig, one policy per flag. The baseline
-  tiers ship ENABLED, so a stock install grants RBAC; the raw manifests under
-  working-sessions/policies stay the readable reference for those.
+  namespace tiers and the cluster GroupConfig ship ENABLED, so a stock install grants RBAC; the
+  oud-group example (oudGroup.policies.bdp) and the custom GroupConfig ship disabled. The raw
+  manifests under working-sessions/policies stay the readable reference for those.
 type: application
 # 0.4.0, MINOR: a new template and a new TOP-LEVEL values stanza. `clusterRbac` renders one
 # GroupConfig carrying the three cluster-wide tiers (admin/view/edit ClusterRoles bound to the
@@ -38,13 +39,16 @@ type: application
 # the template renders, so editing metadata in a template reaches objects that already exist, a rendered
 # label changed by hand is restored, and a label anyone else adds is left alone (measured on the
 # sandbox; GOTCHA 9 is retired). Declaring the list is what migrates every chart-managed CR: older
-# operator builds wrote [.metadata, .status, .spec.replicas] into every live CR's spec, and Helm's
-# three-way patch leaves a field alone that neither manifest renders. On the first upgrade to 0.22.0 the
-# patch replaces that legacy list with the rendered one (measured, release 8 to 10); a later upgrade is
-# a no-op only while live still matches, and restores the rendered list if live has drifted. Values that
-# still add .metadata to an oud-group policy are the exception and are REFUSED by 12- unless the policy
-# sets allowMetadataExcluded: true, because a render that quietly kept it would undo this migration for
-# that policy while CI stayed green. It is not a mirror of the
+# operator builds wrote [.metadata, .status, .spec.replicas] into every live CR's spec, and Helm patches a
+# CR from the PREVIOUS and the NEW rendered manifests only (helm v3.14.0 pkg/kube/client.go createPatch:
+# a JSON merge patch for unstructured objects; the live object is not consulted, an empty patch sends
+# nothing, only --force replaces). So a chart that never rendered the list left the operator's in place
+# forever, and the first release that renders it, this one, replaces the live list on every chart-managed
+# CR (measured, release 8 to 10). A later upgrade whose manifest is unchanged sends nothing: a list edited
+# by hand on the cluster stays until the manifest changes again or ArgoCD, which compares Git to live,
+# heals it. Values that still add .metadata (or .metadata.labels/.metadata.annotations) to an oud-group
+# policy are REFUSED by 12- unless the policy sets allowMetadataExcluded: true, because a render that
+# quietly kept it would undo this migration for that policy while CI stayed green. It is not a mirror of the
 # operator's defaults: from the build that applies its defaults in memory (operator design record
 # docs/DESIGN_excludedPaths.md, chosen by an adversarial design review of both approaches) the operator
 # never writes this list and unions its own defaults with it, so a difference cannot loop or hide

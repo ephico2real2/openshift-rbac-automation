@@ -506,7 +506,8 @@ namespaceConfigPolicy:
         # reading the same as the rendered CR. .metadata is NOT here any more: rendered labels and
         # annotations are enforced (10-'s header has the history and the ordering requirement).
         #
-        # Adding .metadata back is REFUSED at render time unless allowMetadataExcluded is true. It would
+        # Adding .metadata (or .metadata.labels / .metadata.annotations) back is REFUSED at render time
+        # unless allowMetadataExcluded is true. It would
         # make this policy's rendered labels and annotations set-once again and quietly undo the 0.22.0
         # migration for this policy, which is exactly what a values file written before 0.22.0 does.
         # Set the flag only when set-once metadata on this policy's objects is the intent.
