@@ -124,12 +124,13 @@ helm upgrade --install nco charts/openshift-rbac-automation -n namespace-configu
   --set namespaceConfigPolicy.baseline.enabled=true
 ```
 
-Or everything, which is one command rather than four — **overrides are not cumulative when an upgrade
-supplies values.** An upgrade with at least one `-f` / `--set` argument and without `--reuse-values`
-recomputes values from the chart defaults plus that invocation's arguments, so an override you leave off
-returns to its default; for the off-by-default oud-group and custom policies that switches the policy
-**off**, and switching a policy off revokes what it created. (An upgrade with no value arguments, or with
-`--reuse-values`, keeps the previous release's values.)
+Or everything, which is one command rather than four — **separate upgrades that supply values are not
+cumulative by default.** An upgrade with at least one `-f` / `--set` argument and without `--reuse-values`
+or `--reset-then-reuse-values` starts from the chart defaults and applies that invocation's arguments, so an
+override you leave off returns to its default; for the off-by-default oud-group and custom policies that
+switches the policy **off**, and switching a policy off revokes what it created. (With no value arguments
+and without `--reset-values`, Helm keeps the previous release's values; `--reuse-values` merges them with
+new arguments; `--reset-values` discards them and wins if both flags are given. See `helm upgrade --help`.)
 
 ```bash
 helm upgrade --install nco charts/openshift-rbac-automation -n namespace-configuration-operator \
