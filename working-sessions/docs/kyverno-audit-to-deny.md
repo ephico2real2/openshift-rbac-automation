@@ -2,7 +2,10 @@
 
 Companion to `working-sessions/policies/kyverno-restrict-nco-writers.yaml` and the older ClusterPolicies in the same
 directory. Everything below was measured on the sandbox (Kyverno 1.16.1, one admission-controller replica) on
-2026-09-05; the policy headers hold the detailed reasoning and this guide holds the procedure.
+2026-09-05. The policy headers hold the identity and match reasoning and the failure-mode measurements; this guide
+holds the procedure. On `failurePolicy` the writers header states the source finding (the 1.16.1 compiler consults it
+for matchConditions errors, and it governs the no-verdict path) and this guide adds what the CRD's own description
+claims; the measured behaviour under "What Deny changes" is the same in both.
 
 ## The short answer
 
@@ -114,13 +117,16 @@ PolicyReport rows). This policy's `background` is off for a different reason, re
 
 ## The four older ClusterPolicies
 
-They are not part of the operator work and were added earlier (2026-07-30). Each is switched the same way, **one file
-at a time and only after its own soak is clean**, with `Enforce` in place of `Audit`. None of the four sets
+They are not part of the operator work. Three were added on 2026-07-30; `kyverno-validation-only.yaml` dates to
+2026-03-16 and was reworked on 2026-07-30. Each is switched the same way, **one file at a time and only after its own
+soak is clean**, with `Enforce` in place of `Audit`. None of the four sets
 `validate.failureAction` on a rule today, so the top-level field is enough; if a rule later sets it, that value wins
-and a top-level edit will not move that rule. Check before each switch:
+and a top-level edit will not move that rule. Check before each switch for a KEY named `failureAction` or
+`failureActionOverrides` (not the substring inside `validationFailureAction`; `-E` so the alternation works on both
+BSD and GNU grep):
 
 ```sh
-grep -n 'failureAction\|failureActionOverrides' working-sessions/policies/<one-file>.yaml   # expect no output
+grep -nE '^ +(failureAction|failureActionOverrides):' working-sessions/policies/<one-file>.yaml   # expect no output
 ```
 
 The soak signal for these is their PolicyReport rows, because `background: true` scans existing objects, not only new
@@ -137,9 +143,10 @@ mnemonics are 5 to 8 letters and says Enforce would make group-sync fail creatin
 pattern widened), `rbac-standards-enforcement` 21, `group-naming-bda-rbac` 1, `namespace-oud-group-allowlist` 1
 (namespace `oud-poc-platform`). Two cautions about reading those rows:
 
-- **An existing violator is not refused on its next update by default.** The live rule
-  `validate-oud-group-known-family` has `allowExistingViolations: true` (Kyverno's default), so an UPDATE that leaves a
-  pre-existing violation in place is admitted in Enforce; a CREATE of a new violating object is refused. Refusing
+- **An existing violator is not refused on its next update by default.** The file does not set
+  `allowExistingViolations` on `validate-oud-group-known-family`, and the live rule reads `allowExistingViolations: true`
+  (the CRD's default, measured with `oc get clusterpolicy namespace-oud-group-allowlist -o jsonpath=...`), so an UPDATE
+  that leaves a pre-existing violation in place is admitted in Enforce; a CREATE of a new violating object is refused. Refusing
   updates to already-violating objects is a separate, explicit decision: set that rule's `allowExistingViolations` to
   `false`.
 - **Rows can be stale.** `kyverno-validation-only.yaml` documents that a resource which becomes excluded keeps its
