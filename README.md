@@ -52,17 +52,17 @@ This solution provides **automated RBAC management** for OpenShift clusters usin
 
 | Environment | Admin Access | Developer Access | Audit Access |
 |-------------|--------------|------------------|--------------|
-| **rnd**     | ✅ Yes       | ✅ Yes           | ✅ Yes       |
-| **eng**     | ✅ Yes       | ✅ Yes           | ✅ Yes       |
-| **qa**      | ✅ Yes       | ✅ Yes           | ✅ Yes       |
-| **uat**     | ✅ Yes       | ✅ Yes           | ✅ Yes       |
-| **prod**    | ❌ **No**    | ✅ Yes           | ✅ Yes       |
-| **other**   | ❌ **No**    | ✅ Yes           | ✅ Yes       |
+| **rnd**     | ❌ No        | ✅ Yes           | ✅ Yes       |
+| **eng**     | ❌ No        | ✅ Yes           | ✅ Yes       |
+| **qa**      | ❌ No        | ✅ Yes           | ✅ Yes       |
+| **uat**     | ❌ No        | ✅ Yes           | ✅ Yes       |
+| **prod**    | ❌ **No**    | ❌ **No**        | ✅ Yes       |
+| **other**   | ❌ **No**    | ❌ **No**        | ❌ **No**    |
 
-**As configured in this example**:
-- **Admin access**: Restricted to non-production environments only
-- **Developer access**: Available in ALL environments (power users in prod)
-- **Audit access**: Universal read-only access across all environments
+**As configured in this example** (`namespaceConfigPolicy.baseline.policies` in values.yaml):
+- **Admin access**: not granted by the namespace baseline; cluster-wide admin is `clusterRbac`
+- **Developer access** (`edit`): non-production environments only
+- **Audit access** (`view`): non-production and prod; an environment not on the allow-list gets nothing
 
 Tightening production to read-only means removing the `developer` entry from
 `namespaceConfigPolicy.baseline.policies.prod.roles` in `charts/openshift-rbac-automation/values.yaml`; loosening it means adding
@@ -183,7 +183,7 @@ oc label namespace payment-dev \
 
 # Verify RoleBindings created
 oc get rolebindings -n payment-dev
-# Expected: paym-admin-rb, paym-developer-rb, paym-audit-rb
+# Expected: paym-developer-rb, paym-audit-rb  (no paym-admin-rb: the baseline grants no admin)
 ```
 
 ### 4. Test Production Restrictions
@@ -195,12 +195,12 @@ oc label namespace payment-prod \
   company.net/mnemonic=paym \
   company.net/app-environment=prod
 
-# Verify admin is withheld, but developer/audit are not
+# Verify prod is audit-only
 oc get rolebindings -n payment-prod
-# Expected: paym-developer-rb (edit) and paym-audit-rb (view) — NO paym-admin-rb
+# Expected: paym-audit-rb (view) only — no admin, no developer
 ```
 
-> In this example the developer group keeps `edit` in production and only `admin` is withheld.
+> In this example prod is audit-only.
 > **That split is a company policy decision, not a rule** — adjust
 > `namespaceConfigPolicy.baseline.policies.prod.roles` in `charts/openshift-rbac-automation/values.yaml` to match your own. See
 > [architecture.md](working-sessions/docs/architecture.md).
@@ -473,7 +473,7 @@ ClusterRole the chart binds but does not create, and the `kyverno-*.yaml` valida
 ## 🎯 Key Features
 
 ### ✅ **Environment-Aware Security**
-- **Explicit allowlist approach**: Only `rnd`, `eng`, `qa`, `uat` get admin/edit access
+- **Explicit allowlist approach**: Only `rnd`, `eng`, `qa`, `uat` get developer (`edit`) and audit (`view`) access
 - **Production restrictions**: No admin/edit access in `prod`
 - **Unknown environment protection**: Unrecognized environments receive no baseline RBAC grant (the selector is an `In` allow-list)
 - **Typo protection**: Misspelled environments (e.g., `production`) are denied access
