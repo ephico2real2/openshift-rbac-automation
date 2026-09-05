@@ -192,6 +192,12 @@ jobs:
           grep -q 'allowMetadataExcluded: true' <<<"$out" \
             || { echo "::error::the .metadata overlay was refused, but not by 12-'s guard. Got:"; echo "$out"; exit 1; }
           echo "unacknowledged .metadata overlay refused by 12-"
+          # A quoted "false" is a non-empty string; the guard compares the flag's text so it must still refuse.
+          if helm template release "$CHART" -f "$CHART/crc-values.yaml" \
+               --set "$P.excludedPaths={.metadata}" --set-string "$P.allowMetadataExcluded=false" >/dev/null 2>&1; then
+            echo "::error::allowMetadataExcluded=\"false\" (a string) rendered the .metadata overlay"; exit 1
+          fi
+          echo "string \"false\" acknowledgement refused by 12-"
           out=$(helm template release "$CHART" -f "$CHART/crc-values.yaml" \
                   --set "$P.excludedPaths={.metadata}" --set "$P.allowMetadataExcluded=true")
           kept=$(echo "$out" | grep -c '^        - \.metadata$' || true)
