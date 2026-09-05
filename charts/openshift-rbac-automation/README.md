@@ -48,7 +48,7 @@ oc get crd | grep redhatcop.redhat.io   # groupconfigs, namespaceconfigs, ...
 ```
 
 The chart deploys every policy enabled in `values.yaml` (the baseline namespace tiers and the cluster
-GroupConfig ship enabled). Verify them with:
+GroupConfig ship enabled; the oud-group example and the custom GroupConfig ship disabled). Verify them with:
 
 ```bash
 oc get namespaceconfigs.redhatcop.redhat.io

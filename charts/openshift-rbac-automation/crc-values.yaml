@@ -26,8 +26,9 @@ namespaceConfigPolicy:
 
   # Namespace RBAC keyed on company.net/oud-group.
   #
-  # The MASTER switch is on here; the individual policy is enabled below. values.yaml ships every policy
-  # off, so this file is the record of what THIS cluster actually grants.
+  # The MASTER switch is on here; the individual policy is enabled below. values.yaml ships the baseline
+  # tiers and the cluster GroupConfig on and this policy (and customGroupConfig) off, so this file is the
+  # record of what THIS cluster grants on top of those defaults.
   oudGroup:
     enabled: true
     policies:

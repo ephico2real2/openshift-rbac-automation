@@ -41,3 +41,23 @@ comments; `working-sessions/docs/labels-and-annotations.md` §6 (delete-all-CRs 
 - `helm upgrade --dry-run=server` against the sandbox release: would become revision 11, 11 `excludedPaths` blocks;
   every live CR already carries `[.status, .spec.replicas]` (release 10).
 - Codex's not-asked grep for the stale install text: no hits.
+
+## Second pass (head ba64c55: the guard, the CI pair, the wording)
+
+Brief `adv/review_brief_chart022_pass2.md`; outputs `adv/review_cursor_chart022p2.txt`, `adv/review_codex_chart022p2_last.txt`.
+
+| Claim | Cursor | Decision |
+|---|---|---|
+| C1 the guard fires on `.metadata` for every non-"true" flag and not on bool/string true; null or absent extras unaffected; `.metadata.labels`/`.metadata.annotations` not caught | CONFIRMED, with the finding that the two subsets should be caught | **Accepted.** The guard now fires on `.metadata` and on any path under `.metadata.labels` or `.metadata.annotations`; `.metadata.finalizers` and other paths pass. Measured matrix: five paths × {absent, string "false", true} behave as intended; `.metadata.finalizers`, `.data` and no extras render. |
+| C2 the CI step's shell branches behave as commented | REFUTED: the awk checked only `.spec.replicas` and skipped an empty block followed by a header; `blocks -gt 0` accepted any count | **Accepted.** Every block must carry both `.status` and `.spec.replicas` (closing on the next header too), exactly 11 blocks from crc-values, the refusals go through one helper that requires the guard's own message, the two subsets and a key under labels are probed, and `.metadata.finalizers` is the positive control. Cursor's counter-document yields missing=3 under the new awk (0 under the old). |
+| C3 the Helm wording ("first upgrade replaces; a later upgrade is a no-op only while live matches and restores a drifted list") | PLAUSIBLE, source not fetchable | **Refuted here by the source, and my earlier wording retracted.** helm v3.14.0 `pkg/kube/client.go` `createPatch`: for an unstructured object (a CR) the patch is `jsonpatch.CreateMergePatch(oldManifest, newManifest)`, a two-way JSON merge patch between the previous and the new rendered manifests; the live object is fetched but used only on the strategic-merge path for typed objects; `updateResource` sends nothing when the patch is `{}` and replaces only under `--force`. So the first release that renders the list replaces the live one (consistent with release 8 to 10), and a later upgrade with an unchanged manifest sends nothing: a hand-edited live list is healed by ArgoCD (Git against live), not by Helm. Codex's first-pass "three-way merge-patch probe" modelled a function Helm does not use for CRs; the sentence I adopted from it was wrong. Chart.yaml, 10-'s header and the design pointer now state the measured behaviour. |
+| C4 reference copies clean | CONFIRMED | — |
+| C5 NOTES/README statement of which policies default on matches values.yaml | REFUTED as incomplete: Chart.yaml's description and the chart README named only the enabled half | **Accepted.** Both name the disabled half too; Cursor's PyYAML assertion passes. |
+| C6 remaining current-tense stale statements | CONFIRMED: none; historical entries listed | — (`working-sessions/docs/REVIEW_chart_0.19.1.md` is a dated record and stays) |
+
+**Volunteered by Cursor, accepted:** `crc-values.yaml` said values.yaml ships every policy off; it now names the
+defaults it overrides.
+
+**Verification after the second-pass changes:** lint clean (both values files); rendered CR specs identical to
+head 03fe6ed (PyYAML); CI step offline: five refusals by the guard, `.metadata.finalizers` renders, 11 blocks,
+0 missing; NOTES renders on `helm install --dry-run`.

@@ -192,9 +192,21 @@ its defaults in memory out first: an older one writes its own list into the spec
 a different list is the rewrite loop the 0.21.1 entry records.
 */}}
 {{- $declaredExcluded := $p.excludedPaths | default (list) }}
-{{- /* Compared as text: a quoted "false" is a non-empty string and would otherwise count as acknowledged (measured). */}}
-{{- if and (has ".metadata" $declaredExcluded) (ne (toString ($p.allowMetadataExcluded | default false)) "true") }}
-{{- fail (printf "namespaceConfigPolicy.oudGroup.policies.%s.excludedPaths lists .metadata. That makes every rendered label and annotation on this policy's Roles and RoleBindings set-once (never corrected after creation) and defeats the chart 0.22.0 migration off .metadata. Remove it, or set allowMetadataExcluded: true on the policy to declare set-once metadata deliberately." $key) }}
+{{- /*
+.metadata itself, and anything under .metadata.labels or .metadata.annotations, makes rendered labels or
+annotations set-once (second review pass: an exact match on .metadata let the two subsets through).
+.metadata.finalizers and other metadata paths do not touch labels or annotations and pass. The flag is
+compared as text: a quoted "false" is a non-empty string and would otherwise count as acknowledged (measured).
+*/}}
+{{- $metadataSetOnce := false }}
+{{- range $declaredExcluded }}
+{{- $path := toString . }}
+{{- if or (eq $path ".metadata") (hasPrefix ".metadata.labels" $path) (hasPrefix ".metadata.annotations" $path) }}
+{{- $metadataSetOnce = true }}
+{{- end }}
+{{- end }}
+{{- if and $metadataSetOnce (ne (toString ($p.allowMetadataExcluded | default false)) "true") }}
+{{- fail (printf "namespaceConfigPolicy.oudGroup.policies.%s.excludedPaths lists .metadata, .metadata.labels or .metadata.annotations. That makes the rendered labels or annotations on this policy's Roles and RoleBindings set-once (never corrected after creation) and defeats the chart 0.22.0 migration off .metadata. Remove the path, or set allowMetadataExcluded: true on the policy to declare set-once metadata deliberately." $key) }}
 {{- end }}
 {{- $excluded := concat (list ".status" ".spec.replicas") $declaredExcluded | uniq }}
 ---
