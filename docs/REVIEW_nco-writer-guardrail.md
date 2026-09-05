@@ -42,7 +42,22 @@ aggregation labels. The edit tier cannot create or update `groups.user.openshift
 controller may create SubjectAccessReviews. `policies.kyverno.io` serves v1alpha1 and v1beta1; PolicyException is
 disabled on this cluster, so exemptions live in the policy.
 
-## Second pass (2d0665e)
+## Second pass (2d0665e), Cursor
 
-Pending: the family-prefix expression against pathological group names, the FAILURE MODES paragraph against the
-YAML, the script's event assertion (timestamp comparison, counting) and exit status.
+| Claim | Cursor | Decision |
+|---|---|---|
+| C1 the family-prefix pattern admits exactly the tier | REFUTED (`app-ocp-rbac--cluster-admin`, `app-ocp-rbac-x-cluster-admin-cluster-admin` pass) | **Rejected on the operator's design, then measured**: the chart's live GroupConfig guards on `hasSuffix "-cluster-admin" .Name` alone over synced groups; GroupSync pulls every LDAP group matching `cn=app-ocp-rbac-*`; live mnemonics run 4 to 8 letters; the naming policy is Audit-only. One CR capturing every group that fits the pattern is the design, so the exemption is the chart's grant narrowed by the family prefix; a full-name regex would be narrower than the grant itself and could refuse a legitimate synced admin group. The reasoning is written next to the expression |
+| C2 FAILURE MODES describes the YAML | REFUTED | **Accepted**: a webhook timeout is the API server applying Fail to the whole request (everyone refused, including name-settled identities); only a failed review call refuses just those who needed it; and in Audit an evaluation error is refused while a "not allowed" review is only reported. Rewritten as two paths |
+| C3 the event assertion's time comparison | REFUTED | **Accepted**: an `eventTime` with a fraction sorts below a whole-second `since` as text when the seconds are equal (measured offline with jq: the in-window event was dropped). Timestamps are cut to whole seconds before comparing; an event with no timestamp still cannot match |
+| C4 exit status under `set -euo pipefail` | REFUTED | **Accepted**: a failing `oc get events` inside the assignment would end the script before "result:"; it now counts as no events |
+
+**Volunteered, accepted:** the script pins a `-cluster-admin` suffix from another family as refused
+(`evil-cluster-admin`); the comment on the current-login check says an impersonated name carries no groups.
+**Volunteered, rejected:** a second look-alike check (`app-ocp-rbac-x-cluster-admin-cluster-admin`) that the
+pattern admits by design.
+
+**Measured while re-verifying:** after a mode switch the single Kyverno admission replica takes several seconds
+to settle, during which requests see either mode; a run started within that window reports mixed results. The
+verify script is meant to run well after applying; the record's numbers come from settled runs: 25 checks in
+Audit (12 PolicyViolation events for the 6 refused writes), 24 in Deny. Codex produced no second-pass report
+either; a first-principles Fable 5.1 reviewer's report is recorded below when it lands.

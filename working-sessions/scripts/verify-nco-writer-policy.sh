@@ -97,30 +97,42 @@ audit_expected=0
 run_started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 say "identities:"
 check "edit holder (cluster-developer tier)"  deny  --as=probe-dev --as-group=app-ocp-rbac-alpha-cluster-developer --as-group=system:authenticated
+# the tier exemption is the chart's family pattern; a -cluster-admin suffix from another family must not pass
+check "edit holder plus evil-cluster-admin"   deny  --as=probe-evil --as-group=app-ocp-rbac-alpha-cluster-developer --as-group=evil-cluster-admin --as-group=system:authenticated
 check "plain authenticated user"              deny  --as=probe-user --as-group=system:authenticated
 check "cluster-admin tier group"              allow --as=probe-admin --as-group=app-ocp-rbac-alpha-cluster-admin --as-group=system:authenticated
 check "kube:admin shape (system:cluster-admins)" allow --as=kube:admin --as-group=system:cluster-admins --as-group=system:authenticated
 check "system:admin by name only (sudoer)"    allow --as=system:admin
 check "system:masters certificate shape"      allow --as=probe-cert --as-group=system:masters
+# impersonating a name carries no groups: this pins a login that is cluster-admin by a User binding
+# (the sandbox's kubeadmin); a login that is cluster-admin only through a group needs --as-group too
 check "current login (cluster-admin by binding)" allow --as="$(oc whoami)"
 check "operator service account"              allow --as=system:serviceaccount:namespace-configuration-operator:controller-manager
 check "GitOps application controller"         allow --as=system:serviceaccount:openshift-gitops:openshift-gitops-argocd-application-controller
 
 # In Audit mode every refused write must have produced a PolicyViolation event naming the policy;
-# Kyverno emits them asynchronously, so allow a few seconds.
+# Kyverno emits them asynchronously, so allow a few seconds. Timestamps are cut to whole seconds
+# before comparing: an eventTime with a fraction ("...:05.123456Z") sorts BELOW "...:05Z" as text
+# (review). A failed `oc get events` counts as no events rather than ending the script.
 if [ "$enforcing" = false ] && [ "$audit_expected" -gt 0 ]; then
   found=0
   for _ in 1 2 3 4 5 6; do
-    found=$(oc get events -A --field-selector reason=PolicyViolation -o json 2>/dev/null \
-      | jq -r --arg p "$policy" --arg since "$run_started" \
-          '[.items[] | select((.message | contains($p)) and ((.eventTime // .lastTimestamp // "") >= $since))] | length')
-    [ "${found:-0}" -ge "$audit_expected" ] && break
+    json=$(oc get events -A --field-selector reason=PolicyViolation -o json 2>/dev/null) || json='{"items":[]}'
+    found=$(printf '%s' "$json" | jq -r --arg p "$policy" --arg since "$run_started" '
+      def zulu: if type != "string" or . == "" then empty else .[0:19] + "Z" end;
+      [ (.items // [])[]
+        | select((.message | type == "string") and (.message | contains($p)))
+        | ((.eventTime // .lastTimestamp) | zulu) as $t
+        | select($t >= $since)
+      ] | length') || found=0
+    case $found in ''|*[!0-9]*) found=0 ;; esac
+    [ "$found" -ge "$audit_expected" ] && break
     sleep 2
   done
-  if [ "${found:-0}" -ge "$audit_expected" ]; then
+  if [ "$found" -ge "$audit_expected" ]; then
     ok "Audit mode recorded $found PolicyViolation events for the $audit_expected refused writes"
   else
-    bad "Audit mode: expected $audit_expected PolicyViolation events naming $policy since $run_started, found ${found:-0}"
+    bad "Audit mode: expected $audit_expected PolicyViolation events naming $policy since $run_started, found $found"
   fi
 fi
 

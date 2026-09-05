@@ -35,9 +35,10 @@
 #      measured: with the review call deliberately broken, system:admin was still allowed),
 #      so the review is posted only for requesters the names do not settle. Kyverno's
 #      admission controller may create SubjectAccessReviews (measured "yes", 1.16 defaults);
-#   2. members of a group named app-ocp-rbac-*-cluster-admin: the chart's group family
-#      (baseline-cluster-rbac's groupPrefix) plus the tier suffix that GroupConfig binds
-#      `admin` cluster-wide to. The CEL trusts request.userInfo.groups; it does not look up
+#   2. members of a group named app-ocp-rbac-<mnemonic>-cluster-admin, matched in full: the
+#      chart's group family (baseline-cluster-rbac's groupPrefix), a mnemonic of letters, the
+#      tier suffix that GroupConfig binds `admin` cluster-wide to. The CEL trusts
+#      request.userInfo.groups; it does not look up
 #      Group objects or the sync-provider label. An `edit` holder cannot forge membership:
 #      measured, the developer tier can neither create nor update groups.user.openshift.io,
 #      and asserting a group through impersonation needs the impersonate verb, which is
@@ -69,14 +70,19 @@
 # for a week: every FAIL names a writer this allow-list forgot (typically a CI service
 # account). Then set validationActions to [Deny].
 #
-# FAILURE MODES, measured (failurePolicy: Fail)
-# While Kyverno's admission controller is down, nobody can write these CRs: the right failure
-# for rarely-changed platform configuration. While it is up but the SubjectAccessReview call
-# fails (RBAC removed from Kyverno's service account, or the 10s webhook timeout), the policy
-# errors and Fail refuses exactly the requesters that needed the review: a User bound directly
-# to cluster-admin, and anyone who was going to be refused anyway. Identities settled by name
-# or group (system:admin, system:masters, system:cluster-admins, the -cluster-admin tier, the
-# two service accounts) are unaffected, because the review is never evaluated for them.
+# FAILURE MODES (failurePolicy: Fail); two different paths, not to be confused
+# 1. Kyverno's admission controller is down, or the webhook does not answer within
+#    timeoutSeconds (10): the API server gets no verdict and applies Fail to the WHOLE request.
+#    Nobody this policy matches can write these CRs, system:admin and the service accounts
+#    included. The right failure for rarely-changed platform configuration.
+# 2. The webhook answers but the SubjectAccessReview call itself fails (RBAC removed from
+#    Kyverno's service account; measured: "failed to load context"): the policy errors and Fail
+#    refuses only the requesters that needed the review, a User bound directly to cluster-admin
+#    and anyone the name, group and service-account checks did not settle. Identities those
+#    checks settle skip the review and are unaffected (variables are lazy, v1.16.1
+#    lazy.NewMapValue; measured with the call deliberately broken). Note that in Audit mode this
+#    error is HARDER than a review answering "not allowed": that write succeeds and emits a
+#    PolicyViolation event; an error is refused even in Audit.
 #
 # TESTING
 # working-sessions/scripts/verify-nco-writer-policy.sh runs every identity above through an
@@ -133,7 +139,12 @@ spec:
         'system:masters' in variables.groups ||
         'system:cluster-admins' in variables.groups
     - name: isClusterAdminTier
-      # The chart's group family plus the tier suffix baseline-cluster-rbac binds `admin` to.
+      # A pattern, not a full name, on purpose. Measured on the cluster: the chart's live
+      # baseline-cluster-rbac GroupConfig guards on `hasSuffix "-cluster-admin" .Name` alone (the
+      # CR selects synced groups only), GroupSync pulls every LDAP group matching cn=app-ocp-rbac-*,
+      # and live mnemonics run 4 to 8 letters. One CR capturing every group that fits the pattern is
+      # the design; this exemption is the chart's grant narrowed by the family prefix, nothing more.
+      # A full-name regex (proposed in review) would be narrower than the grant itself.
       expression: variables.groups.exists(g, g.startsWith('app-ocp-rbac-') && g.endsWith('-cluster-admin'))
     - name: isTrustedServiceAccount
       # The operator (namespace and service account of the OLM install), and the GitOps
