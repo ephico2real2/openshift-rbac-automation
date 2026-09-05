@@ -103,3 +103,26 @@ A forged Kyverno account is pinned as refused.
 exact name next to the tier pattern. Measured with a temporary list: a member holding edit plus the named group
 patched Kyverno's ConfigMap and created a NamespaceConfig in Deny while the developer tier was refused in both;
 with the shipped empty list the same identity is a plain edit holder. Settled runs: 29 checks in Audit, 28 in Deny.
+
+## The Audit-to-Deny companion guide (PR #25, `working-sessions/docs/kyverno-audit-to-deny.md`)
+
+Two passes, 2026-09-05, Codex (gpt-5.6-sol xhigh, ran the seds and jq on copies) and Cursor (Grok 4.6, traced).
+
+| Claim | Codex | Cursor | Decision |
+|---|---|---|---|
+| C1 field names and values per kind | REFUTED: the prose put `validationActions` on the ValidatingAdmissionPolicy; it belongs to the Binding | REFUTED, same | **Accepted**; rewritten as three bullets. |
+| C2 the sed commands | CONFIRMED (one changed line per file); GNU `sed -i` note warranted | CONFIRMED, same note | **Accepted**: GNU note added; the kyverno-validation-only line is replaced whole so its "Start with Audit" comment does not go stale (Codex, not asked). |
+| C3 precondition order follows the header | CONFIRMED | CONFIRMED | — |
+| C4 verify script: 29/28, no flags | CONFIRMED | CONFIRMED; `jq` requirement worth naming | **Accepted** (jq named). |
+| C5 "what Deny changes" | REFUTED: `failurePolicy` also covers CEL runtime errors per the CRD text | REFUTED on the rollback sentence: a mode change is admission-only for any validate policy; `background: false` is for the userInfo reason | **Both accepted.** The bullet states the CRD text and the measured 1.16.1 behaviour (mode decided the SubjectAccessReview error path; `Ignore` not measured); the rollback paragraph rewritten. |
+| C6 ClusterPolicies section | REFUTED: report summaries hide rows (jq command given); `allowExistingViolations` defaults true so an existing violator's UPDATE is admitted; stale rows; a rule-level `failureAction` would override | CONFIRMED with the same rule-level warning and the group-naming header's 15 flagged groups | **All accepted.** Measured today: FAIL rows 18/21/1/1; the live oud-group rule reads `allowExistingViolations: true`, defaulted by the CRD. |
+
+**Second pass (head aa76edd):** Codex REFUTED one sentence (`kyverno-validation-only.yaml` dates to 2026-03-16, not
+2026-07-30; `git log --follow`), CONFIRMED the seds, the jq filter on synthetic reports, the allowExistingViolations
+statement against Kyverno's 1.16 documentation, and the failurePolicy wording. Cursor found the guide's `grep
+'failureAction\|failureActionOverrides'` check unportable (`\|` is alternation on GNU grep and matches
+`validationFailureAction`; literal on BSD) and the guide's pointer to the header for "the detailed reasoning" while
+the header's `failurePolicy` sentence is narrower than the guide's. **Accepted all three:** date corrected; the check
+is `grep -nE '^ +(failureAction|failureActionOverrides):'` (measured: 0 on the four files, 1 on a synthetic
+rule-level key); the introduction now says what each document holds and that the measured behaviour is the same in
+both. Cursor's C4 proposal to make the reader look up the default was answered by citing the live measurement instead.
