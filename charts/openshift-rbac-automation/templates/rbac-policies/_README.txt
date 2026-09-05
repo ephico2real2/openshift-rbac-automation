@@ -91,6 +91,7 @@ helm template t chart --set namespaceConfigPolicy.enabled=true …    # see the 
 **An `objectTemplate` is not valid YAML until it is rendered** — do not hand one to a YAML parser. Render
 the operator's expressions out first; `working-sessions/docs/templating-guide.md` §5 has the script.
 
-And if you changed a label or annotation, remember it will **not** reach objects that already exist — the
-operator excludes `.metadata` from comparison. The CRs must be deleted and rebuilt, which is a real
-revocation window (~4s to revoke 55 objects, ~50s to restore).
+A label or annotation change reaches objects that already exist since chart 0.22.0 on operator v1.2.6-131:
+the chart's `excludedPaths` policy no longer lists `.metadata`, and the operator owns what it renders. On an
+older pair it does **not**: the CRs must be deleted and rebuilt, which is a real revocation window (~4s to
+revoke 55 objects, ~50s to restore).

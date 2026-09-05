@@ -4,8 +4,9 @@
 # The flags are recorded here instead so the enabled set is reviewable in git rather than living in
 # someone's shell history, and so an upgrade cannot silently drop one.
 #
-# WHY THAT MATTERS MORE THAN IT SOUNDS: `helm upgrade` resets to chart defaults the moment either -f or
-# --set is given. A flag omitted from a later command is a policy switched OFF, and switching a policy
+# WHY THAT MATTERS MORE THAN IT SOUNDS: the upgrade command always supplies -f and never --reuse-values, so
+# Helm recomputes values from the chart defaults plus this file. An override omitted from this file returns
+# to its default; for the off-by-default bdp and custom policies that is a policy switched OFF, and switching a policy
 # off is a REVOCATION — the CR carries a controller finalizer, so the operator deletes every object it
 # created. With the set written down, that cannot happen by omission.
 #
@@ -26,8 +27,9 @@ namespaceConfigPolicy:
 
   # Namespace RBAC keyed on company.net/oud-group.
   #
-  # The MASTER switch is on here; the individual policy is enabled below. values.yaml ships every policy
-  # off, so this file is the record of what THIS cluster actually grants.
+  # The MASTER switch is on here; the individual policy is enabled below. values.yaml ships the baseline
+  # tiers and the cluster GroupConfig on and this policy (and customGroupConfig) off, so this file is the
+  # record of what THIS cluster grants on top of those defaults.
   oudGroup:
     enabled: true
     policies:
@@ -72,7 +74,6 @@ namespaceConfigPolicy:
         roleName: trino-job-submitter-role
         roleType: trino-job-submitter
         excludedPaths:
-          - .metadata
           - .status
           - .spec.replicas
         # Leaner than spark's deliberately: a trino workload reads and inspects, it does not manage

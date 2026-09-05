@@ -21,7 +21,6 @@ spec:
     # makes the namespace default-deny for everything not explicitly allowed, so this rule
     # is what keeps intra-namespace traffic working once isolation is switched on.
     - excludedPaths:
-        - .metadata
         - .status
         - .spec.replicas
       objectTemplate: |
@@ -42,7 +41,6 @@ spec:
     - excludedPaths:
         - .status
         - .spec.replicas
-        - .metadata
       objectTemplate: |
         apiVersion: networking.k8s.io/v1
         kind: NetworkPolicy

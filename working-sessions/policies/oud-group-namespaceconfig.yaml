@@ -58,8 +58,8 @@ spec:
     # Namespace-scoped submitter Role
     ###########################################################################
     - excludedPaths:
-        - .metadata
         - .status
+        - .spec.replicas
       objectTemplate: |
         apiVersion: rbac.authorization.k8s.io/v1
         kind: Role
@@ -98,8 +98,8 @@ spec:
     # RoleBinding — subject is the label value, used VERBATIM
     ###########################################################################
     - excludedPaths:
-        - .metadata
         - .status
+        - .spec.replicas
       objectTemplate: |
         apiVersion: rbac.authorization.k8s.io/v1
         kind: RoleBinding

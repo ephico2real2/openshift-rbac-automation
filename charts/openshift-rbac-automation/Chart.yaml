@@ -2,12 +2,13 @@ apiVersion: v2
 name: openshift-rbac-automation
 description: >-
   A customized Red Hat CoP Namespace Configuration Operator (NCO), packaged as a Helm chart
-  together with our own RBAC policies. Installs the operator on OpenShift via OLM — a dedicated
-  namespace, an AllNamespaces (global) OperatorGroup, and a Subscription, optionally running a
-  custom operator build — and deploys the policies (NamespaceConfig and GroupConfig CRs) from
+  together with our own RBAC policies. Installs the operator on OpenShift via OLM into the configured
+  namespace (created only when createNamespace is true), with an AllNamespaces (global) OperatorGroup
+  and a Subscription, optionally running a custom operator build — and deploys the policies (NamespaceConfig and GroupConfig CRs) from
   namespaceConfigPolicy, clusterRbac and customGroupConfig, one policy per flag. The baseline
-  tiers ship ENABLED, so a stock install grants RBAC; the raw manifests under
-  working-sessions/policies stay the readable reference for those.
+  namespace tiers and the cluster GroupConfig ship ENABLED, so a stock install grants RBAC; the
+  oud-group example (oudGroup.policies.bdp) and the custom GroupConfig ship disabled. The raw
+  manifests under working-sessions/policies stay the readable reference for those.
 type: application
 # 0.4.0, MINOR: a new template and a new TOP-LEVEL values stanza. `clusterRbac` renders one
 # GroupConfig carrying the three cluster-wide tiers (admin/view/edit ClusterRoles bound to the
@@ -32,6 +33,30 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.22.0, MINOR: EVERY NamespaceConfig AND GroupConfig DECLARES excludedPaths [.status, .spec.replicas] as
+# THIS CHART'S POLICY, and .metadata is gone from it. Rendered labels and annotations on RoleBindings,
+# ClusterRoleBindings and Roles are now ENFORCED: the operator applies server-side and owns exactly what
+# the template renders, so editing metadata in a template reaches objects that already exist, a rendered
+# label changed by hand is restored, and a label anyone else adds is left alone (measured on the
+# sandbox; GOTCHA 9 is retired). Declaring the list is what migrates every chart-managed CR: older
+# operator builds wrote [.metadata, .status, .spec.replicas] into every live CR's spec, and Helm patches a
+# CR from the PREVIOUS and the NEW rendered manifests only (helm v3.14.0 pkg/kube/client.go createPatch:
+# a JSON merge patch for unstructured objects; the live object is fetched but unused on that path, an
+# empty patch sends nothing, only --force calls Replace). So a chart that never rendered the list left the
+# operator's in place forever, and the first release that renders it, this one, replaces the live list on
+# every chart-managed CR (measured, release 8 to 10). A later upgrade whose manifest is unchanged sends
+# nothing: a list edited by hand on the cluster stays until a render changes spec.templates (a JSON merge
+# patch replaces the whole array, so any template edit carries the list back), `helm upgrade --force`, or
+# ArgoCD with selfHeal (this repository's Application sets it) compares Git to live and applies. Values that still add .metadata (or .metadata.labels/.metadata.annotations) to an oud-group
+# policy are REFUSED by 12- unless the policy sets allowMetadataExcluded: true, because a render that
+# quietly kept it would undo this migration for that policy while CI stayed green. It is not a mirror of the
+# operator's defaults: from the build that applies its defaults in memory (operator design record
+# docs/DESIGN_excludedPaths.md, chosen by an adversarial design review of both approaches) the operator
+# never writes this list and unions its own defaults with it, so a difference cannot loop or hide
+# anything. MINOR, not PATCH: behaviour on existing objects changes, and the ORDER matters: roll that
+# operator image out first. An older operator writes its list into the spec, and a Git that declares a
+# different one is the 0.21.1 rewrite loop under ArgoCD selfHeal.
+#
 # 0.21.3, PATCH: DOCS ONLY, recording an operator-side fix this chart's oudGroup policies depended on.
 # Every guarded objectTemplate renders EMPTY for a namespace its guard rejects, and operator builds
 # before v1.2.6-84-gbc60603 logged that at error level — "Object 'Kind' is missing in 'null'", once
@@ -773,7 +798,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.21.3
+version: 0.22.0
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:

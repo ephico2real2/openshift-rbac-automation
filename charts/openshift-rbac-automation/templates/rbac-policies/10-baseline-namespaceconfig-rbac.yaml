@@ -4,7 +4,7 @@
 {{- fail "namespaceConfigPolicy.baseline.mnemonicLabelKey is empty. It selects the namespaces AND supplies the mnemonic that names the bound group, so empty would match EVERY namespace and bind groups named from nothing. Set it, or disable the baseline." }}
 {{- end }}
 {{- if not $b.environmentLabelKey }}
-{{- fail "namespaceConfigPolicy.baseline.environmentLabelKey is empty. It is what partitions nonprod from prod, so empty would let a prod namespace receive the nonprod grants — including ns-admin, which prod deliberately withholds. Set it, or disable the baseline." }}
+{{- fail "namespaceConfigPolicy.baseline.environmentLabelKey is empty. It is what partitions nonprod from prod, so empty would let a prod namespace receive the nonprod grants — including developer (edit), which prod deliberately withholds. Set it, or disable the baseline." }}
 {{- end }}
 # =============================================================================
 # NamespaceConfig — the BASELINE namespace RBAC every team receives
@@ -15,8 +15,8 @@
 # ── WHY THIS FILE HOLDS TWO POLICIES AND 12-custom-oud-group- HOLDS ONE ──────────────
 # SAME SHAPE -> ONE TEMPLATE. DIFFERENT SHAPE -> ITS OWN FILE.
 #
-# `nonprod` and `prod` differ only in DATA: which environments they select, which roles they grant,
-# and which roles they grant. prod withholding ns-admin is a SHORTER LIST, not a different structure.
+# `nonprod` and `prod` differ only in DATA: which environments they select and which roles they grant.
+# prod withholding developer (edit) is a SHORTER LIST, not a different structure.
 # So they share this template and are distinguished entirely in values.
 #
 # `oud-group` keeps its own file because it differs STRUCTURALLY — it creates a namespace-scoped Role
@@ -105,8 +105,8 @@ metadata:
     argocd.argoproj.io/sync-wave: "3"
     # ArgoCD dry-runs every resource BEFORE applying it, and a dry-run against a kind the cluster does not
     # serve yet fails with "the server could not find the requested resource" — which fails THE WHOLE SYNC,
-    # not just this document. That is the exact shape of a first sync here: this CRD is not in the manifest
-    # (it belongs to the operator's OLM bundle) and arrives mid-sync, when OLM installs the CSV in wave 0.
+    # not just this document. That is the shape of a first sync for a renderer that dry-runs this CR before
+    # the vendored CRD (crds/ in this chart; OLM then reconciles it from the operator bundle) is registered.
     # The ArgoCD docs call out this case explicitly — "the CRD is not part of the sync, but it could be
     # created in another way, e.g. by a controller in the cluster".
     #
@@ -114,9 +114,9 @@ metadata:
     # the CRD is already present in the cluster." So on every sync after the first, this document is
     # dry-run exactly as before, and a malformed spec is still caught here rather than at apply time.
     #
-    # It does NOT help plain `helm install`, which resolves every kind against API discovery before applying
-    # anything and has no equivalent escape. That path still needs the two-step first install documented at
-    # namespaceConfigPolicy.enabled in values.yaml.
+    # Plain `helm install` needs no such escape: the vendored crds/ files are installed before any template
+    # renders, so kind discovery succeeds on a bare cluster (one command; see namespaceConfigPolicy.enabled
+    # in values.yaml), and operatorWait holds the CRs until the operator serves them.
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   labelSelector:
@@ -139,28 +139,39 @@ spec:
         values:
           {{- toYaml $p.excludeEnvironments | nindent 10 }}
       {{- end }}
-  # NO excludedPaths DECLARED, AND THE OPERATOR ADDS ITS OWN ANYWAY. Measured on this cluster: the
-  # live CR carries [.metadata, .status, .spec.replicas] on every template even though neither this
-  # chart nor the source policy sends any, the CRD schema defines no default, and there is no mutating
-  # webhook — the operator writes them into the spec on reconcile (CR generation goes 1 -> 2).
+  # excludedPaths DECLARED ON EVERY TEMPLATE, AS THIS CHART'S OWN POLICY: [.status, .spec.replicas].
+  # Those are the parts of a created object the operator never enforces (set at creation, then left
+  # alone); everything else the template renders, labels and annotations included, is enforced.
   #
-  # Not mirrored here on purpose: .spec.replicas is meaningless for a RoleBinding, so writing it into
-  # this policy would imply a field these objects do not have. The operator's default is its business.
+  # WHY DECLARE IT. Operator builds before the server-side-apply enforcer unioned their defaults,
+  # .metadata among them, INTO every live CR's spec on first reconcile, and removed nothing later; every
+  # CR on a cluster that ran them still carries .metadata, and with it labels and annotations that are
+  # set once and never corrected (the trap oud-group documented as GOTCHA 9). Helm patches a CR from the
+  # previous and the new rendered manifests only (helm v3.14.0 createPatch: a JSON merge patch; the live
+  # object is fetched but unused on that path; an empty patch sends nothing), so a chart that never rendered the list left the operator's
+  # in place forever; declaring it here is what replaces it on every chart-managed CR, on the first
+  # upgrade to a release that renders it. Measured on the sandbox (release 8 to 10): every CR
+  # rewritten to this list, 40 objects single-owner, a tampered rendered label restored and a foreign
+  # label kept on both a RoleBinding and a ClusterRoleBinding, every CR ReconcileSuccess. A later upgrade
+  # whose manifest is unchanged sends nothing: a list edited by hand on the cluster stays until a render
+  # changes spec.templates (a JSON merge patch replaces the whole array, so any template edit carries the
+  # list back), `helm upgrade --force`, or ArgoCD with selfHeal (this repository's Application sets it).
   #
-  # THE RULE FOR A POLICY THAT DOES DECLARE THEM (12- does, from values): declare the operator's FULL
-  # set, or ArgoCD holds the CR permanently OutOfSync. Not declaring, as here, is safe — ArgoCD ignores a
-  # field only the live object carries, and these CRs showed no drift. Declaring [.metadata, .status]
-  # was not: the cluster held three, Git two, and with selfHeal on ArgoCD and the operator rewrote the
-  # spec at each other. 12- unions the operator's three into whatever values declares, for that reason.
+  # NOT A MIRROR OF THE OPERATOR. From the build that applies its defaults in memory (the #16 design
+  # record in the operator repository, docs/DESIGN_excludedPaths.md) the operator never writes this
+  # list; it unions its own defaults with whatever the CR declares when it builds the objects, so a
+  # default this chart does not mention (.metadata.finalizers today) is still applied and a difference
+  # between this list and the operator's defaults can neither loop nor hide anything.
   #
-  # WHAT IT MEANS FOR YOU, and it is the same trap oud-group documents as GOTCHA 9: because .metadata
-  # is excluded, editing labels or annotations in an objectTemplate below changes NOTHING on
-  # RoleBindings that already exist. The operator reports success and the old metadata stays, so a
-  # cluster ends up with two generations of it. Spec-level edits (subjects, roleRef) DO propagate.
-  # To roll metadata forward, delete the objects and let the operator rebuild them. SELECT ON
-  # config-source, which is a LABEL. source-namespaceconfig carries the same value but is an ANNOTATION,
-  # and `oc -l` matches labels only — selecting on it returns nothing and the delete reads as a clean
-  # no-op. Read the annotation, select on the label.
+  # ORDERING. Roll that operator image out BEFORE this chart release. An older operator writes its
+  # defaults into the spec, and a Git that declares a different list is the rewrite loop the 0.21.1
+  # entry records (ArgoCD self-heal and the operator taking turns).
+  #
+  # .spec.replicas is meaningless for a RoleBinding; it is here so one declaration serves every template.
+  #
+  # Should metadata ever need a clean re-roll anyway, SELECT ON config-source, which is a LABEL.
+  # source-namespaceconfig carries the same value but is an ANNOTATION, and `oc -l` matches labels
+  # only — selecting on it returns nothing and the delete reads as a clean no-op.
   #   oc delete rolebinding -A -l rbac.ocp.io/config-source=baseline-nonprod-rbac   # baseline-prod-rbac for the prod CR
   templates:
     {{- range $r := $p.roles }}
@@ -168,7 +179,10 @@ spec:
     # ---------------------------------------------------------------------
     # {{ $r.name }} — binds ClusterRole/{{ $r.clusterRole }} in the namespace
     # ---------------------------------------------------------------------
-    - objectTemplate: |
+    - excludedPaths:
+        - .status
+        - .spec.replicas
+      objectTemplate: |
         apiVersion: rbac.authorization.k8s.io/v1
         kind: RoleBinding
         metadata:

@@ -18,10 +18,18 @@ the `if` it is a parse error ("unexpected <define> in command").
 {{- fail "namespaceConfigPolicy.oudGroup.policies is empty, so this would render nothing while the flag is on — a silent no-op. Give it at least one policy, or disable oudGroup." }}
 {{- end }}
 {{- /*
-PRE-PASS: groupPrefix syntax, and disjointness across policies sharing a labelKey. Runs BEFORE the
-main range so a bad combination refuses to render at all rather than rendering the good policies and
-skipping the bad one. Maps range in sorted key order, so the first failure is deterministic.
+PRE-PASSES. First, every policy KEY (enabled or not) must be single-line: a key with a line break would let a
+value-carrying fail print a second "Error:" line and forge CI's guard match (review), and it runs on its own
+so an earlier key's groupPrefix failure cannot preempt it. Then groupPrefix syntax, and disjointness across
+policies sharing a labelKey. Both run BEFORE the main range so a bad combination refuses to render at all
+rather than rendering the good policies and skipping the bad one. Maps range in sorted key order, so the
+first failure within each pass is deterministic.
 */}}
+{{- range $key, $_ := $og.policies }}
+{{- if or (contains "\n" $key) (contains "\r" $key) }}
+{{- fail "namespaceConfigPolicy.oudGroup.policies has a key containing a line break; policy keys must be single-line." }}
+{{- end }}
+{{- end }}
 {{- $byLabelKey := dict }}
 {{- range $key, $p := $og.policies }}
 {{- if and $p.enabled $p.labelKey }}
@@ -139,7 +147,7 @@ skipping the bad one. Maps range in sorted key order, so the first failure is de
 # ALREADY-DEPLOYED policy does not reliably remove the objects it displaces (delete them by
 # config-source label in each namespace the policy no longer matches — a stale binding still
 # GRANTS), and objects created before the change never gain the group-pattern annotation without a
-# delete-and-recreate (.metadata is excluded from drift comparison).
+# delete-and-recreate (roleRef is immutable).
 #
 # ONE roleName PER POLICY across DIFFERENT labelKeys still matters, with a worse failure: two policies
 # sharing a roleName whose selectors overlap on a namespace are two CRs reconciling ONE Role object —
@@ -182,13 +190,34 @@ now simply render empty for such a namespace.
 {{- end }}
 {{- $endif := "{{- end }}" }}
 {{- /*
-excludedPaths always carries the operator's own three. The operator unions [.metadata, .status,
-.spec.replicas] into the live CR on reconcile whatever the source declares (10-'s header has the
-measurement). A declared list that is shorter is therefore a permanent ArgoCD diff — two paths in Git,
-three on the cluster — and with selfHeal on, ArgoCD reverts and the operator re-adds, forever. The
-union here makes the rendered CR what the operator will leave it as; paths values adds on top are kept.
+excludedPaths always carries this chart's policy, [.status, .spec.replicas] (10-'s header says why it is
+declared and why it is not a mirror of the operator's defaults), plus whatever paths values adds for the
+policy. Rendered labels and annotations are enforced UNLESS the policy adds .metadata, which makes them
+set-once on that policy's objects. Values files written before 0.22.0 commonly carry .metadata, and a
+render that quietly kept it would defeat the migration this release performs, so that entry is refused
+unless the policy acknowledges it with allowMetadataExcluded: true. Roll the operator build that applies
+its defaults in memory out first: an older one writes its own list into the spec, and a Git that declares
+a different list is the rewrite loop the 0.21.1 entry records.
 */}}
-{{- $excluded := concat (list ".metadata" ".status" ".spec.replicas") ($p.excludedPaths | default (list)) | uniq }}
+{{- $declaredExcluded := $p.excludedPaths | default (list) }}
+{{- /*
+.metadata itself, and anything under .metadata.labels or .metadata.annotations, makes rendered labels or
+annotations set-once (second review pass: an exact match on .metadata let the two subsets through).
+.metadata.finalizers and other metadata paths do not touch labels or annotations and pass. The flag is
+compared as text: a quoted "false" is a non-empty string and would otherwise count as acknowledged (measured).
+*/}}
+{{- $metadataSetOnce := false }}
+{{- range $declaredExcluded }}
+{{- $path := toString . }}
+{{- if or (eq $path ".metadata") (hasPrefix ".metadata.labels" $path) (hasPrefix ".metadata.annotations" $path) }}
+{{- $metadataSetOnce = true }}
+{{- end }}
+{{- end }}
+{{- if and $metadataSetOnce (ne (toString ($p.allowMetadataExcluded | default false)) "true") }}
+{{- /* The E_ marker is what CI greps for: another fail's text can carry a user-controlled label value, this token cannot. */}}
+{{- fail (printf "E_METADATA_EXCLUDED_UNACKNOWLEDGED: namespaceConfigPolicy.oudGroup.policies.%s.excludedPaths lists .metadata, .metadata.labels or .metadata.annotations. That makes the rendered labels or annotations on this policy's Roles and RoleBindings set-once (never corrected after creation) and defeats the chart 0.22.0 migration off .metadata. Remove the path, or set allowMetadataExcluded: true on the policy to declare set-once metadata deliberately." $key) }}
+{{- end }}
+{{- $excluded := concat (list ".status" ".spec.replicas") $declaredExcluded | uniq }}
 ---
 apiVersion: redhatcop.redhat.io/v1alpha1
 kind: NamespaceConfig
@@ -230,8 +259,8 @@ metadata:
     argocd.argoproj.io/sync-wave: "3"
     # ArgoCD dry-runs every resource BEFORE applying it, and a dry-run against a kind the cluster does not
     # serve yet fails with "the server could not find the requested resource" — which fails THE WHOLE SYNC,
-    # not just this document. That is the exact shape of a first sync here: this CRD is not in the manifest
-    # (it belongs to the operator's OLM bundle) and arrives mid-sync, when OLM installs the CSV in wave 0.
+    # not just this document. That is the shape of a first sync for a renderer that dry-runs this CR before
+    # the vendored CRD (crds/ in this chart; OLM then reconciles it from the operator bundle) is registered.
     # The ArgoCD docs call out this case explicitly — "the CRD is not part of the sync, but it could be
     # created in another way, e.g. by a controller in the cluster".
     #
@@ -239,9 +268,9 @@ metadata:
     # the CRD is already present in the cluster." So on every sync after the first, this document is
     # dry-run exactly as before, and a malformed spec is still caught here rather than at apply time.
     #
-    # It does NOT help plain `helm install`, which resolves every kind against API discovery before applying
-    # anything and has no equivalent escape. That path still needs the two-step first install documented at
-    # namespaceConfigPolicy.enabled in values.yaml.
+    # Plain `helm install` needs no such escape: the vendored crds/ files are installed before any template
+    # renders, so kind discovery succeeds on a bare cluster (one command; see namespaceConfigPolicy.enabled
+    # in values.yaml), and operatorWait holds the CRs until the operator serves them.
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   labelSelector:

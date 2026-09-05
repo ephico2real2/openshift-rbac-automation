@@ -149,9 +149,10 @@ subscription:
 #                           waits for a wave to be healthy before starting the next, so a failed wait stops
 #                           the CRs being applied at all — which hook weights cannot do.
 #
-# It does NOT fix a first install on a cluster with no operator: Helm resolves every kind against API
-# discovery before applying anything, earlier than any hook. See namespaceConfigPolicy.enabled for those two
-# commands — this Job is what makes the first of them trustworthy, by not returning until the CRDs exist.
+# It does NOT itself fix kind discovery on a first install: the vendored crds/ files do that, installed by
+# Helm before any template renders (see namespaceConfigPolicy.enabled: one command on a bare cluster). This
+# Job solves the next problem, by not returning until those CRDs are Established and the operator that
+# serves them is ready.
 operatorWait:
   enabled: true
 
@@ -231,9 +232,9 @@ orphanSweeper:
 # operator Deployment and re-applies it within seconds. A Job does that patch, replacing the
 # Kyverno image-rewrite policy.
 #
-# TRADE-OFF vs Kyverno: Kyverno enforced at admission, so it self-healed. This is a one-shot
-# patch — an OLM operator upgrade installs a fresh CSV and the upstream image comes back.
-# Enable `reconcile` below to get the self-healing behaviour back.
+# TRADE-OFF vs Kyverno: Kyverno enforced at admission, so it self-healed. The patch Job is one-shot —
+# an OLM operator upgrade installs a fresh CSV and the upstream image comes back — and the `reconcile`
+# CronJob below (on by default) is what reapplies it. Set `reconcile.enabled: false` for one-shot behaviour.
 operatorImage:
   # ON: this chart now owns the operator image. The Kyverno policies that used to do it
   # (replace-operator-image-to-dockerhub, inject-dockerhub-secret) have been deleted — they
@@ -364,9 +365,10 @@ podSecurity:
 #                          CRDs report Established. Measured on a bare-cluster install: its first poll
 #                          saw the CSV still `Installing`, so it is doing real work, not decorating.
 #
-# Verified end to end on a bare cluster (every NCO CRD, CSV and policy CR deleted first): one
-# `helm install` → revision 1 deployed in 3m21s, 2/2 CRDs, CSV Succeeded, operator ready, 5/5 policy
-# CRs, and the 42 operator-managed RBAC objects rebuilt.
+# Verified end to end on a bare cluster, before the trino fixture was added (every NCO CRD, CSV and
+# policy CR deleted first): one `helm install` → revision 1 deployed in 3m21s, 2/2 CRDs, CSV Succeeded,
+# operator ready, the then-enabled 5/5 policy CRs, and the 42 operator-managed RBAC objects rebuilt.
+# Today's crc-values.yaml renders 6 policy CRs: 4 NamespaceConfigs and 2 GroupConfigs.
 #
 # ON BY DEFAULT — a deliberate choice, with CI asserting "defaults render what values declares"
 # rather than "defaults render nothing". A plain `helm install` with stock values therefore
@@ -421,8 +423,9 @@ namespaceConfigPolicy:
     # is the VALUE of its labelKey, used verbatim.
     policies:
       # ---- the bdp oud-group family ----
-      # OFF here, ON per cluster. values.yaml is the shipped default and should grant nothing by itself;
-      # crc-values.yaml turns this on for the test cluster. Same split as every other policy flag.
+      # OFF here, ON per cluster. This example policy grants nothing from stock values; crc-values.yaml
+      # turns it on for the test cluster. Unlike the baseline namespace policies and clusterRbac, which
+      # ship on, it defaults off.
       bdp:
         enabled: false
 
@@ -499,17 +502,20 @@ namespaceConfigPolicy:
         # nothing, `rules` below is the grant.
         roleType: spark-job-submitter
 
-        # Paths the operator IGNORES when comparing what it would create against what exists, so a
-        # cluster-assigned field does not read as drift and cause a rewrite every reconcile.
+        # Paths the operator never enforces on the objects it creates: set at creation, then left alone.
         #
-        # ALL THREE, ALWAYS. The operator unions [.metadata, .status, .spec.replicas] into the live CR on
-        # its first reconcile whatever this list says (10-'s header has the measurement). A shorter list
-        # here is therefore a permanent ArgoCD diff — two paths in Git, three on the cluster — and with
-        # selfHeal on, ArgoCD and the operator rewrite the spec at each other forever. 12- unions the
-        # operator's three into this list at render time, so leaving one out cannot recreate that; listing
-        # them here keeps Git reading the same as the cluster. Add to it, never trim it.
+        # THE CHART'S POLICY, [.status, .spec.replicas], is added to this list by 12- at render time, so
+        # what you write here is the EXTRA paths for this policy. Listing the two anyway keeps values
+        # reading the same as the rendered CR. .metadata is NOT here any more: rendered labels and
+        # annotations are enforced (10-'s header has the history and the ordering requirement).
+        #
+        # Adding .metadata (or .metadata.labels / .metadata.annotations) back is REFUSED at render time
+        # unless allowMetadataExcluded is true. It would
+        # make this policy's rendered labels and annotations set-once again and quietly undo the 0.22.0
+        # migration for this policy, which is exactly what a values file written before 0.22.0 does.
+        # Set the flag only when set-once metadata on this policy's objects is the intent.
+        allowMetadataExcluded: false
         excludedPaths:
-          - .metadata
           - .status
           - .spec.replicas
 
@@ -569,7 +575,6 @@ namespaceConfigPolicy:
       #   roleName: spark-submitter-role
       #   roleType: spark-job-submitter
       #   excludedPaths:
-      #     - .metadata
       #     - .status
       #     - .spec.replicas
       #   rules:
@@ -583,7 +588,6 @@ namespaceConfigPolicy:
       #   roleName: trino-submitter-role
       #   roleType: trino-job-submitter
       #   excludedPaths:
-      #     - .metadata
       #     - .status
       #     - .spec.replicas
       #   rules:
@@ -601,7 +605,7 @@ namespaceConfigPolicy:
   # charts/openshift-rbac-automation/templates/rbac-policies/10-baseline-namespaceconfig-rbac.yaml for when a future policy earns its own file
   # instead of an entry here.
   #
-  # THESE BIND OPENSHIFT'S BUILT-IN CLUSTERROLES (admin / edit / view) through RoleBindings, which
+  # THESE BIND OPENSHIFT'S BUILT-IN CLUSTERROLES (edit and view, as configured below) through RoleBindings, which
   # grants them in one namespace only. They are aggregated roles maintained by the platform; defining
   # local copies would drift as OpenShift adds APIs. ClusterRoleBindings are a different thing and
   # live in the GroupConfig policies, not here.
@@ -637,7 +641,7 @@ namespaceConfigPolicy:
       nonprod:
         enabled: true
         name: baseline-nonprod-rbac
-        description: "Nonprod RBAC: admin/developer/audit access for rnd/eng/qa/uat environments only"
+        description: "Nonprod RBAC: developer (edit) and audit (view) access for rnd/eng/qa/uat environments only"
 
         # AN EXPLICIT ALLOW-LIST, not "everything that is not prod". An environment nobody has ruled on
         # gets nothing, rather than silently inheriting non-production access — which is why
@@ -683,7 +687,7 @@ namespaceConfigPolicy:
       prod:
         enabled: true
         name: baseline-prod-rbac
-        description: "Prod RBAC: developer/audit access for prod environments only (no admin or edit)"
+        description: "Prod RBAC: audit (view) access for prod environments only (no admin, no developer)"
         environments:
           - prod
         # Nothing to exclude: the allow-list is already a single value.
@@ -840,8 +844,9 @@ customGroupConfig:
     # roleRef comment — "Custom ClusterRole (must exist)" — is where this stanza came from.
     #
     # Inert today, and correctly so: the database-admin ClusterRole does not exist on the reference
-    # cluster, the repo does not define it, and 0 groups end in -database-admin. It is here as the
-    # worked shape, not as a live grant.
+    # cluster (the chart deliberately does not create it; the definition to apply by hand is
+    # working-sessions/policies/database-admin-clusterrole.yaml) and 0 groups end in -database-admin.
+    # It is here as the worked shape, not as a live grant.
     - name: database-admin
       suffix: -database-admin
       # OPTIONAL, defaults to `name`. Set here because the default would stutter — the group already
