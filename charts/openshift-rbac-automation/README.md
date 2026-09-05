@@ -29,11 +29,12 @@ spec). This is the key difference from a namespace-scoped operator, which lists 
 ## Install
 
 ```bash
-# Default: existing install namespace + global OperatorGroup + Subscription (+ the custom image patch)
-helm install nco ./chart
+# From the repository root. Default: existing install namespace + global OperatorGroup + Subscription
+# (+ the custom image patch)
+helm install nco charts/openshift-rbac-automation
 
 # Into the built-in openshift-operators namespace (already has a global OperatorGroup):
-helm install nco ./chart \
+helm install nco charts/openshift-rbac-automation \
   --set namespace=openshift-operators \
   --set createNamespace=false \
   --set createOperatorGroup=false
@@ -176,7 +177,7 @@ What **does** work:
 - ✅ `spec.config` still owns the ZAP log env and `resources`.
 
 ```bash
-helm upgrade --install nco ./chart \
+helm upgrade --install nco charts/openshift-rbac-automation \
   --set operatorImage.enabled=true \
   --set operatorImage.repository=quay.io/ephico2real/namespace-configuration-operator \
   --set operatorImage.tag=latest

@@ -124,11 +124,12 @@ helm upgrade --install nco charts/openshift-rbac-automation -n namespace-configu
   --set namespaceConfigPolicy.baseline.enabled=true
 ```
 
-Or everything, which is one command rather than four — **overrides are not cumulative across
-invocations.** `helm upgrade` recomputes values from the chart defaults plus the `-f` / `--set` arguments
-of that invocation, so an override you leave off a later command returns to its default; for the
-off-by-default oud-group and custom policies that switches the policy **off**, and switching a policy off
-revokes what it created:
+Or everything, which is one command rather than four — **overrides are not cumulative when an upgrade
+supplies values.** An upgrade with at least one `-f` / `--set` argument and without `--reuse-values`
+recomputes values from the chart defaults plus that invocation's arguments, so an override you leave off
+returns to its default; for the off-by-default oud-group and custom policies that switches the policy
+**off**, and switching a policy off revokes what it created. (An upgrade with no value arguments, or with
+`--reuse-values`, keeps the previous release's values.)
 
 ```bash
 helm upgrade --install nco charts/openshift-rbac-automation -n namespace-configuration-operator \
@@ -497,7 +498,9 @@ ClusterRole the chart binds but does not create, and the `kyverno-*.yaml` valida
 ## 🔧 Custom Domain Support
 
 If you need a different domain instead of `company.net`, override the selector keys in the chart values;
-the templates render the new keys directly (no generated copies, no script):
+the templates render the new keys directly, so a chart install needs no generated copies. (A legacy helper,
+`working-sessions/scripts/create-custom-domain-configs.sh`, rewrites only the parked reference manifests and
+is not the chart deployment path.)
 
 ```yaml
 namespaceConfigPolicy:

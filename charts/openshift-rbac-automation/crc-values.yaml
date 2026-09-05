@@ -4,9 +4,9 @@
 # The flags are recorded here instead so the enabled set is reviewable in git rather than living in
 # someone's shell history, and so an upgrade cannot silently drop one.
 #
-# WHY THAT MATTERS MORE THAN IT SOUNDS: `helm upgrade` recomputes values from the chart defaults plus the
-# -f / --set arguments of that invocation. An override omitted from a later command returns to its default;
-# for the off-by-default bdp and custom policies that is a policy switched OFF, and switching a policy
+# WHY THAT MATTERS MORE THAN IT SOUNDS: the upgrade command always supplies -f and never --reuse-values, so
+# Helm recomputes values from the chart defaults plus this file. An override omitted from this file returns
+# to its default; for the off-by-default bdp and custom policies that is a policy switched OFF, and switching a policy
 # off is a REVOCATION — the CR carries a controller finalizer, so the operator deletes every object it
 # created. With the set written down, that cannot happen by omission.
 #
