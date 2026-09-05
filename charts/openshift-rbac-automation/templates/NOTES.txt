@@ -22,9 +22,10 @@ VERIFY
    $ oc get pods -n {{ .Values.namespace }}
    $ oc get deployment -n {{ .Values.namespace }}
 
-3. The CRDs are available (the operator provides these):
+3. The policy CRDs are available (this chart installs both from its vendored crds/; OLM then
+   reconciles them from the operator bundle):
    $ oc get crd | grep redhatcop.redhat.io
-   # expect: groupconfigs, namespaceconfigs, ...
+   # expect: groupconfigs, namespaceconfigs
 
 RBAC POLICIES
 =============
