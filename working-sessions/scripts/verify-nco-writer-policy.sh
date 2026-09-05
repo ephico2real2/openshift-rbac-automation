@@ -86,13 +86,15 @@ check() {
     case "$expected:$enforcing:$got" in
       allow:*:allowed)        ok  "$label $op: allowed" ;;
       deny:true:denied)       ok  "$label $op: denied by the policy" ;;
-      deny:false:allowed)     ok  "$label $op: allowed (Audit mode; expect a violation event)" ;;
+      deny:false:allowed)     ok  "$label $op: allowed (Audit mode)"; audit_expected=$((audit_expected + 1)) ;;
       *:*:forbidden)          say "  info  $label $op: RBAC forbids this identity before admission" ;;
       *)                      bad "$label $op: expected $expected (enforcing=$enforcing), got $got" ;;
     esac
   done
 }
 
+audit_expected=0
+run_started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 say "identities:"
 check "edit holder (cluster-developer tier)"  deny  --as=probe-dev --as-group=app-ocp-rbac-alpha-cluster-developer --as-group=system:authenticated
 check "plain authenticated user"              deny  --as=probe-user --as-group=system:authenticated
@@ -104,11 +106,22 @@ check "current login (cluster-admin by binding)" allow --as="$(oc whoami)"
 check "operator service account"              allow --as=system:serviceaccount:namespace-configuration-operator:controller-manager
 check "GitOps application controller"         allow --as=system:serviceaccount:openshift-gitops:openshift-gitops-argocd-application-controller
 
-if [ "$enforcing" = false ]; then
-  say "violation events recorded by the policy (Audit mode):"
-  oc get events -A --field-selector reason=PolicyViolation -o json 2>/dev/null \
-    | jq -r --arg p "$policy" '.items[] | select(.message | contains($p)) | "  \(.lastTimestamp // .eventTime) \(.message | .[0:160])"' \
-    | tail -5 || true
+# In Audit mode every refused write must have produced a PolicyViolation event naming the policy;
+# Kyverno emits them asynchronously, so allow a few seconds.
+if [ "$enforcing" = false ] && [ "$audit_expected" -gt 0 ]; then
+  found=0
+  for _ in 1 2 3 4 5 6; do
+    found=$(oc get events -A --field-selector reason=PolicyViolation -o json 2>/dev/null \
+      | jq -r --arg p "$policy" --arg since "$run_started" \
+          '[.items[] | select((.message | contains($p)) and ((.eventTime // .lastTimestamp // "") >= $since))] | length')
+    [ "${found:-0}" -ge "$audit_expected" ] && break
+    sleep 2
+  done
+  if [ "${found:-0}" -ge "$audit_expected" ]; then
+    ok "Audit mode recorded $found PolicyViolation events for the $audit_expected refused writes"
+  else
+    bad "Audit mode: expected $audit_expected PolicyViolation events naming $policy since $run_started, found ${found:-0}"
+  fi
 fi
 
 say "result: $pass ok, $fail failed"

@@ -30,14 +30,18 @@
 #      This covers every way OpenShift hands out cluster-admin: the installer's
 #      `system:admin` certificate, `kube:admin` via system:cluster-admins, a User or Group
 #      bound directly (the sandbox's `kubeadmin` is one), and `oc --as=system:admin`. The
-#      cheap name checks in isClusterAdmin come first so the review is only posted for
-#      requesters the names do not settle; Kyverno's admission controller may create
-#      SubjectAccessReviews (measured "yes" with the 1.16 chart defaults);
-#   2. members of a synced group in the `-cluster-admin` tier. That suffix is what the
-#      chart's baseline-cluster-rbac GroupConfig keys on to bind `admin` cluster-wide: the
-#      tier the chart itself names the platform administrators. An `edit` holder cannot
-#      forge membership: measured, the developer tier can neither create nor update
-#      groups.user.openshift.io;
+#      name checks in isClusterAdmin come first and Kyverno evaluates variables lazily
+#      (v1.16.1 pkg/cel/policies/vpol/compiler/policy.go builds them with lazy.NewMapValue;
+#      measured: with the review call deliberately broken, system:admin was still allowed),
+#      so the review is posted only for requesters the names do not settle. Kyverno's
+#      admission controller may create SubjectAccessReviews (measured "yes", 1.16 defaults);
+#   2. members of a group named app-ocp-rbac-*-cluster-admin: the chart's group family
+#      (baseline-cluster-rbac's groupPrefix) plus the tier suffix that GroupConfig binds
+#      `admin` cluster-wide to. The CEL trusts request.userInfo.groups; it does not look up
+#      Group objects or the sync-provider label. An `edit` holder cannot forge membership:
+#      measured, the developer tier can neither create nor update groups.user.openshift.io,
+#      and asserting a group through impersonation needs the impersonate verb, which is
+#      cluster-admin territory. A second family with a cluster tier is added here;
 #   3. the operator's own service account. It removes its finalizer with an UPDATE on the CR
 #      (not on /status), so denying it would hang every CR deletion on the finalizer;
 #   4. the GitOps application controller that deploys the chart (argocd-application.yaml).
@@ -63,14 +67,22 @@
 # Ships in Audit. Watch the policy's PolicyViolation events (they name the requester) and
 # kyverno_validating_policy_execution_duration_seconds_count{policy_name="restrict-nco-config-writers",result="FAIL"}
 # for a week: every FAIL names a writer this allow-list forgot (typically a CI service
-# account). Then set validationActions to [Deny]. failurePolicy stays Fail: while Kyverno's
-# admission controller is down, nobody can write these CRs, which is the right failure for
-# rarely-changed platform configuration.
+# account). Then set validationActions to [Deny].
+#
+# FAILURE MODES, measured (failurePolicy: Fail)
+# While Kyverno's admission controller is down, nobody can write these CRs: the right failure
+# for rarely-changed platform configuration. While it is up but the SubjectAccessReview call
+# fails (RBAC removed from Kyverno's service account, or the 10s webhook timeout), the policy
+# errors and Fail refuses exactly the requesters that needed the review: a User bound directly
+# to cluster-admin, and anyone who was going to be refused anyway. Identities settled by name
+# or group (system:admin, system:masters, system:cluster-admins, the -cluster-admin tier, the
+# two service accounts) are unaffected, because the review is never evaluated for them.
 #
 # TESTING
 # working-sessions/scripts/verify-nco-writer-policy.sh runs every identity above through an
-# impersonated `oc apply --dry-run=server` and `oc delete --dry-run=server` and checks the
-# outcome against the mode the policy is currently in.
+# impersonated CREATE, UPDATE and DELETE with `--dry-run=server` and checks each outcome
+# against the mode the policy is currently in; in Audit it also requires the PolicyViolation
+# events the refused identities must have produced.
 # =============================================================================
 apiVersion: policies.kyverno.io/v1beta1
 kind: ValidatingPolicy
@@ -89,9 +101,9 @@ metadata:
     policies.kyverno.io/description: >-
       OLM aggregates create/update/patch/delete on the operator's CRDs into the cluster-wide
       admin and edit roles. This policy adds an admission-time allow-list so that only cluster
-      administrators (by SubjectAccessReview), the -cluster-admin tier of synced groups, the
-      operator's own service account and the GitOps application controller can create, update
-      or delete these cluster-scoped resources.
+      administrators (by name and group, otherwise by SubjectAccessReview), the app-ocp-rbac
+      -cluster-admin tier, the operator's own service account and the GitOps application
+      controller can create, update or delete these cluster-scoped resources.
 spec:
   failurePolicy: Fail
   validationActions: [Audit]
@@ -121,8 +133,8 @@ spec:
         'system:masters' in variables.groups ||
         'system:cluster-admins' in variables.groups
     - name: isClusterAdminTier
-      # The suffix the chart's baseline-cluster-rbac GroupConfig binds `admin` cluster-wide to.
-      expression: variables.groups.exists(g, g.endsWith('-cluster-admin'))
+      # The chart's group family plus the tier suffix baseline-cluster-rbac binds `admin` to.
+      expression: variables.groups.exists(g, g.startsWith('app-ocp-rbac-') && g.endsWith('-cluster-admin'))
     - name: isTrustedServiceAccount
       # The operator (namespace and service account of the OLM install), and the GitOps
       # application controller that deploys the chart. Add CI identities here, not below.
