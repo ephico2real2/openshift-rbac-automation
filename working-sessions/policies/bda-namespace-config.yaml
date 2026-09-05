@@ -77,8 +77,8 @@ spec:
     # BDA Workload Submitter Role — namespace-scoped
     ###########################################################################
     - excludedPaths:
-        - .metadata
         - .status
+        - .spec.replicas
       objectTemplate: |
         apiVersion: rbac.authorization.k8s.io/v1
         kind: Role
@@ -128,8 +128,8 @@ spec:
     # RoleBinding — binds bda-rbac-<service>-<tenant>-<kind>
     ###########################################################################
     - excludedPaths:
-        - .metadata
         - .status
+        - .spec.replicas
       objectTemplate: |
         apiVersion: rbac.authorization.k8s.io/v1
         kind: RoleBinding

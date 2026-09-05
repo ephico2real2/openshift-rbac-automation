@@ -177,10 +177,25 @@ jobs:
       # overlay declares (12- adds it at render time; 10-, 11- and 13- declare it). The history: older
       # operators wrote their own list into the live CR, and a Git list that differed was a rewrite loop under
       # ArgoCD selfHeal (0.21.0); from the build that applies defaults in memory the list is the chart's alone.
+      #
+      # The overlay probe is a PAIR. A pre-0.22.0 values file that still lists .metadata on an oud-group policy
+      # must be REFUSED (12- guards it), because rendering it would make that policy's metadata set-once again
+      # and undo the migration while this workflow stayed green; the same overlay with allowMetadataExcluded
+      # set must render, with .metadata kept and the chart's policy still present on every block.
       - name: excludedPaths always carry the chart's policy
         run: |
+          P='namespaceConfigPolicy.oudGroup.policies.bdp'
+          if out=$(helm template release "$CHART" -f "$CHART/crc-values.yaml" \
+                     --set "$P.excludedPaths={.metadata}" 2>&1); then
+            echo "::error::an overlay listing .metadata rendered without allowMetadataExcluded"; exit 1
+          fi
+          grep -q 'allowMetadataExcluded: true' <<<"$out" \
+            || { echo "::error::the .metadata overlay was refused, but not by 12-'s guard. Got:"; echo "$out"; exit 1; }
+          echo "unacknowledged .metadata overlay refused by 12-"
           out=$(helm template release "$CHART" -f "$CHART/crc-values.yaml" \
-                  --set 'namespaceConfigPolicy.oudGroup.policies.bdp.excludedPaths={.metadata}')
+                  --set "$P.excludedPaths={.metadata}" --set "$P.allowMetadataExcluded=true")
+          kept=$(echo "$out" | grep -c '^        - \.metadata$' || true)
+          [ "$kept" -eq 2 ] || { echo "::error::acknowledged overlay should keep .metadata on bdp's 2 templates, found $kept"; exit 1; }
           blocks=$(echo "$out" | grep -c '^    - excludedPaths:' || true)
           [ "$blocks" -gt 0 ] || { echo "::error::no excludedPaths block rendered"; exit 1; }
           missing=$(echo "$out" | awk '

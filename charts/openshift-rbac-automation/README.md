@@ -47,11 +47,16 @@ oc get pods -n namespace-configuration-operator
 oc get crd | grep redhatcop.redhat.io   # groupconfigs, namespaceconfigs, ...
 ```
 
-Then apply the policies:
+The chart deploys every policy enabled in `values.yaml` (the baseline namespace tiers and the cluster
+GroupConfig ship enabled). Verify them with:
 
 ```bash
-oc apply -f ../policies/
+oc get namespaceconfigs.redhatcop.redhat.io
+oc get groupconfigs.redhatcop.redhat.io
 ```
+
+Do not apply `../../working-sessions/policies/` alongside the chart. Those files are readable design
+references and would duplicate the CRs the chart manages.
 
 To verify a rendered policy against the cluster as one of its members — the Role, the binding, the
 group, a SubjectAccessReview per verb, then real creates and a cleanup — follow

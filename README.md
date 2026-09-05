@@ -110,7 +110,8 @@ approval, resource sizing).
 
 ### 2. Deploy RBAC Automation
 
-**Via the chart — every policy is a flag, and all of them default to off.** Do NOT `oc apply` the
+**Via the chart — every policy is a flag. The baseline NamespaceConfigs and the cluster GroupConfig default
+on; the oud-group example and the custom GroupConfig default off.** Do NOT `oc apply` the
 manifests under `working-sessions/policies/`: those are **design references**, kept readable so the
 intent of each policy can be reviewed. The chart is what deploys.
 
@@ -458,7 +459,8 @@ oc get rolebindings -n openshift-user-workload-monitoring -l app.kubernetes.io/m
         └── planning/                             # Completed design notes
 ```
 
-**The policies ship as part of the chart, each behind its own flag and every flag off by default.**
+**The policies ship as part of the chart, each behind its own flag: the baseline NamespaceConfigs and the
+cluster GroupConfig default on, the oud-group example and the custom GroupConfig default off.**
 
 `working-sessions/policies/` holds **manual manifests kept for design purposes** — the readable
 statement of what each policy is meant to do, reviewed as YAML rather than as a template. They are not

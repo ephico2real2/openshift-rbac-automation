@@ -37,9 +37,14 @@ type: application
 # ClusterRoleBindings and Roles are now ENFORCED: the operator applies server-side and owns exactly what
 # the template renders, so editing metadata in a template reaches objects that already exist, a rendered
 # label changed by hand is restored, and a label anyone else adds is left alone (measured on the
-# sandbox; GOTCHA 9 is retired). Declaring the list is what migrates every existing CR: older operator
-# builds wrote [.metadata, .status, .spec.replicas] into every live CR's spec, and only a Helm release
-# whose rendered list differs rewrites it (measured, release 8 to 10). It is not a mirror of the
+# sandbox; GOTCHA 9 is retired). Declaring the list is what migrates every chart-managed CR: older
+# operator builds wrote [.metadata, .status, .spec.replicas] into every live CR's spec, and Helm's
+# three-way patch leaves a field alone that neither manifest renders. On the first upgrade to 0.22.0 the
+# patch replaces that legacy list with the rendered one (measured, release 8 to 10); a later upgrade is
+# a no-op only while live still matches, and restores the rendered list if live has drifted. Values that
+# still add .metadata to an oud-group policy are the exception and are REFUSED by 12- unless the policy
+# sets allowMetadataExcluded: true, because a render that quietly kept it would undo this migration for
+# that policy while CI stayed green. It is not a mirror of the
 # operator's defaults: from the build that applies its defaults in memory (operator design record
 # docs/DESIGN_excludedPaths.md, chosen by an adversarial design review of both approaches) the operator
 # never writes this list and unions its own defaults with it, so a difference cannot loop or hide

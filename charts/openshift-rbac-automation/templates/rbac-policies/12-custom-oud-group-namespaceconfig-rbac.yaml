@@ -184,11 +184,18 @@ now simply render empty for such a namespace.
 {{- /*
 excludedPaths always carries this chart's policy, [.status, .spec.replicas] (10-'s header says why it is
 declared and why it is not a mirror of the operator's defaults), plus whatever paths values adds for the
-policy. Rendered labels and annotations are enforced. Roll the operator build that applies its defaults
-in memory out first: an older one writes its own list into the spec, and a Git that declares a
-different list is the rewrite loop the 0.21.1 entry records.
+policy. Rendered labels and annotations are enforced UNLESS the policy adds .metadata, which makes them
+set-once on that policy's objects. Values files written before 0.22.0 commonly carry .metadata, and a
+render that quietly kept it would defeat the migration this release performs, so that entry is refused
+unless the policy acknowledges it with allowMetadataExcluded: true. Roll the operator build that applies
+its defaults in memory out first: an older one writes its own list into the spec, and a Git that declares
+a different list is the rewrite loop the 0.21.1 entry records.
 */}}
-{{- $excluded := concat (list ".status" ".spec.replicas") ($p.excludedPaths | default (list)) | uniq }}
+{{- $declaredExcluded := $p.excludedPaths | default (list) }}
+{{- if and (has ".metadata" $declaredExcluded) (not ($p.allowMetadataExcluded | default false)) }}
+{{- fail (printf "namespaceConfigPolicy.oudGroup.policies.%s.excludedPaths lists .metadata. That makes every rendered label and annotation on this policy's Roles and RoleBindings set-once (never corrected after creation) and defeats the chart 0.22.0 migration off .metadata. Remove it, or set allowMetadataExcluded: true on the policy to declare set-once metadata deliberately." $key) }}
+{{- end }}
+{{- $excluded := concat (list ".status" ".spec.replicas") $declaredExcluded | uniq }}
 ---
 apiVersion: redhatcop.redhat.io/v1alpha1
 kind: NamespaceConfig
