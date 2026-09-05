@@ -191,7 +191,8 @@ jobs:
           # can precede it; measured), and the guard's message starts with its E_ marker, so the marker must follow
           # the first ")" of that line. Another fail's text can carry a user value that contains the marker
           # (groupPrefix is printed %q) or even a line break followed by a forged "Error:" line (a policy map key;
-          # 12- refuses such keys before anything else), but only after the genuine first Error line (both measured).
+          # 12- refuses such keys before any of its own value-carrying fails; Helm evaluates 13- before 12-, and the crc
+          # fixture passes 13-'s guards), but only after the genuine first Error line (both measured).
           refused_by_guard() {
             label="$1"; shift
             if out=$(helm template release "$CHART" -f "$CHART/crc-values.yaml" "$@" 2>&1); then

@@ -151,3 +151,16 @@ matched; NOTES renders; no broken relative link in the chart README.
 
 **Volunteered by Codex, accepted:** the chart README's `helm install nco ./chart` commands named a directory that
 does not exist from any working directory; they now use the repository-root path (measured: it renders).
+
+## Sixth pass, final confirmation (head ceaa8f9)
+
+| Claim | Codex | Cursor | Decision |
+|---|---|---|---|
+| C1 the `grep -m1 '^Error:'` pipeline under pipefail | CONFIRMED (match 0, mismatch 1, no Error line 1; a 1 MiB error line matched; a YAML parse error's first line is `Error: failed to parse` and does not match) | PLAUSIBLE, same table by reasoning | — |
+| C2 no `Error:`-prefixed line can precede the genuine one | CONFIRMED (coalesce messages are lower-case `warning:`; the `%q` leaf renders a newline as `\n`; the key check covers keys) | PLAUSIBLE, with an unrun hypothesis: a `--set-string` on `rules` containing a newline plus a forged `Error:` line might be echoed raw by the coalesce warning | **Hypothesis refuted here by measurement:** with `rules` reshaped and another fail tripped, the first `Error:` line is the genuine groupPrefix fail and the forged text never matches; with the guard input it is the genuine guard line. |
+| C3 the key check precedes every other fail | REFUTED as a compound: within 12- yes (measured, both enabled states); but Helm evaluates equal-depth templates in reverse lexical order, so 13-'s own guards run before 12-'s; harmless for the probes, whose fixture passes 13- | CONFIRMED in 12-; the same note about 10-/11- | **Accepted as a comment correction** in the CI step. |
+| C4 the seven probes pass, the two forgeries fail | CONFIRMED (the step body run under `bash -eo pipefail`, exit 0) | PLAUSIBLE | — |
+| C5 specs identical to 03fe6ed | CONFIRMED (28 and 31 documents; two description annotations differ) | PLAUSIBLE | — |
+| C6 every changed sentence true | REFUTED on one: the `helm upgrade` paragraph omitted `--reset-then-reuse-values` and `--reset-values` (`helm upgrade --help` v3.14.0) | the same sentence | **Accepted**; the paragraph now names all three flags and points at the help text. |
+
+Clean: no code finding on either side. Merged after this pass.
