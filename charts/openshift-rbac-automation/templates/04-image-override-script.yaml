@@ -211,13 +211,33 @@ data:
                 -o jsonpath="{.spec.install.spec.deployments[${D_IDX}].spec.template.spec.containers[${C_IDX}].image}")"
     log "current CSV image: ${CURRENT}"
 
-    # --- 3. Patch (idempotent, and guarded against clobbering an unexpected image) --------
+    # --- 3. Patch (idempotent PER FIELD, and guarded against clobbering an unexpected image) ---
+    # EACH FIELD IS COMPARED AND PATCHED INDEPENDENTLY. Until 0.23.0 the pull policy and the pull
+    # secret were built inside the else-branch of the image comparison, so on a cluster whose CSV
+    # already held the target image, changing operatorImage.pullPolicy — or setting imagePullSecret
+    # for the first time — did NOTHING: the script logged "already at target image" and returned
+    # success. That is the same defect class as the moving ":latest" tag 0.23.0 removes, one field
+    # over: a comparison that cannot observe the thing that changed.
+    CURRENT_POLICY="$(oc get clusterserviceversions.operators.coreos.com "$CSV" -n "$NAMESPACE" \
+                       -o jsonpath="{.spec.install.spec.deployments[${D_IDX}].spec.template.spec.containers[${C_IDX}].imagePullPolicy}")"
+    CURRENT_SECRETS="$(oc get clusterserviceversions.operators.coreos.com "$CSV" -n "$NAMESPACE" \
+                        -o jsonpath="{.spec.install.spec.deployments[${D_IDX}].spec.template.spec.imagePullSecrets[*].name}")"
+    log "current CSV imagePullPolicy: ${CURRENT_POLICY:-<none>}, imagePullSecrets: ${CURRENT_SECRETS:-<none>}"
+
+    # JSON Patch "add" on an object member is an upsert, so it works whether or not
+    # imagePullPolicy / imagePullSecrets are already present. "replace" would 404 on absent keys.
+    OPS=""
+    add_op() {
+      if [ -n "$OPS" ]; then OPS="${OPS},$1"; else OPS="$1"; fi
+    }
+
     if [ "$CURRENT" = "$TARGET_IMAGE" ]; then
-      log "CSV already at target image; skipping patch"
+      log "CSV image already at target; leaving it"
     else
       # The guard is what makes an unattended CronJob safe: it patches the upstream image it
       # was told to expect, and refuses anything else (a hand-set image, a different fork)
-      # instead of silently overwriting someone's deliberate change.
+      # instead of silently overwriting someone's deliberate change. It gates the IMAGE only —
+      # a pull-policy correction is never a clobber.
       #
       # Same-repository references are always in policy — otherwise bumping operatorImage.tag
       # would leave the CSV holding our own repo at the old tag, matching neither the target
@@ -229,16 +249,33 @@ data:
       else
         fail "current image '${CURRENT}' is neither in '$(repo_of "$TARGET_IMAGE")' nor a match for operatorImage.expectedImagePattern '${EXPECTED_IMAGE_PATTERN}'; refusing to patch. Widen the pattern if this image is expected."
       fi
+      add_op "$(printf '{"op":"add","path":"%s/containers/%s/image","value":"%s"}' "$BASE" "$C_IDX" "$TARGET_IMAGE")"
+      log "will patch image: ${CURRENT} -> ${TARGET_IMAGE}"
+    fi
 
-      # JSON Patch "add" on an object member is an upsert, so it works whether or not
-      # imagePullPolicy / imagePullSecrets are already present. "replace" would 404 on absent keys.
-      OPS="$(printf '{"op":"add","path":"%s/containers/%s/image","value":"%s"}' "$BASE" "$C_IDX" "$TARGET_IMAGE")"
-      OPS="${OPS},$(printf '{"op":"add","path":"%s/containers/%s/imagePullPolicy","value":"%s"}' "$BASE" "$C_IDX" "$PULL_POLICY")"
-      if [ -n "$PULL_SECRET" ]; then
-        OPS="${OPS},$(printf '{"op":"add","path":"%s/imagePullSecrets","value":[{"name":"%s"}]}' "$BASE" "$PULL_SECRET")"
+    if [ "$CURRENT_POLICY" = "$PULL_POLICY" ]; then
+      log "CSV imagePullPolicy already ${PULL_POLICY}"
+    else
+      add_op "$(printf '{"op":"add","path":"%s/containers/%s/imagePullPolicy","value":"%s"}' "$BASE" "$C_IDX" "$PULL_POLICY")"
+      log "will patch imagePullPolicy: ${CURRENT_POLICY:-<none>} -> ${PULL_POLICY}"
+    fi
+
+    # Only ever ADDS our secret; an empty operatorImage.imagePullSecret leaves whatever is there
+    # alone rather than clearing it, which is what a public registry install expects.
+    if [ -n "$PULL_SECRET" ]; then
+      if [ "$CURRENT_SECRETS" = "$PULL_SECRET" ]; then
+        log "CSV imagePullSecrets already [${PULL_SECRET}]"
+      else
+        add_op "$(printf '{"op":"add","path":"%s/imagePullSecrets","value":[{"name":"%s"}]}' "$BASE" "$PULL_SECRET")"
+        log "will patch imagePullSecrets: [${CURRENT_SECRETS:-<none>}] -> [${PULL_SECRET}]"
       fi
+    fi
+
+    if [ -n "$OPS" ]; then
       log "patching CSV ${CSV}"
       oc patch clusterserviceversions.operators.coreos.com "$CSV" -n "$NAMESPACE" --type=json -p "[${OPS}]"
+    else
+      log "CSV already at target image, pull policy and secrets; skipping patch"
     fi
 
     # --- 4. Verify OLM propagated it to the live Deployment ------------------------------

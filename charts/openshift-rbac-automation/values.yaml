@@ -244,9 +244,42 @@ operatorImage:
 
   # The image to run. Must be pullable by the cluster (set imagePullSecret if private).
   repository: quay.io/ephico2real/namespace-configuration-operator
-  tag: latest
-  # Always, so a moving ":latest" tag is re-pulled on every pod start.
-  pullPolicy: Always
+
+  # PIN AN IMMUTABLE BUILD. NEVER A MOVING ALIAS — the reference string is the rollout trigger.
+  #
+  # The chart does not own the operator Deployment; OLM does. 04-image-override-script patches the
+  # installed CSV and skips when the CSV image already equals this reference — its idempotency test is
+  # a STRING comparison. So a moving tag is a dead end: ":latest" never changes the string, the CSV is
+  # never patched, OLM never re-applies the Deployment, no ReplicaSet is created, and the operator pod
+  # NEVER RESTARTS. A newly pushed ":latest" then sits in the registry unreachable for as long as the
+  # pod happens to live. Measured: the cluster kept a pre-v1.2.6-132 binary still writing .metadata
+  # into every CR's excludedPaths, against a chart 0.22.0 declaring [.status, .spec.replicas] — the
+  # 0.21.1 rewrite loop under ArgoCD self-heal — until the pod was restarted BY HAND. pullPolicy is a
+  # PULL policy, not a rollout trigger; it acts only on a restart that nothing here causes.
+  #
+  # An immutable tag makes the string move whenever the build does, so the existing patch -> OLM
+  # re-apply -> "oc rollout status" path fires on its own. The fork publishes one tag per build
+  # (v<git describe> and sha-<commit>); ":latest" moves there only on a manual dispatch.
+  #
+  # THE CHART'S ORDERING RULE IS NOW ENFORCED BY THIS PIN rather than by prose: 0.22.0 requires an
+  # operator that applies its excludedPaths defaults in memory (v1.2.6-132, first shipped as -140).
+  # This build carries it. Bumping the operator is now a chart release — the reconcile CronJob holds
+  # this lineage against any newly installed CSV.
+  tag: "v1.2.6-142-ga8b0ea9"
+
+  # Wins over tag when set, rendered as "repository@sha256:...". The strongest pin: content-addressed,
+  # so it cannot be moved or re-pushed under you. Empty in the shipped chart deliberately — a committed
+  # digest outlives the tag it was taken from and goes stale silently. Resolve one with
+  #   skopeo inspect docker://<repository>:<tag> --format '{{.Digest}}'
+  # A malformed value is refused at render time rather than reaching the CSV.
+  digest: ""
+
+  # IfNotPresent, because the reference above is immutable: the content cannot have changed, so a
+  # re-pull is a registry round trip that buys nothing. It also keeps a node drain or reschedule
+  # working through a registry outage — a cached image still starts, where Always gives ErrImagePull.
+  # Set Always only if you deliberately override tag with a moving alias; CI refuses one in the
+  # shipped chart.
+  pullPolicy: IfNotPresent
 
   # SELF-HEAL AN ORPHANED CSV. Leave this ON if anything automated manages the release.
   #

@@ -24,6 +24,12 @@ namespace-configuration-operator fork. The chart's part:
   `allowMetadataExcluded: true`.
 - Ordering: the operator image first, then chart 0.22.0. Against an older operator a declared list that differs
   from its defaults is the 0.21.1 rewrite loop under ArgoCD self-heal.
+- Chart 0.23.0 makes that ordering ENFORCEABLE instead of advisory. Until then `operatorImage.tag` was `latest`,
+  and because the CSV patch fires only when the rendered reference differs from the live one, a constant string
+  meant the operator pod never restarted — so a cluster could sit on a pre-`v1.2.6-132` binary indefinitely while
+  Git declared the new list, which is exactly the rewrite loop above, arrived at from the direction 0.22.0 did not
+  anticipate. Observed on a live cluster; it cleared only on a manual pod restart. The tag is now pinned to an
+  immutable build, so the operator rolls when the pin moves and the required build is a reviewable line in Git.
 - Rejected: the operator removing `.metadata` automatically (nothing can attribute an entry to the author or to the
   old operator: `spec.templates` is one atomic value to every writer), and a status field for the effective list
   (a CRD change OLM owns and this chart duplicates).
