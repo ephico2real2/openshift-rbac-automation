@@ -56,18 +56,22 @@ renders %!s(float64=1.3). Use --set-string for a tag; this keeps the plain form 
 producing a garbage reference.
 */}}
 {{- define "nco.imageOverride.image" -}}
+{{- $repo := default "" .Values.operatorImage.repository | toString -}}
+{{- if not $repo -}}
+{{- fail "operatorImage.repository is empty, which would render a reference like \":tag\" — non-empty, so the script's ${TARGET_IMAGE:?} guard does not catch it, and the CSV is wedged with an unpullable image." -}}
+{{- end -}}
 {{- $digest := default "" .Values.operatorImage.digest | toString -}}
 {{- if $digest -}}
 {{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $digest) -}}
 {{- fail (printf "operatorImage.digest %q is not a digest. It must be sha256: followed by 64 lowercase hex characters; read one off the registry with `skopeo inspect docker://%s:<tag>` and copy its Digest field. Leave it empty to deploy operatorImage.tag." $digest .Values.operatorImage.repository) -}}
 {{- end -}}
-{{- printf "%s@%s" .Values.operatorImage.repository $digest -}}
+{{- printf "%s@%s" $repo $digest -}}
 {{- else -}}
 {{- $tag := default .Chart.AppVersion .Values.operatorImage.tag | toString -}}
-{{- if not $tag -}}
-{{- fail "operatorImage resolves to no tag and no digest, which would render a bare \"repository:\" and wedge the CSV with an unpullable image. Set operatorImage.tag to an immutable build tag, or operatorImage.digest." -}}
+{{- if not (regexMatch "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$" $tag) -}}
+{{- fail (printf "operatorImage resolves to tag %q, which is not a Docker tag (empty, or containing a character such as \"/\" that is not [A-Za-z0-9_.-]). An unusable tag wedges the CSV with an image that cannot be pulled. Set operatorImage.tag to an immutable build tag, or operatorImage.digest." $tag) -}}
 {{- end -}}
-{{- printf "%s:%s" .Values.operatorImage.repository $tag -}}
+{{- printf "%s:%s" $repo $tag -}}
 {{- end -}}
 {{- end }}
 

@@ -282,17 +282,25 @@ data:
     # The patch is only meaningful if OLM re-applies the Deployment; assert it rather than
     # assuming. A mismatch that never converges means something else owns the image
     # (e.g. a Kyverno mutation still rewriting it at admission).
+    # BOTH FIELDS, or a policy-only patch is never observed. Waiting on the image alone meant that on
+    # a cluster already at the pin the first poll matched instantly, `oc rollout status` passed on the
+    # OLD ready revision, and the live Deployment could keep the previous pull policy forever while
+    # the CSV said otherwise — after which the CronJob compares the CSV, sees a match, and skips. The
+    # same blind-comparison defect as the moving tag, one layer down.
     LIVE=""
+    LIVE_POL=""
     deadline=$(( $(date +%s) + WAIT_SECONDS ))
     while [ "$(date +%s)" -lt "$deadline" ]; do
       LIVE="$(oc get deploy "$CSV_DEPLOYMENT" -n "$NAMESPACE" \
                -o jsonpath="{.spec.template.spec.containers[?(@.name=='${CONTAINER}')].image}" 2>/dev/null || true)"
-      [ "$LIVE" = "$TARGET_IMAGE" ] && break
-      log "waiting for OLM to propagate to Deployment/${CSV_DEPLOYMENT} (currently: ${LIVE:-<none>})"
+      LIVE_POL="$(oc get deploy "$CSV_DEPLOYMENT" -n "$NAMESPACE" \
+                   -o jsonpath="{.spec.template.spec.containers[?(@.name=='${CONTAINER}')].imagePullPolicy}" 2>/dev/null || true)"
+      [ "$LIVE" = "$TARGET_IMAGE" ] && [ "$LIVE_POL" = "$PULL_POLICY" ] && break
+      log "waiting for OLM to propagate to Deployment/${CSV_DEPLOYMENT} (image: ${LIVE:-<none>}, pullPolicy: ${LIVE_POL:-<none>})"
       sleep 5
     done
-    [ "$LIVE" = "$TARGET_IMAGE" ] \
-      || fail "Deployment/${CSV_DEPLOYMENT} container '${CONTAINER}' is '${LIVE:-<none>}', expected '${TARGET_IMAGE}' after ${WAIT_SECONDS}s. Is an admission mutation (Kyverno) still rewriting this image?"
+    { [ "$LIVE" = "$TARGET_IMAGE" ] && [ "$LIVE_POL" = "$PULL_POLICY" ]; } \
+      || fail "Deployment/${CSV_DEPLOYMENT} container '${CONTAINER}' is image '${LIVE:-<none>}' pullPolicy '${LIVE_POL:-<none>}', expected '${TARGET_IMAGE}' / '${PULL_POLICY}' after ${WAIT_SECONDS}s. Is an admission mutation (Kyverno) still rewriting this?"
 
     log "deployment updated; waiting for rollout"
     if oc rollout status "deploy/${CSV_DEPLOYMENT}" -n "$NAMESPACE" --timeout="${WAIT_SECONDS}s"; then
@@ -307,15 +315,27 @@ data:
     # OLM applies the install strategy on the Pending->Installing transition, not on every
     # sync, so a wedged CSV never picks the revert up. The Deployment must be patched too,
     # and that direct patch is what actually restarts the rollout.
-    if [ "$CURRENT" = "$TARGET_IMAGE" ]; then
-      fail "rollout of ${TARGET_IMAGE} did not become ready within ${WAIT_SECONDS}s, and the CSV already held this image on entry, so there is no previous value to roll back to. Inspect: oc describe deploy/${CSV_DEPLOYMENT} -n ${NAMESPACE}"
+    # REVERT WHAT THIS RUN PATCHED, which is not always the image. A policy-only patch reaches here
+    # with CURRENT = TARGET_IMAGE; keying the "nothing to roll back" test on the image then blamed an
+    # image nobody had touched and left the new pull policy live on a wedged install. OPS is the
+    # honest test: empty means this run changed nothing.
+    if [ -z "$OPS" ]; then
+      fail "rollout of ${TARGET_IMAGE} did not become ready within ${WAIT_SECONDS}s, and this run patched nothing, so there is no previous value to roll back to. Inspect: oc describe deploy/${CSV_DEPLOYMENT} -n ${NAMESPACE}"
     fi
 
-    log "ROLLBACK: rollout of ${TARGET_IMAGE} did not become ready; restoring ${CURRENT}"
-    oc patch clusterserviceversions.operators.coreos.com "$CSV" -n "$NAMESPACE" --type=json \
-      -p "[$(printf '{"op":"add","path":"%s/containers/%s/image","value":"%s"}' "$BASE" "$C_IDX" "$CURRENT")]" \
+    REVERT="$(printf '{"op":"add","path":"%s/containers/%s/image","value":"%s"}' "$BASE" "$C_IDX" "$CURRENT")"
+    CONTAINER_REVERT="$(printf '{"name":"%s","image":"%s"}' "$CONTAINER" "$CURRENT")"
+    if [ -n "$CURRENT_POLICY" ]; then
+      REVERT="${REVERT},$(printf '{"op":"add","path":"%s/containers/%s/imagePullPolicy","value":"%s"}' "$BASE" "$C_IDX" "$CURRENT_POLICY")"
+      CONTAINER_REVERT="$(printf '{"name":"%s","image":"%s","imagePullPolicy":"%s"}' "$CONTAINER" "$CURRENT" "$CURRENT_POLICY")"
+    fi
+
+    log "ROLLBACK: rollout did not become ready; restoring image ${CURRENT}, imagePullPolicy ${CURRENT_POLICY:-<unset>}"
+    oc patch clusterserviceversions.operators.coreos.com "$CSV" -n "$NAMESPACE" --type=json -p "[${REVERT}]" \
       || log "WARNING: CSV rollback patch failed; the CSV may still reference ${TARGET_IMAGE}"
-    oc set image "deploy/${CSV_DEPLOYMENT}" -n "$NAMESPACE" "${CONTAINER}=${CURRENT}" \
+    # A strategic merge matches containers BY NAME, so one patch restores both fields and needs no index.
+    oc patch "deploy/${CSV_DEPLOYMENT}" -n "$NAMESPACE" \
+      -p "{\"spec\":{\"template\":{\"spec\":{\"containers\":[${CONTAINER_REVERT}]}}}}" \
       || log "WARNING: Deployment rollback failed; operator may be left wedged on ${TARGET_IMAGE}"
-    fail "rolled back to ${CURRENT}: ${TARGET_IMAGE} never became ready within ${WAIT_SECONDS}s. Check the image is pullable and the tag exists."
+    fail "rolled back to ${CURRENT}: ${TARGET_IMAGE} / ${PULL_POLICY} never became ready within ${WAIT_SECONDS}s. Check the image is pullable and the tag exists."
 {{- end }}
