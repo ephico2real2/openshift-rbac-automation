@@ -86,8 +86,9 @@ the chart package.
 | `subscription.extraEnv` | Extra env appended to `spec.config.env` | `[]` |
 | `subscription.resources` | Operator resource requests/limits (`spec.config.resources`) | 100m/128Mi → 500m/512Mi |
 | `operatorImage.enabled` | Patch a custom operator image into the CSV (see below) | `true` |
-| `operatorImage.repository` / `tag` | The image to run | `quay.io/ephico2real/namespace-configuration-operator` / `latest` |
-| `operatorImage.pullPolicy` | Pull policy written into the CSV | `Always` |
+| `operatorImage.repository` / `tag` | The image to run. **Never a moving alias** — the reference string is what triggers the CSV re-patch and the operator restart | `quay.io/ephico2real/namespace-configuration-operator` / `v1.2.6-142-ga8b0ea9` |
+| `operatorImage.digest` | `repository@sha256:…`, wins over `tag`. Empty in the shipped chart | `""` |
+| `operatorImage.pullPolicy` | Pull policy written into the CSV. `IfNotPresent` is correct for an immutable reference and survives a registry outage | `IfNotPresent` |
 | `operatorImage.expectedImagePattern` | Regex the CSV's current image must match before it is overwritten | upstream `redhat-cop` image |
 | `operatorImage.csvDeploymentName` / `containerName` | Where in the CSV to patch (matched by name) | `…-controller-manager` / `manager` |
 | `operatorImage.imagePullSecret` | Pull secret for a private registry; empty for public | `""` |
@@ -180,8 +181,17 @@ What **does** work:
 helm upgrade --install nco charts/openshift-rbac-automation \
   --set operatorImage.enabled=true \
   --set operatorImage.repository=quay.io/ephico2real/namespace-configuration-operator \
-  --set operatorImage.tag=latest
+  --set-string operatorImage.tag=v1.2.6-142-ga8b0ea9
 ```
+
+`--set-string`, not `--set`: Helm parses a numeric-looking tag as a float, so a plain
+`--set operatorImage.tag=1.3` reaches the template as `float64` and renders a garbage reference.
+
+**Pin an immutable build, never `latest`.** The patch below is applied only when the rendered
+reference *differs* from the one already in the CSV, so a constant string is never re-patched: OLM
+never re-applies the Deployment, no ReplicaSet is created, and the operator pod never restarts. A
+newly pushed `latest` then never reaches the cluster, whatever the pull policy says. CI refuses a
+moving alias in the shipped chart.
 
 ### How the Job behaves
 

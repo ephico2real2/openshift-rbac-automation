@@ -33,6 +33,42 @@ type: application
 # 0.5.0 added that stanza. It also carried a defect fix worth remembering even though the template is
 # gone: the source policy binds alert-routing-edit as a Role when it is a ClusterRole, producing a
 # binding that reports healthy and grants nothing. See the parked file.
+# 0.23.0, MINOR: THE OPERATOR IMAGE IS PINNED TO AN IMMUTABLE BUILD, operatorImage.tag
+# v1.2.6-142-ga8b0ea9, and pullPolicy moves to IfNotPresent. THIS SUPERSEDES the 0.21.3 note below
+# ("operatorImage.tag stays `latest` — pin it on a cluster that must not pick this up"): `latest` is
+# not a default to opt out of, it is a defect, because it cannot deliver an image at all.
+#
+# WHY. This chart does not own the operator Deployment; OLM does, and 04-image-override-script patches
+# the installed CSV. Its idempotency test is a STRING comparison against the rendered reference, so
+# with tag `latest` that string is constant forever: after the first patch every run — the hook Job
+# and the */10 CronJob alike — logs "already at target image" and exits. The CSV never changes, OLM
+# never re-applies the Deployment, no ReplicaSet is created, and THE OPERATOR POD NEVER RESTARTS. A
+# build pushed to `latest` stays in the registry, unreachable, for as long as the pod happens to live.
+# pullPolicy: Always did not save it — a pull policy is not a rollout trigger; it acts only on a
+# restart nothing here caused.
+#
+# MEASURED: a cluster ran a pre-v1.2.6-132 binary that still wrote .metadata into every CR's
+# excludedPaths, against a 0.22.0 chart declaring [.status, .spec.replicas] — the 0.21.1 rewrite loop
+# under ArgoCD self-heal, from the one direction 0.22.0 did not anticipate. It resolved only when the
+# pod was restarted BY HAND. So 0.22.0's ordering rule ("roll that operator image out first") was
+# unenforceable by the chart that required it; this release makes the pin enforce it.
+#
+# THE UPGRADE IS A REAL ROLLOUT, ONCE. `...:latest` and `...:v1.2.6-142-ga8b0ea9` are different
+# STRINGS, so the CSV is patched, OLM re-applies, and the operator restarts — even though both
+# resolve to the same digest today (sha256:5447cd41...), so the running bits do not change. Every run
+# after that is a genuine no-op. Bumping the operator is now A CHART RELEASE: the reconcile CronJob
+# holds this lineage against any newly installed CSV, which is the point — the image a cluster runs is
+# declared in Git rather than inherited from whatever was last built.
+#
+# ALSO: the pull policy and the pull secret are now compared and patched INDEPENDENTLY of the image
+# (04-image-override-script section 3). They were built inside the else-branch of the image
+# comparison, so on a cluster already at the target image, changing operatorImage.pullPolicy or
+# setting imagePullSecret for the first time silently did nothing — the same defect class as the
+# moving tag, one field over. Without this fix the IfNotPresent above would not have landed on an
+# existing install. operatorImage.digest is new and wins over tag; a malformed digest, or a
+# tag/digest/appVersion trio that resolves to nothing, is refused at render time rather than wedging
+# the CSV. appVersion stays "1.2.6": it names the OLM operator release this chart installs and agrees
+# with subscription.startingCSV, which the fork build tag is not.
 # 0.22.0, MINOR: EVERY NamespaceConfig AND GroupConfig DECLARES excludedPaths [.status, .spec.replicas] as
 # THIS CHART'S POLICY, and .metadata is gone from it. Rendered labels and annotations on RoleBindings,
 # ClusterRoleBindings and Roles are now ENFORCED: the operator applies server-side and owns exactly what
@@ -798,7 +834,7 @@ type: application
 # which binds the built-in admin/edit/view. It does NOT create the roles: a chart that both defines a
 # privileged ClusterRole and binds it hides the grant in a values file. Ships disabled, with
 # database-admin as an inert worked example.
-version: 0.22.0
+version: 0.23.0
 appVersion: "1.2.6"
 home: https://github.com/ephico2real2/openshift-rbac-automation
 keywords:

@@ -252,6 +252,44 @@ jobs:
       - name: Ordering is declared, not accidental
         run: working-sessions/scripts/check-ordering.py
 
+      # THE OPERATOR IMAGE MUST BE A REFERENCE THAT CAN CHANGE. This chart does not own the operator
+      # Deployment — OLM does, and 04-image-override-script patches the CSV only when the rendered
+      # reference DIFFERS from the live one (a string comparison). A moving alias therefore never
+      # delivers an image at all: the string is constant, the CSV is never patched, and the operator
+      # pod never restarts. That shipped as the default until 0.23.0 and cost a hand-restart to find,
+      # so it is a gate now rather than a comment.
+      - name: Operator image pin is deterministic
+        run: |
+          tag=$(python3 -c "import yaml,sys;print(yaml.safe_load(open('$CHART/values.yaml'))['operatorImage'].get('tag') or '')")
+          digest=$(python3 -c "import yaml,sys;print(yaml.safe_load(open('$CHART/values.yaml'))['operatorImage'].get('digest') or '')")
+          echo "operatorImage.tag='$tag' digest='$digest'"
+          [ -n "$tag" ] || { echo "::error::operatorImage.tag is empty; the shipped chart must pin an immutable build"; exit 1; }
+          case "$tag" in
+            latest|main|master|stable|edge)
+              echo "::error::operatorImage.tag is the moving alias '$tag'. A constant reference is never re-patched onto the CSV, so the operator pod never restarts and a newly pushed image never reaches the cluster. Pin an immutable build tag."; exit 1 ;;
+          esac
+          # A committed digest outlives the tag it was taken from and goes stale silently; the digest
+          # field exists for an operator to set at install time, not for the chart to ship.
+          [ -z "$digest" ] || { echo "::error::operatorImage.digest must be empty in the shipped chart"; exit 1; }
+
+      # The render-level companion: whatever values say, every job must receive a reference that
+      # actually names a build. A bare "repository:" is non-empty and would pass the script's
+      # ${TARGET_IMAGE:?} guard, then wedge the CSV with an unpullable image.
+      - name: Rendered CSV target is deterministic
+        run: |
+          helm template release "$CHART" > /tmp/render.yaml
+          targets=$(grep -A1 'name: TARGET_IMAGE' /tmp/render.yaml | grep 'value:' | sed 's/.*value: //' | tr -d '"' | sort -u)
+          [ -n "$targets" ] || { echo "::error::no TARGET_IMAGE rendered"; exit 1; }
+          echo "$targets"
+          echo "$targets" | while read -r ref; do
+            case "$ref" in
+              *:latest|*:main|*:master|*:stable|*:edge)
+                echo "::error::rendered TARGET_IMAGE '$ref' is a moving alias"; exit 1 ;;
+            esac
+            printf '%s' "$ref" | grep -Eq '^[^[:space:]]+(:[A-Za-z0-9_][A-Za-z0-9_.-]*|@sha256:[a-f0-9]{64})$' \
+              || { echo "::error::rendered TARGET_IMAGE '$ref' is not a well-formed tag or digest reference"; exit 1; }
+          done
+
       # Chart.yaml's version must move when the chart does, or chart-releaser silently publishes
       # nothing (skip_existing) and the repo's index quietly stops matching the source.
       - name: Chart version bumped

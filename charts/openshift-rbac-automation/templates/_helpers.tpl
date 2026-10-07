@@ -38,10 +38,41 @@ pattern as the two above so the whole unit is greppable and deletable together.
 {{- end }}
 
 {{/*
-Fully-qualified operator image the CSV should be patched to.
+Fully-qualified operator image the CSV should be patched to: digest beats tag beats appVersion.
+
+THIS STRING IS THE ROLLOUT TRIGGER, which is why it is validated here rather than trusted. The CSV
+patch in 04-image-override-script skips when the live image already equals it (a string comparison),
+so a reference that never changes is an operator that never restarts — the ":latest" defect that
+values.yaml's operatorImage block records. Two render-time refusals keep a broken reference out of
+the CSV, where the failure is a wedged install rather than a failed template:
+
+  - a digest that is not sha256:<64 hex> — "@sha256:latest" is a plausible typo that would render a
+    syntactically valid reference pointing at nothing.
+  - an empty resolution. With tag, digest and appVersion all empty this would emit a bare
+    "repository:", which is non-empty and so passes the script's ${TARGET_IMAGE:?} guard.
+
+toString is deliberate: `--set operatorImage.tag=1.3` reaches Helm as float64, and "%s" on a float
+renders %!s(float64=1.3). Use --set-string for a tag; this keeps the plain form from silently
+producing a garbage reference.
 */}}
 {{- define "nco.imageOverride.image" -}}
-{{- printf "%s:%s" .Values.operatorImage.repository .Values.operatorImage.tag }}
+{{- $repo := default "" .Values.operatorImage.repository | toString -}}
+{{- if not $repo -}}
+{{- fail "operatorImage.repository is empty, which would render a reference like \":tag\" — non-empty, so the script's ${TARGET_IMAGE:?} guard does not catch it, and the CSV is wedged with an unpullable image." -}}
+{{- end -}}
+{{- $digest := default "" .Values.operatorImage.digest | toString -}}
+{{- if $digest -}}
+{{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $digest) -}}
+{{- fail (printf "operatorImage.digest %q is not a digest. It must be sha256: followed by 64 lowercase hex characters; read one off the registry with `skopeo inspect docker://%s:<tag>` and copy its Digest field. Leave it empty to deploy operatorImage.tag." $digest .Values.operatorImage.repository) -}}
+{{- end -}}
+{{- printf "%s@%s" $repo $digest -}}
+{{- else -}}
+{{- $tag := default .Chart.AppVersion .Values.operatorImage.tag | toString -}}
+{{- if not (regexMatch "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$" $tag) -}}
+{{- fail (printf "operatorImage resolves to tag %q, which is not a Docker tag (empty, or containing a character such as \"/\" that is not [A-Za-z0-9_.-]). An unusable tag wedges the CSV with an image that cannot be pulled. Set operatorImage.tag to an immutable build tag, or operatorImage.digest." $tag) -}}
+{{- end -}}
+{{- printf "%s:%s" $repo $tag -}}
+{{- end -}}
 {{- end }}
 
 {{/*
