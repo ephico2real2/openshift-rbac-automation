@@ -13,9 +13,9 @@ groups in place first, then ask for your namespaces. Every example below uses th
 ## 1. What you get
 
 Your application has namespaces in four environments: `rnd` (development), `qa`, `uat` and `prod` (production).
-For each environment there is an **audit** group, which lets its members see everything (OpenShift's `view` role), and
-for every environment except `prod` there is a **developer** group, which lets its members deploy and change things
-(OpenShift's `edit` role).
+For each environment there is an **audit** group, which lets its members look at what runs there but not change it or
+read its Secrets (OpenShift's `view` role), and for every environment except `prod` there is a **developer** group,
+which lets its members deploy and change things (OpenShift's `edit` role).
 
 | Group | Its members can | In |
 |---|---|---|
@@ -68,10 +68,11 @@ for the people who need to see production.
 
 ## 4. Step 2: confirm the groups exist before you ask for namespaces
 
-1. **In the directory:** search for `app-ocp-rbac-pay-`. All seven groups are there, spelled as above, and each
-   group you need has its members.
+1. **In the directory:** search for `app-ocp-rbac-pay-` (if your account cannot read the directory's groups, ask the
+   mnemonic owner to). All seven groups are there, spelled as above, and each group you need has its members.
 2. **In OpenShift:** the groups reach OpenShift on the group sync's next scheduled run. Then open the OCP Access
-   Tracking Dashboard: under **Home**, **Your groups** lists the groups you are in.
+   Tracking Dashboard: under **Home**, **Your groups** lists the groups you are in. Until your namespaces exist, it
+   says they grant nothing here; that is expected.
 
 Why first: a namespace created before its groups exist is set up to give access to groups that are not there yet.
 Nothing breaks, nothing works, and nothing tells you. When the groups arrive, access starts by itself, but you will
@@ -107,15 +108,16 @@ In the **OCP Access Tracking Dashboard**:
 
 - **Home** lists the namespaces you can reach, each "via" the group that gives you access, and **Your groups** lists
   your groups.
-- Open a namespace: its page shows the `mnemonic` and `app-environment` labels it carries and, under **Who reaches it,
-  and through which group**, the groups with access and their role.
+- Open one of those namespaces: its page shows the `mnemonic` and `app-environment` labels it carries and, under
+  **Who reaches it, and through which group**, the groups of yours that reach it and the role each gives you. You see
+  only your own groups there, and a namespace you cannot reach does not open at all.
 
 With `oc`, logged in as yourself (these questions are answered for your own account):
 
 ```bash
 oc auth can-i create deployments -n pay-rnd   # yes, if you are in app-ocp-rbac-pay-rnd-ns-developer
 oc auth can-i get pods -n pay-prod            # yes, if you are in app-ocp-rbac-pay-prod-ns-audit
-oc auth can-i create deployments -n pay-prod  # no, for everyone
+oc auth can-i create deployments -n pay-prod  # no: none of the seven groups gives edit in prod
 ```
 
 ## 7. Living with it
@@ -141,4 +143,4 @@ oc auth can-i create deployments -n pay-prod  # no, for everyone
 | I can see the namespace but cannot deploy | You are only in its audit group, or it is a `prod` namespace | Outside `prod`, ask the mnemonic owner to add you to that environment's developer group |
 | I cannot change anything in `prod` | Expected: nobody has edit in `prod` | Nothing; production is view-only |
 | Nobody on the team has access to a new namespace | Its labels are wrong: the mnemonic is misspelled, or the environment is not exactly `rnd`, `qa`, `uat` or `prod` | Ask for the namespace's labels to be corrected (section 5) |
-| Someone left the team and still has access | They were removed in the directory, and the group sync has not run since | Check again after the next sync |
+| Someone left the team and still has access | They have not been removed in the directory yet, or they were and the group sync has not run since | Tell the mnemonic owner, who removes them in the directory; check again after the next sync |

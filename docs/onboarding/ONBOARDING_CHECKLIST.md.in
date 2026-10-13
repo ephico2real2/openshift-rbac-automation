@@ -30,8 +30,8 @@ use the mnemonic `pay`; use your own.
 
 ## Keeping it right
 
-- [ ] People join or leave only through the mnemonic owner, in the directory; nobody asks for access by name.
+- [ ] I ask the mnemonic owner when someone joins or leaves, and I never ask for access by name.
       ([§7](ONBOARDING.md#7-living-with-it))
-- [ ] After someone is removed, I expect the change in OpenShift after the next group sync, and then in the dashboard.
-      ([§7](ONBOARDING.md#7-living-with-it))
-- [ ] The mnemonic owner reviews the seven groups' members every quarter. ([§7](ONBOARDING.md#7-living-with-it))
+- [ ] I know that someone removed in the directory keeps their access until the next group sync, and that the
+      dashboard shows the change after that. ([§7](ONBOARDING.md#7-living-with-it))
+- [ ] I know the mnemonic owner reviews the seven groups' members every quarter. ([§7](ONBOARDING.md#7-living-with-it))

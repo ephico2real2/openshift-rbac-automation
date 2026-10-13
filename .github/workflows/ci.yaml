@@ -316,5 +316,6 @@ jobs:
       - name: Rendered onboarding docs match their sources
         run: |
           docs/onboarding/render.sh
-          git diff --exit-code -- docs/ONBOARDING.md docs/ONBOARDING_CHECKLIST.md \
-            || { echo "::error::docs/ONBOARDING*.md differ from docs/onboarding/render.sh's output; edit the .md.in source and run the script"; exit 1; }
+          # `git status`, not `git diff`: it also reports a rendered file deleted from git, which the render brings back untracked.
+          [ -z "$(git status --porcelain -- docs/ONBOARDING.md docs/ONBOARDING_CHECKLIST.md)" ] \
+            || { git status --short -- docs/ONBOARDING.md docs/ONBOARDING_CHECKLIST.md; git diff -- docs/ONBOARDING.md docs/ONBOARDING_CHECKLIST.md; echo "::error::docs/ONBOARDING*.md differ from docs/onboarding/render.sh's output; edit the .md.in source and run the script"; exit 1; }
