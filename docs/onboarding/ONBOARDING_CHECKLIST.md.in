@@ -1,0 +1,37 @@
+# Developer onboarding checklist
+
+Tick every box, in order. Each item links to the step in the [guide](ONBOARDING.md) that explains it. The examples
+use the mnemonic `pay`; use your own.
+
+## Before you ask for namespaces
+
+- [ ] I know my application's mnemonic: three lowercase letters, such as `pay`. ([§2](ONBOARDING.md#2-before-you-start))
+- [ ] I know who the mnemonic owner is. ([§2](ONBOARDING.md#2-before-you-start))
+- [ ] All seven groups exist in the directory, spelled exactly as in the guide, with my mnemonic in each.
+      ([§3](ONBOARDING.md#3-step-1-the-seven-groups), [§4](ONBOARDING.md#4-step-2-confirm-the-groups-exist-before-you-ask-for-namespaces))
+- [ ] Each group I need has its members, approved by the mnemonic owner. ([§3](ONBOARDING.md#3-step-1-the-seven-groups))
+- [ ] The dashboard's **Your groups** (on Home) lists my groups. ([§4](ONBOARDING.md#4-step-2-confirm-the-groups-exist-before-you-ask-for-namespaces))
+- [ ] Everyone on the team can log in to OpenShift. ([§8](ONBOARDING.md#8-when-something-is-wrong))
+
+## Asking for namespaces
+
+- [ ] Every namespace I ask for has `@LABEL_DOMAIN@/mnemonic` set to my mnemonic. ([§5](ONBOARDING.md#5-step-3-ask-for-your-namespaces))
+- [ ] Every namespace has `@LABEL_DOMAIN@/app-environment` set to exactly `rnd`, `qa`, `uat` or `prod`.
+      ([§5](ONBOARDING.md#5-step-3-ask-for-your-namespaces))
+- [ ] The mnemonic on the namespaces is the same three letters as in the group names. ([§2](ONBOARDING.md#2-before-you-start))
+
+## After the namespaces exist
+
+- [ ] The dashboard's Home lists my namespaces, each "via" one of my groups. ([§6](ONBOARDING.md#6-step-4-check-your-access))
+- [ ] `oc auth can-i create deployments` answers yes in my `rnd`, `qa` and `uat` namespaces, if I am in their developer
+      groups. ([§6](ONBOARDING.md#6-step-4-check-your-access))
+- [ ] `oc auth can-i create deployments` answers no in `prod`, and `oc auth can-i get pods` answers yes there if I am in
+      the `prod` audit group. ([§6](ONBOARDING.md#6-step-4-check-your-access))
+
+## Keeping it right
+
+- [ ] People join or leave only through the mnemonic owner, in the directory; nobody asks for access by name.
+      ([§7](ONBOARDING.md#7-living-with-it))
+- [ ] After someone is removed, I expect the change in OpenShift after the next group sync, and then in the dashboard.
+      ([§7](ONBOARDING.md#7-living-with-it))
+- [ ] The mnemonic owner reviews the seven groups' members every quarter. ([§7](ONBOARDING.md#7-living-with-it))

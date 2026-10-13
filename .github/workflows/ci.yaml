@@ -305,3 +305,16 @@ jobs:
           echo "chart changed: $old -> $new"
           [ "$old" != "$new" ] \
             || { echo "::error::$CHART changed but version is still $new"; exit 1; }
+
+  onboarding-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The developer onboarding docs are rendered from docs/onboarding/*.md.in with the label domain set once in
+      # onboarding.env; a hand edit of a rendered file, or a source change without a render, would drift silently.
+      - name: Rendered onboarding docs match their sources
+        run: |
+          docs/onboarding/render.sh
+          git diff --exit-code -- docs/ONBOARDING.md docs/ONBOARDING_CHECKLIST.md \
+            || { echo "::error::docs/ONBOARDING*.md differ from docs/onboarding/render.sh's output; edit the .md.in source and run the script"; exit 1; }
