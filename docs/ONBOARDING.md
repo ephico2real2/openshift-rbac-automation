@@ -88,7 +88,9 @@ have spent that time wondering why you cannot get in.
 
 ## 5. Step 3: ask for your namespaces
 
-Every namespace you ask for belongs to one environment and carries both labels:
+Namespaces are created from the platform's namespace template, and the template sets both labels on every
+namespace. You do not write them: in your request you give your mnemonic and, for each namespace, its environment, and
+the template turns them into:
 
 ```yaml
 metadata:
@@ -106,9 +108,10 @@ For example:
 | `pay-uat` | `pay` | `uat` |
 | `pay-prod` | `pay` | `prod` |
 
-The environment value is exactly `rnd`, `qa`, `uat` or `prod`, in lowercase. Any other value, such as `dev`,
-`production` or `Prod`, gives the namespace no access at all. Put both labels in your namespace request, and access
-follows from them: you never ask for access to a namespace separately.
+Give the environment exactly as `rnd`, `qa`, `uat` or `prod`, in lowercase, and the mnemonic exactly as in your group
+names. A label with any other value, such as `dev`, `production` or `Prod`, gives the namespace no access at all, so
+check both labels once the namespace exists (step 4). Access follows from the labels: you never ask for access to a
+namespace separately.
 
 ## 6. Step 4: check your access
 
@@ -116,7 +119,8 @@ In the **OCP Access Tracking Dashboard**:
 
 - **Home** lists the namespaces you can reach, each "via" the group that gives you access, and **Your groups** lists
   your groups.
-- Open one of those namespaces: its page shows the `mnemonic` and `app-environment` labels it carries and, under
+- Open one of those namespaces: its page shows the `mnemonic` and `app-environment` labels the template set (check
+  they are the ones you asked for) and, under
   **Who reaches it, and through which group**, the groups of yours that reach it and the role each gives you. You see
   only your own groups there, and a namespace you cannot reach does not open at all.
 

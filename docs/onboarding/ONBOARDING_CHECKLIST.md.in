@@ -17,13 +17,16 @@ use the mnemonic `pay`; use your own.
 
 ## Asking for namespaces
 
-- [ ] Every namespace I ask for has `@LABEL_DOMAIN@/mnemonic` set to my mnemonic. ([§5](ONBOARDING.md#5-step-3-ask-for-your-namespaces))
-- [ ] Every namespace has `@LABEL_DOMAIN@/app-environment` set to exactly `rnd`, `qa`, `uat` or `prod`.
+- [ ] My namespace request gives my mnemonic, the same three letters as in the group names.
+      ([§2](ONBOARDING.md#2-before-you-start), [§5](ONBOARDING.md#5-step-3-ask-for-your-namespaces))
+- [ ] It gives each namespace's environment as exactly `rnd`, `qa`, `uat` or `prod`; the namespace template turns
+      these into the `@LABEL_DOMAIN@/mnemonic` and `@LABEL_DOMAIN@/app-environment` labels.
       ([§5](ONBOARDING.md#5-step-3-ask-for-your-namespaces))
-- [ ] The mnemonic on the namespaces is the same three letters as in the group names. ([§2](ONBOARDING.md#2-before-you-start))
 
 ## After the namespaces exist
 
+- [ ] Each namespace's page in the dashboard shows the `mnemonic` and `app-environment` I asked for.
+      ([§6](ONBOARDING.md#6-step-4-check-your-access))
 - [ ] The dashboard's Home lists my namespaces, each "via" one of my groups. ([§6](ONBOARDING.md#6-step-4-check-your-access))
 - [ ] `oc auth can-i create deployments` answers yes in my `rnd`, `qa` and `uat` namespaces, if I am in the developer
       group in that environment's directory. ([§6](ONBOARDING.md#6-step-4-check-your-access))
