@@ -5,12 +5,13 @@
 | | |
 |---|---|
 | **For** | developers on an application team who need access to their team's OpenShift namespaces |
-| **You need** | your application's mnemonic, two directory groups in each environment, and namespaces carrying two labels |
+| **You need** | your application's mnemonic, two directory groups in each environment with your users in them, and namespaces labelled with that mnemonic (the namespace template does it) |
 | **Checklist** | [ONBOARDING_CHECKLIST.md](ONBOARDING_CHECKLIST.md): the same steps as tick boxes |
 
 Access to OpenShift is never given to you by name. It comes from directory (OUD/LDAP) groups that belong to your
 application's **mnemonic**, and from two labels on each of your namespaces that name that mnemonic. Get the groups in
-place first, then ask for your namespaces. Every example below uses the mnemonic `pay`; use your own.
+place first, then ask for any new namespaces, stating your mnemonic; if your namespaces already exist, the groups and
+their members are all you need. Every example below uses the mnemonic `pay`; use your own.
 
 ## 1. What you get
 
@@ -69,7 +70,8 @@ Say in each request that:
   error;
 - the mnemonic owner approves the members of every group.
 
-Put each person only in the groups they need, environment by environment. A developer is usually in the developer
+Then have the mnemonic owner add your users to the groups (their entitlement). Put each person only in the groups
+they need, environment by environment. A developer is usually in the developer
 group in `rnd`, `qa` and `uat`, and in the audit group of any environment they must be able to look at; the audit
 group in the `prod` directory is for the people who need to see production.
 
@@ -88,15 +90,17 @@ have spent that time wondering why you cannot get in.
 
 ## 5. Step 3: ask for your namespaces
 
-Namespaces are created from the platform's namespace template, and the template sets both labels on every
-namespace. You do not write them: in your request you give your mnemonic and, for each namespace, its environment, and
-the template turns them into:
+**If your application's namespaces already exist,** skip this step: they already carry the labels. Once your groups
+exist and your users are in them (step 1), access follows on the next group sync; go to step 4.
+
+**For a new namespace,** state your target mnemonic in the namespace request; that is all you add. Namespaces are
+created from the platform's namespace template, which sets both labels on every namespace:
 
 ```yaml
 metadata:
   labels:
-    company.net/mnemonic: pay          # your mnemonic, exactly as in the group names
-    company.net/app-environment: rnd   # rnd, qa, uat or prod
+    company.net/mnemonic: pay          # your target mnemonic, as stated in the request
+    company.net/app-environment: rnd   # set by the template: rnd, qa, uat or prod
 ```
 
 For example:
@@ -108,9 +112,8 @@ For example:
 | `pay-uat` | `pay` | `uat` |
 | `pay-prod` | `pay` | `prod` |
 
-Give the environment exactly as `rnd`, `qa`, `uat` or `prod`, in lowercase, and the mnemonic exactly as in your group
-names. A label with any other value, such as `dev`, `production` or `Prod`, gives the namespace no access at all, so
-check both labels once the namespace exists (step 4). Access follows from the labels: you never ask for access to a
+State the mnemonic exactly as it is in your group names. A namespace labelled with another mnemonic gives your groups
+no access, so check its labels once it exists (step 4). Access follows from the labels: you never ask for access to a
 namespace separately.
 
 ## 6. Step 4: check your access
@@ -119,8 +122,8 @@ In the **OCP Access Tracking Dashboard**:
 
 - **Home** lists the namespaces you can reach, each "via" the group that gives you access, and **Your groups** lists
   your groups.
-- Open one of those namespaces: its page shows the `mnemonic` and `app-environment` labels the template set (check
-  they are the ones you asked for) and, under
+- Open one of those namespaces: its page shows the `mnemonic` and `app-environment` labels it carries (check
+  the mnemonic is yours) and, under
   **Who reaches it, and through which group**, the groups of yours that reach it and the role each gives you. You see
   only your own groups there, and a namespace you cannot reach does not open at all.
 

@@ -17,17 +17,17 @@ use the mnemonic `pay`; use your own.
 - [ ] The dashboard's **Your groups** (on Home) lists my groups. ([§4](ONBOARDING.md#4-step-2-confirm-the-groups-exist-before-you-ask-for-namespaces))
 - [ ] Everyone on the team can log in to OpenShift. ([§8](ONBOARDING.md#8-when-something-is-wrong))
 
-## Asking for namespaces
+## New namespaces only
 
-- [ ] My namespace request gives my mnemonic, the same three letters as in the group names.
+- [ ] If my application's namespaces already exist, I skip this section: the groups and their members are all I
+      need. ([§5](ONBOARDING.md#5-step-3-ask-for-your-namespaces))
+- [ ] My namespace request states my target mnemonic, the same three letters as in the group names; the namespace
+      template sets the `company.net/mnemonic` and `company.net/app-environment` labels.
       ([§2](ONBOARDING.md#2-before-you-start), [§5](ONBOARDING.md#5-step-3-ask-for-your-namespaces))
-- [ ] It gives each namespace's environment as exactly `rnd`, `qa`, `uat` or `prod`; the namespace template turns
-      these into the `company.net/mnemonic` and `company.net/app-environment` labels.
-      ([§5](ONBOARDING.md#5-step-3-ask-for-your-namespaces))
 
 ## After the namespaces exist
 
-- [ ] Each namespace's page in the dashboard shows the `mnemonic` and `app-environment` I asked for.
+- [ ] Each namespace's page in the dashboard shows my mnemonic and the namespace's environment.
       ([§6](ONBOARDING.md#6-step-4-check-your-access))
 - [ ] The dashboard's Home lists my namespaces, each "via" one of my groups. ([§6](ONBOARDING.md#6-step-4-check-your-access))
 - [ ] `oc auth can-i create deployments` answers yes in my `rnd`, `qa` and `uat` namespaces, if I am in the developer
