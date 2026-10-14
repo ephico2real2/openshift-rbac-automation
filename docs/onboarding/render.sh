@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Renders the developer onboarding guide and checklist from their sources, filling in the label domain from
-# onboarding.env, so the domain is written in one place. Writes docs/ONBOARDING.md and docs/ONBOARDING_CHECKLIST.md.
+# onboarding.env, so the domain is written in one place. Writes docs/ONBOARDING.md and docs/ONBOARDING_CHECKLIST.md,
+# then docs/ONBOARDING.docx from those two with diagram-kit's doc-docx (pandoc 3.12.1, the version CI pins).
 # Runs the same on macOS (BSD sed) and Linux (GNU sed): only `sed -e` with a plain substitution is used.
 set -euo pipefail
 
@@ -34,3 +35,17 @@ for name in ONBOARDING ONBOARDING_CHECKLIST; do
   mv -- "${out}.tmp" "${out}"
   echo "rendered ${out#"${docs}/"} (label domain ${LABEL_DOMAIN})"
 done
+
+# The Word version: the guide, a page break, the checklist, built from the rendered Markdown so a change to the source
+# or to the label domain reaches it too. doc-docx comes from diagram-kit (the pinned install, or one on PATH).
+DOC_DATE=$(sed -n -e 's/^DOC_DATE=//p' "${here}/onboarding.env" | tail -n 1)
+if ! [[ "${DOC_DATE}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  echo "render.sh: DOC_DATE in ${here}/onboarding.env must be YYYY-MM-DD, got '${DOC_DATE}'" >&2
+  exit 1
+fi
+doc_docx=$(command -v doc-docx || echo "${HOME}/.local/share/diagram-kit/.venv/bin/doc-docx")
+if ! [ -x "${doc_docx}" ]; then
+  echo "render.sh: doc-docx not found; install diagram-kit v0.2.5 and pandoc 3.12.1 (the kit's /document skill)" >&2
+  exit 1
+fi
+"${doc_docx}" "${docs}/ONBOARDING.docx" "${docs}/ONBOARDING.md" "${docs}/ONBOARDING_CHECKLIST.md" --date "${DOC_DATE}"
