@@ -1,0 +1,155 @@
+<!-- Generated from docs/onboarding/ONBOARDING.md.in by docs/onboarding/render.sh: edit the source, not this file. -->
+
+# Getting your application onto OpenShift: a guide for developers
+
+| | |
+|---|---|
+| **For** | developers on an application team who need access to their team's OpenShift namespaces |
+| **You need** | your application's mnemonic, two directory groups in each environment, and namespaces carrying two labels |
+| **Checklist** | [ONBOARDING_CHECKLIST.md](ONBOARDING_CHECKLIST.md): the same steps as tick boxes |
+
+Access to OpenShift is never given to you by name. It comes from directory (OUD/LDAP) groups that belong to your
+application's **mnemonic**, and from two labels on each of your namespaces that name that mnemonic. Get the groups in
+place first, then ask for your namespaces. Every example below uses the mnemonic `pay`; use your own.
+
+## 1. What you get
+
+Your application has namespaces in four environments: `rnd` (development), `qa`, `uat` and `prod` (production).
+Each environment has its own directory (OUD/LDAP), and OpenShift in that environment reads its groups from it. Your
+application uses the same two group names in every environment's directory:
+
+- an **audit** group, `app-ocp-rbac-pay-ns-audit`, which lets its members look at what runs in the environment but
+  not change it or read its Secrets (OpenShift's `view` role);
+- a **developer** group, `app-ocp-rbac-pay-ns-developer`, which lets its members deploy and change things (OpenShift's
+  `edit` role).
+
+| Group | Its members can | It exists in the directory for |
+|---|---|---|
+| `app-ocp-rbac-pay-ns-audit` | view | `rnd`, `qa`, `uat` and `prod` (4 groups) |
+| `app-ocp-rbac-pay-ns-developer` | edit | `rnd`, `qa` and `uat` (3 groups) |
+
+The name is the same everywhere, but each environment's group is its own group with its own members: being a
+developer in `rnd` does not make you one in `uat`.
+
+**Nobody has edit in `prod`.** In production you can look, not change: there is no developer group in the `prod`
+directory.
+
+## 2. Before you start
+
+- **Your mnemonic.** Three lowercase letters assigned to your application, such as `pay`. If you do not know it, ask
+  the mnemonic owner.
+- **The mnemonic owner.** The person accountable for your application's access. They approve who joins each group, in
+  each environment, and they remove people who no longer need access.
+- **The one rule that makes it work.** The mnemonic is spelled exactly the same in the group names and in the
+  `company.net/mnemonic` label on every one of your namespaces. If the two differ by a single letter, the namespace
+  still looks correctly set up, and it gives nobody any access. Nothing reports the mismatch.
+
+## 3. Step 1: the groups, in each environment's directory
+
+Ask for the groups through your organisation's directory (OUD) request process, once for each environment's
+directory. Paste the names exactly; only the mnemonic changes:
+
+| Environment's directory | Groups to create |
+|---|---|
+| `rnd` | `app-ocp-rbac-pay-ns-audit`, `app-ocp-rbac-pay-ns-developer` |
+| `qa` | `app-ocp-rbac-pay-ns-audit`, `app-ocp-rbac-pay-ns-developer` |
+| `uat` | `app-ocp-rbac-pay-ns-audit`, `app-ocp-rbac-pay-ns-developer` |
+| `prod` | `app-ocp-rbac-pay-ns-audit` only |
+
+```text
+app-ocp-rbac-pay-ns-audit
+app-ocp-rbac-pay-ns-developer
+```
+
+Say in each request that:
+
+- the groups are created alongside the other `app-ocp-rbac-` groups, as the same kind of group (`groupOfNames`), so
+  that OpenShift picks them up;
+- members are added by their full user entry (DN), because a member written any other way is ignored without an
+  error;
+- the mnemonic owner approves the members of every group.
+
+Put each person only in the groups they need, environment by environment. A developer is usually in the developer
+group in `rnd`, `qa` and `uat`, and in the audit group of any environment they must be able to look at; the audit
+group in the `prod` directory is for the people who need to see production.
+
+## 4. Step 2: confirm the groups exist before you ask for namespaces
+
+1. **In each environment's directory:** search for `app-ocp-rbac-pay-` (if your account cannot read the directory's
+   groups, ask the mnemonic owner to). The groups in the table above are there, spelled exactly, and each group you
+   need has its members.
+2. **In OpenShift:** the groups reach OpenShift on the group sync's next scheduled run. Then open the OCP Access
+   Tracking Dashboard: under **Home**, **Your groups** lists the groups you are in. Until your namespaces exist, it
+   says they grant nothing here; that is expected.
+
+Why first: a namespace created before its groups exist is set up to give access to groups that are not there yet.
+Nothing breaks, nothing works, and nothing tells you. When the groups arrive, access starts by itself, but you will
+have spent that time wondering why you cannot get in.
+
+## 5. Step 3: ask for your namespaces
+
+Every namespace you ask for belongs to one environment and carries both labels:
+
+```yaml
+metadata:
+  labels:
+    company.net/mnemonic: pay          # your mnemonic, exactly as in the group names
+    company.net/app-environment: rnd   # rnd, qa, uat or prod
+```
+
+For example:
+
+| Namespace | `company.net/mnemonic` | `company.net/app-environment` |
+|---|---|---|
+| `pay-rnd` | `pay` | `rnd` |
+| `pay-qa` | `pay` | `qa` |
+| `pay-uat` | `pay` | `uat` |
+| `pay-prod` | `pay` | `prod` |
+
+The environment value is exactly `rnd`, `qa`, `uat` or `prod`, in lowercase. Any other value, such as `dev`,
+`production` or `Prod`, gives the namespace no access at all. Put both labels in your namespace request, and access
+follows from them: you never ask for access to a namespace separately.
+
+## 6. Step 4: check your access
+
+In the **OCP Access Tracking Dashboard**:
+
+- **Home** lists the namespaces you can reach, each "via" the group that gives you access, and **Your groups** lists
+  your groups.
+- Open one of those namespaces: its page shows the `mnemonic` and `app-environment` labels it carries and, under
+  **Who reaches it, and through which group**, the groups of yours that reach it and the role each gives you. You see
+  only your own groups there, and a namespace you cannot reach does not open at all.
+
+With `oc`, logged in as yourself in that environment (these questions are answered for your own account):
+
+```bash
+oc auth can-i create deployments -n pay-rnd   # yes, if you are in app-ocp-rbac-pay-ns-developer in the rnd directory
+oc auth can-i get pods -n pay-prod            # yes, if you are in app-ocp-rbac-pay-ns-audit in the prod directory
+oc auth can-i create deployments -n pay-prod  # no: neither group gives edit in prod
+```
+
+## 7. Living with it
+
+- **Joining and leaving.** People are added to and removed from the groups only by the mnemonic owner, in each
+  environment's directory. When someone is removed, the group sync takes them out of the OpenShift group on its next
+  run, and the dashboard shows the change after that. Until the next run, their access still works; that is expected.
+- **A new namespace later.** Ask for it with the same two labels; it gets the same access as your other namespaces in
+  that environment.
+- **Never ask for access by name.** Access granted to one person directly, instead of through a group, stays when
+  that person leaves the team, and access reviews report it as a finding. Ask the mnemonic owner to add you to the
+  right group instead.
+- **Production stays view-only.** Nobody, including the mnemonic owner, gets edit in `prod`.
+- **The quarterly access review.** Each quarter the mnemonic owner reviews the members of your groups in every
+  environment and confirms or removes each one.
+
+## 8. When something is wrong
+
+| What you see | The likely reason | What to do |
+|---|---|---|
+| I cannot log in to OpenShift at all | Logging in is allowed by the cluster's login group, which is separate from your application's groups | Ask for OpenShift login access through your directory request process |
+| I can log in, but my namespace is not listed | You are not in that environment's group yet, or the group has not synced yet | Check **Your groups** on the dashboard's Home; ask the mnemonic owner to add you in that environment's directory; check again after the next sync |
+| I can see the namespace but cannot deploy | You are only in that environment's audit group, or it is a `prod` namespace | Outside `prod`, ask the mnemonic owner to add you to the developer group in that environment's directory |
+| I have access in `rnd` but not in `uat` | Each environment's group has its own members | Ask the mnemonic owner to add you in the `uat` directory |
+| I cannot change anything in `prod` | Expected: nobody has edit in `prod` | Nothing; production is view-only |
+| Nobody on the team has access to a new namespace | Its labels are wrong: the mnemonic is misspelled, or the environment is not exactly `rnd`, `qa`, `uat` or `prod` | Ask for the namespace's labels to be corrected (section 5) |
+| Someone left the team and still has access | They have not been removed in the directory yet, or they were and the group sync has not run since | Tell the mnemonic owner, who removes them in each environment's directory; check again after the next sync |

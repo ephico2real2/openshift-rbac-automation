@@ -527,6 +527,12 @@ oc label namespace <namespace-name> \
 
 ## 📚 Documentation
 
+Start here if you are a developer getting your application onto OpenShift:
+
+- **[Developer onboarding guide](docs/ONBOARDING.md)** and its **[checklist](docs/ONBOARDING_CHECKLIST.md)** — your
+  mnemonic, the directory groups to have in place first, the two namespace labels, and how to check your access. Both
+  in one Word document: **[ONBOARDING.docx](docs/ONBOARDING.docx)**.
+
 Start here if you are changing a policy:
 
 - **[Labels and annotations — the contract](working-sessions/docs/labels-and-annotations.md)** — every

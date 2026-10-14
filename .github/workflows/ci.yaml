@@ -305,3 +305,31 @@ jobs:
           echo "chart changed: $old -> $new"
           [ "$old" != "$new" ] \
             || { echo "::error::$CHART changed but version is still $new"; exit 1; }
+
+  onboarding-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The Word version is built by diagram-kit's doc-docx, whose bytes depend on pandoc's version: the release the
+      # kit's CI pins, checked against the digest GitHub publishes for it, and the kit at its tag.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pandoc 3.12.1 and diagram-kit v0.2.5
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/pandoc.deb" https://github.com/jgm/pandoc/releases/download/3.12.1/pandoc-3.12.1-1-amd64.deb
+          echo "b4217ac7c54067c442f9d4cd38bcd0c184a43f3e7053431a12263a6f92a33ba2  $RUNNER_TEMP/pandoc.deb" | sha256sum -c -
+          sudo dpkg -i "$RUNNER_TEMP/pandoc.deb"
+          python -m pip install -q "diagram-kit @ git+https://github.com/ephico2real2/diagram-kit@v0.2.5"
+          pandoc --version | head -1
+
+      # The developer onboarding docs are rendered from docs/onboarding/*.md.in with the label domain set once in
+      # onboarding.env; a hand edit of a rendered file, or a source change without a render, would drift silently.
+      - name: Rendered onboarding docs match their sources
+        run: |
+          docs/onboarding/render.sh
+          # `git status`, not `git diff`: it also reports a rendered file deleted from git, which the render brings back untracked.
+          rendered="docs/ONBOARDING.md docs/ONBOARDING_CHECKLIST.md docs/ONBOARDING.docx"
+          [ -z "$(git status --porcelain -- ${rendered})" ] \
+            || { git status --short -- ${rendered}; git diff --stat -- ${rendered}; echo "::error::docs/ONBOARDING* differ from docs/onboarding/render.sh's output; edit the .md.in source and run the script"; exit 1; }
