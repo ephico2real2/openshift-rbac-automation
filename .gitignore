@@ -33,3 +33,6 @@ kubeconfig
 # they name in-flight branches, background job ids and cluster revisions, all of which are stale
 # within a day and would read as documentation rather than as a scratchpad.
 RESUME.md
+
+# Word lock files, written beside a .docx while it is open
+~$*
