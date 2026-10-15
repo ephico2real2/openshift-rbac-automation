@@ -3,15 +3,15 @@
 # Developer onboarding checklist
 
 Tick every box, in order. Each item links to the step in the [guide](ONBOARDING.md) that explains it. The examples
-use the mnemonic `pay`; use your own.
+write your mnemonic as `XYZ`: put your own three letters in its place, in lowercase.
 
 ## Before you ask for namespaces
 
 - [ ] I know my application's mnemonic: three lowercase letters, such as `pay`. ([§2](ONBOARDING.md#2-before-you-start))
 - [ ] I know who the mnemonic owner is. ([§2](ONBOARDING.md#2-before-you-start))
-- [ ] `app-ocp-rbac-<mnemonic>-ns-audit` exists in the `rnd`, `qa`, `uat` and `prod` directories, spelled exactly.
+- [ ] `app-ocp-rbac-XYZ-ns-audit` exists in the `rnd`, `qa`, `uat` and `prod` directories, spelled exactly.
       ([§3](ONBOARDING.md#3-step-1-the-groups-in-each-environments-directory), [§4](ONBOARDING.md#4-step-2-confirm-the-groups-exist-before-you-ask-for-namespaces))
-- [ ] `app-ocp-rbac-<mnemonic>-ns-developer` exists in the `rnd`, `qa` and `uat` directories, and not in `prod`.
+- [ ] `app-ocp-rbac-XYZ-ns-developer` exists in the `rnd`, `qa` and `uat` directories, and not in `prod`.
       ([§3](ONBOARDING.md#3-step-1-the-groups-in-each-environments-directory))
 - [ ] In each environment, each group I need has its members, approved by the mnemonic owner. ([§3](ONBOARDING.md#3-step-1-the-groups-in-each-environments-directory))
 - [ ] The dashboard's **Your groups** (on Home) lists my groups. ([§4](ONBOARDING.md#4-step-2-confirm-the-groups-exist-before-you-ask-for-namespaces))

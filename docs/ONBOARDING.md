@@ -11,7 +11,7 @@
 Access to OpenShift is never given to you by name. It comes from directory (OUD/LDAP) groups that belong to your
 application's **mnemonic**, and from two labels on each of your namespaces that name that mnemonic. Get the groups in
 place first, then ask for any new namespaces, stating your mnemonic; if your namespaces already exist, the groups and
-their members are all you need. Every example below uses the mnemonic `pay`; use your own.
+their members are all you need. Every example below writes your mnemonic as `XYZ`: put your own three letters in its place, in lowercase (for the mnemonic `pay`, `app-ocp-rbac-XYZ-ns-audit` is `app-ocp-rbac-pay-ns-audit`).
 
 ## 1. What you get
 
@@ -19,15 +19,15 @@ Your application has namespaces in four environments: `rnd` (development), `qa`,
 Each environment has its own directory (OUD/LDAP), and OpenShift in that environment reads its groups from it. Your
 application uses the same two group names in every environment's directory:
 
-- an **audit** group, `app-ocp-rbac-pay-ns-audit`, which lets its members look at what runs in the environment but
+- an **audit** group, `app-ocp-rbac-XYZ-ns-audit`, which lets its members look at what runs in the environment but
   not change it or read its Secrets (OpenShift's `view` role);
-- a **developer** group, `app-ocp-rbac-pay-ns-developer`, which lets its members deploy and change things (OpenShift's
+- a **developer** group, `app-ocp-rbac-XYZ-ns-developer`, which lets its members deploy and change things (OpenShift's
   `edit` role).
 
 | Group | Its members can | It exists in the directory for |
 |---|---|---|
-| `app-ocp-rbac-pay-ns-audit` | view | `rnd`, `qa`, `uat` and `prod` (4 groups) |
-| `app-ocp-rbac-pay-ns-developer` | edit | `rnd`, `qa` and `uat` (3 groups) |
+| `app-ocp-rbac-XYZ-ns-audit` | view | `rnd`, `qa`, `uat` and `prod` (4 groups) |
+| `app-ocp-rbac-XYZ-ns-developer` | edit | `rnd`, `qa` and `uat` (3 groups) |
 
 The name is the same everywhere, but each environment's group is its own group with its own members: being a
 developer in `rnd` does not make you one in `uat`.
@@ -52,14 +52,14 @@ directory. Paste the names exactly; only the mnemonic changes:
 
 | Environment's directory | Groups to create |
 |---|---|
-| `rnd` | `app-ocp-rbac-pay-ns-audit`, `app-ocp-rbac-pay-ns-developer` |
-| `qa` | `app-ocp-rbac-pay-ns-audit`, `app-ocp-rbac-pay-ns-developer` |
-| `uat` | `app-ocp-rbac-pay-ns-audit`, `app-ocp-rbac-pay-ns-developer` |
-| `prod` | `app-ocp-rbac-pay-ns-audit` only |
+| `rnd` | `app-ocp-rbac-XYZ-ns-audit`, `app-ocp-rbac-XYZ-ns-developer` |
+| `qa` | `app-ocp-rbac-XYZ-ns-audit`, `app-ocp-rbac-XYZ-ns-developer` |
+| `uat` | `app-ocp-rbac-XYZ-ns-audit`, `app-ocp-rbac-XYZ-ns-developer` |
+| `prod` | `app-ocp-rbac-XYZ-ns-audit` only |
 
 ```text
-app-ocp-rbac-pay-ns-audit
-app-ocp-rbac-pay-ns-developer
+app-ocp-rbac-XYZ-ns-audit
+app-ocp-rbac-XYZ-ns-developer
 ```
 
 Say in each request that:
@@ -77,7 +77,7 @@ group in the `prod` directory is for the people who need to see production.
 
 ## 4. Step 2: confirm the groups exist before you ask for namespaces
 
-1. **In each environment's directory:** search for `app-ocp-rbac-pay-` (if your account cannot read the directory's
+1. **In each environment's directory:** search for `app-ocp-rbac-XYZ-` (if your account cannot read the directory's
    groups, ask the mnemonic owner to). The groups in the table above are there, spelled exactly, and each group you
    need has its members.
 2. **In OpenShift:** the groups reach OpenShift on the group sync's next scheduled run. Then open the OCP Access
@@ -99,7 +99,7 @@ created from the platform's namespace template, which sets both labels on every 
 ```yaml
 metadata:
   labels:
-    company.net/mnemonic: pay          # your target mnemonic, as stated in the request
+    company.net/mnemonic: XYZ          # your target mnemonic, as stated in the request
     company.net/app-environment: rnd   # set by the template: rnd, qa, uat or prod
 ```
 
@@ -107,10 +107,10 @@ For example:
 
 | Namespace | `company.net/mnemonic` | `company.net/app-environment` |
 |---|---|---|
-| `pay-rnd` | `pay` | `rnd` |
-| `pay-qa` | `pay` | `qa` |
-| `pay-uat` | `pay` | `uat` |
-| `pay-prod` | `pay` | `prod` |
+| `XYZ-rnd` | `XYZ` | `rnd` |
+| `XYZ-qa` | `XYZ` | `qa` |
+| `XYZ-uat` | `XYZ` | `uat` |
+| `XYZ-prod` | `XYZ` | `prod` |
 
 State the mnemonic exactly as it is in your group names. A namespace labelled with another mnemonic gives your groups
 no access, so check its labels once it exists (step 4). Access follows from the labels: you never ask for access to a
@@ -130,9 +130,9 @@ In the **OCP Access Tracking Dashboard**:
 With `oc`, logged in as yourself in that environment (these questions are answered for your own account):
 
 ```bash
-oc auth can-i create deployments -n pay-rnd   # yes, if you are in app-ocp-rbac-pay-ns-developer in the rnd directory
-oc auth can-i get pods -n pay-prod            # yes, if you are in app-ocp-rbac-pay-ns-audit in the prod directory
-oc auth can-i create deployments -n pay-prod  # no: neither group gives edit in prod
+oc auth can-i create deployments -n XYZ-rnd   # yes, if you are in app-ocp-rbac-XYZ-ns-developer in the rnd directory
+oc auth can-i get pods -n XYZ-prod            # yes, if you are in app-ocp-rbac-XYZ-ns-audit in the prod directory
+oc auth can-i create deployments -n XYZ-prod  # no: neither group gives edit in prod
 ```
 
 ## 7. Living with it
