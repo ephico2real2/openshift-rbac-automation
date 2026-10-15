@@ -11,7 +11,7 @@
 Access to OpenShift is never given to you by name. It comes from directory (OUD/LDAP) groups that belong to your
 application's **mnemonic**, and from two labels on each of your namespaces that name that mnemonic. Get the groups in
 place first, then ask for any new namespaces, stating your mnemonic; if your namespaces already exist, the groups and
-their members are all you need. Every example below writes your mnemonic as `XYZ`: put your own three letters in its place, in lowercase (for the mnemonic `pay`, `app-ocp-rbac-XYZ-ns-audit` is `app-ocp-rbac-pay-ns-audit`).
+their members are all you need. Every example below writes your mnemonic as `XYZ`. The capitals are only for illustration: a real mnemonic is three lowercase letters, and it is lowercase everywhere it is used, so `app-ocp-rbac-XYZ-ns-audit` is the group `app-ocp-rbac-xyz-ns-audit` and a namespace carries `company.net/mnemonic: xyz`.
 
 ## 1. What you get
 
@@ -37,7 +37,7 @@ directory.
 
 ## 2. Before you start
 
-- **Your mnemonic.** Three lowercase letters assigned to your application, such as `pay`. If you do not know it, ask
+- **Your mnemonic.** Three lowercase letters assigned to your application (`XYZ` in this guide, `xyz` as it is really written). If you do not know it, ask
   the mnemonic owner.
 - **The mnemonic owner.** The person accountable for your application's access. They approve who joins each group, in
   each environment, and they remove people who no longer need access.
@@ -99,7 +99,7 @@ created from the platform's namespace template, which sets both labels on every 
 ```yaml
 metadata:
   labels:
-    company.net/mnemonic: XYZ          # your target mnemonic, as stated in the request
+    company.net/mnemonic: xyz          # your target mnemonic, lowercase, as stated in the request
     company.net/app-environment: rnd   # set by the template: rnd, qa, uat or prod
 ```
 
@@ -107,10 +107,10 @@ For example:
 
 | Namespace | `company.net/mnemonic` | `company.net/app-environment` |
 |---|---|---|
-| `XYZ-rnd` | `XYZ` | `rnd` |
-| `XYZ-qa` | `XYZ` | `qa` |
-| `XYZ-uat` | `XYZ` | `uat` |
-| `XYZ-prod` | `XYZ` | `prod` |
+| `xyz-rnd` | `xyz` | `rnd` |
+| `xyz-qa` | `xyz` | `qa` |
+| `xyz-uat` | `xyz` | `uat` |
+| `xyz-prod` | `xyz` | `prod` |
 
 State the mnemonic exactly as it is in your group names. A namespace labelled with another mnemonic gives your groups
 no access, so check its labels once it exists (step 4). Access follows from the labels: you never ask for access to a
